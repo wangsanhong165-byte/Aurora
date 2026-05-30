@@ -13,12 +13,12 @@ from app.tts.player import AsyncAudioPlayer
 class AgentLoop:
     """Continuous voice agent: listen → process → speak → repeat.
 
-    Uses streaming LLM + sentence‑buffer TTS + async player for low latency.
+    Uses streaming LLM + sentence-buffer TTS + async player for low latency.
     """
 
     def __init__(self, orchestrator: Orchestrator | None = None) -> None:
         self.orchestrator = orchestrator or Orchestrator()
-        self.input = InputManager(silence_timeout=1.5, max_duration=30.0)
+        self.input = InputManager(silence_timeout=0.7, max_duration=30.0)
         self._interrupt = InterruptDetector()
         self._player = AsyncAudioPlayer()
         self._running = False

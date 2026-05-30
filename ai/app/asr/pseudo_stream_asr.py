@@ -134,12 +134,12 @@ class PseudoStreamASR:
         self._buffer = AudioRingBuffer(max_duration=60.0, sample_rate=sample_rate)
 
         # VAD frame size: 30 ms @ 16 kHz = 480 samples
-        self._vad_frame_size = int(0.03 * sample_rate)
+        self._vad_frame_size = int(0.032 * sample_rate)
         self._vad = VADProcessor(
             sample_rate=sample_rate,
             silence_timeout=silence_timeout,
             speech_start_frames=speech_start_frames,
-            frame_duration=0.03,
+            frame_duration=0.032,
         )
 
         # ASR
@@ -172,6 +172,21 @@ class PseudoStreamASR:
         """Signal the loop to stop (e.g. from a signal handler)."""
         self._running = False
 
+    async def run_once(self):
+        """Listen for a single utterance and return final recognised text."""
+        result = []
+        orig_final = self._on_final
+
+        def capture(text):
+            result.append(text)
+            self._running = False
+
+        self._on_final = capture
+        try:
+            await self.run()
+        finally:
+            self._on_final = orig_final
+        return result[0].strip() if result else ""
 
     # Recording
     # ------------------------------------------------------------------
@@ -207,7 +222,7 @@ class PseudoStreamASR:
         last_vad_check = time.monotonic()
 
         while self._running:
-            await asyncio.sleep(0.03)  # ~30 ms, matching VAD frame rate
+            await asyncio.sleep(0.032)  # ~30 ms, matching VAD frame rate
 
             if self._buffer.total_samples <= self._vad_offset:
                 continue

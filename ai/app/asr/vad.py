@@ -42,7 +42,7 @@ class VADProcessor:
         sample_rate: int = 16000,
         silence_timeout: float = 0.8,
         speech_start_frames: int = 3,
-        frame_duration: float = 0.03,
+        frame_duration: float = 0.032,  # 512 samples @ 16kHz
     ) -> None:
         self.sample_rate = sample_rate
         self.silence_timeout = silence_timeout
@@ -143,6 +143,7 @@ class VADProcessor:
                 if silence_dur >= self.silence_timeout:
                     self._state = VADState.SILENCE
                     self._silence_started_at = now
+                    self._consecutive_silence = 0  # reset for just_stopped_speaking
 
         return self._state
 

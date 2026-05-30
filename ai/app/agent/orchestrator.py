@@ -12,6 +12,7 @@ import json
 import os
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator, Iterator, Optional
@@ -96,6 +97,7 @@ class Orchestrator:
         self.tts_url = tts_url
         self._memory = ShortTermMemory()
         self._summarizer = Summarizer()
+        self._tts_executor = ThreadPoolExecutor(max_workers=2)
 
     # ==================================================================
     # Legacy synchronous API (unchanged)
@@ -199,6 +201,16 @@ class Orchestrator:
         r.raise_for_status()
         return r.content
 
+    def run_turn_streaming_from_text(
+        self, text: str, player: AsyncAudioPlayer
+    ) -> dict:
+        """Skip ASR — text already transcribed (e.g. from pseudo-streaming ASR)."""
+        text = text.strip()
+        if not text:
+            return {"ok": False, "error": "Empty text", "user_text": ""}
+        ctx = self.load_context()
+        return self._finish_streaming(text, ctx, player)
+
     def run_turn_streaming(
         self,
         audio_path: str,
@@ -210,21 +222,41 @@ class Orchestrator:
             return {"ok": False, "error": "ASR returned empty text", "user_text": ""}
 
         ctx = self.load_context()
+        return self._finish_streaming(text, ctx, player)
+    def _finish_streaming(
+        self, user_text: str, ctx: list[dict], player: AsyncAudioPlayer
+    ) -> dict:
+        """Shared streaming logic: LLM → sentence buffer → parallel TTS → player.
 
+        TTS tasks are submitted to a thread pool as sentences become available,
+        then resolved in order to guarantee correct playback sequence.
+        """
         reply_full: list[str] = []
-        sentence_count = 0
+        tts_futures: list[tuple[str, Any]] = []  # (sentence, Future[bytes])
+        first = True
 
-        tokens = self._stream_llm(text, ctx)
+        # Phase 1: stream LLM, submit TTS in parallel
+        tokens = self._stream_llm(user_text, ctx)
         for sentence in _split_sentences(tokens, min_length=10, max_length=50):
             reply_full.append(sentence)
-            sentence_count += 1
 
-            if sentence_count == 1:
+            if first:
                 player.stop()
                 player.resume()
+                first = False
 
+            future = self._tts_executor.submit(self._synthesize, sentence)
+            tts_futures.append((sentence, future))
+
+        if not reply_full:
+            return {"ok": False, "error": "LLM returned empty", "user_text": user_text}
+
+        # Phase 2: resolve futures in order, enqueue audio
+        sentence_count = 0
+        for sentence, future in tts_futures:
+            sentence_count += 1
             try:
-                wav = self._synthesize(sentence)
+                wav = future.result()
                 player.enqueue(wav)
             except Exception as exc:
                 print(f"[Orchestrator] TTS error for sentence: {exc}")
@@ -238,12 +270,13 @@ class Orchestrator:
             "memory": {},
             "raw": {},
         }
-        self.save_memory(text, reply_dict)
+        self.save_memory(user_text, reply_dict)
 
         return {
             "ok": True,
-            "user_text": text,
+            "user_text": user_text,
             "reply_text": reply_text,
             "reply": reply_dict,
             "sentence_count": sentence_count,
         }
+
