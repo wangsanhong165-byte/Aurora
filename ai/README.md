@@ -151,6 +151,21 @@ IDLE → LISTENING → RECORDING → PROCESSING → SPEAKING → IDLE
 | `app/asr/` | 伪流式 ASR (边说边识别) | 📦 可选 |
 | `app/ui/` | Textual TUI (`--ui`) | ✅ 可用 |
 
+
+## Git 分支概览
+
+| 分支 | 说明 |
+|---|---|
+| codex/v1-stable-milestone | P0-P2 优化完成，低延迟流水线稳定里程碑 |
+| codex/v1-optimized | P0-P2 TTS并行 + 静音0.7s + Player修复 |
+| codex/v1-low-latency-streaming | SSE流式LLM + 句缓冲TTS + 异步播放器 |
+| codex/v1-pseudo-streaming-asr | 伪流式ASR（chunk增量识别） |
+| codex/v1-input-state-machine | v1输入状态机 + Textual TUI |
+| codex/v1-architecture | v1架构升级（事件驱动） |
+| codex/v1-tui-stable | TUI控制面板稳定版 |
+| codex/stable-voice-pipeline | 早期稳定语音管道（HTTP微服务串联） |
+| main | 初始版本 |
+
 ## License
 
 MIT
