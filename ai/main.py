@@ -138,7 +138,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Voice assistant pipeline orchestrator")
     parser.add_argument("--seconds", type=float, default=5.0)
     parser.add_argument("--sample-rate", type=int, default=16000)
-    parser.add_argument("--language", default="Chinese")
+    parser.add_argument("--language", default=None)
     parser.add_argument("--memory-limit", type=int, default=8)
     parser.add_argument("--audio-path", help="Skip recording and use an existing audio file")
     parser.add_argument("--no-tts", action="store_true")
@@ -268,3 +268,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

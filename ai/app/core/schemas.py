@@ -112,7 +112,7 @@ class TTSResponse(BaseModel):
 class PipelineRequest(BaseModel):
     seconds: float = Field(default=5.0, gt=0)
     sample_rate: int = Field(default=16000, gt=0)
-    language: str | None = "Chinese"
+    language: str | None = None
     no_tts: bool = False
     memory_limit: int = Field(default=8, ge=0)
     audio_path: str | None = None
@@ -130,3 +130,4 @@ class PipelineResponse(BaseModel):
     audio_path: str
     event: VoiceEvent
     llm: LLMResponse
+
