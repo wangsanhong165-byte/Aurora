@@ -1,0 +1,54 @@
+﻿Screen {
+    background: #1a1a2e;
+}
+
+Header {
+    background: #16213e;
+    color: #e94560;
+}
+
+#status-panel {
+    dock: top;
+    height: 7;
+    border: solid #0f3460;
+    margin: 1;
+    padding: 0 1;
+}
+
+#turn-panel {
+    height: 4;
+    border: solid #0f3460;
+    margin: 1;
+    padding: 0 1;
+}
+
+#log-panel {
+    border: solid #0f3460;
+    margin: 1;
+    padding: 0 1;
+}
+
+.panel-title {
+    color: #e94560;
+    text-style: bold;
+    height: 1;
+}
+
+#state-badge {
+    content-align: center middle;
+    height: 1;
+    margin-bottom: 1;
+}
+
+#turn-user {
+    color: #f0c040;
+}
+
+#turn-ai {
+    color: #40c0f0;
+}
+
+#log-lines {
+    color: #808090;
+    height: auto;
+}

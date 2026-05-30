@@ -4,6 +4,7 @@ v1 Voice Agent — one-click launcher with input state machine.
 Usage:
     python run.py              # Continuous VAD mode
     python run.py --no-vad     # Single-turn (fixed duration)
+    python run.py --ui         # TUI control panel
 """
 import argparse
 import os
@@ -84,6 +85,12 @@ def wait_services() -> bool:
             time.sleep(0.5)
         if ready:
             print(f"[ready] {name} ({time.time() - start:.1f}s)")
+            try:
+                from app.core.event_bus import bus
+                svc_name = "tts" if name == "gsvi" else name
+                bus.emit("service_status", {"name": svc_name, "status": "READY"})
+            except Exception:
+                pass
         else:
             print(f"[FAIL]  {name} not ready")
             ok = False
@@ -101,6 +108,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-tts", action="store_true")
     p.add_argument("--no-vad", action="store_true", help="Single-turn mode")
     p.add_argument("--tts-engine", choices=["gsvi", "pyttsx3"])
+    p.add_argument("--ui", action="store_true", help="Launch TUI control panel")
     return p.parse_args()
 
 
@@ -138,7 +146,15 @@ def main() -> int:
         else:
             from app.agent.loop import AgentLoop
             agent = AgentLoop()
-            agent.run()
+            if args.ui:
+                import threading
+                from app.ui import VoiceAgentUI
+                agent_thread = threading.Thread(target=agent.run, daemon=True)
+                agent_thread.start()
+                VoiceAgentUI().run()
+                agent.stop()
+            else:
+                agent.run()
 
         return 0
     finally:

@@ -1,0 +1,5 @@
+recordings/
+memory.short.jsonl
+__pycache__/
+.idea/
+*.pyc
