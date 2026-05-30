@@ -28,12 +28,12 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-_SENTENCE_END = re.compile(r"[。！？!?；;\n]")
+_SENTENCE_END = re.compile(r"[。，！？!?；;\n]")
 
 
 def _split_sentences(
     tokens: Iterator[str],
-    min_length: int = 10,
+    min_length: int = 5,
     max_length: int = 50,
 ) -> Generator[str, None, None]:
     buf: list[str] = []
@@ -237,7 +237,7 @@ class Orchestrator:
 
         # Phase 1: stream LLM, submit TTS in parallel
         tokens = self._stream_llm(user_text, ctx)
-        for sentence in _split_sentences(tokens, min_length=10, max_length=50):
+        for sentence in _split_sentences(tokens, min_length=5, max_length=50):
             reply_full.append(sentence)
 
             if first:
