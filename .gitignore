@@ -22,3 +22,5 @@ ai/memory.short.jsonl
 # Secrets (contains API keys)
 ai/.env
 
+
+ai/recordings/
