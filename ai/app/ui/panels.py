@@ -71,9 +71,7 @@ class LogPanel(Container):
             yield self._log
 
     def add(self, msg: str) -> None:
-        lines = self._log.renderable.plain.split("\n") if self._log.renderable and hasattr(self._log.renderable, 'plain') else []
-        # Actually, just track lines manually
-        if not hasattr(self, '_lines'):
+        if not hasattr(self, "_lines"):
             self._lines: list[str] = []
         self._lines.append(msg)
         if len(self._lines) > self.MAX_LINES:
