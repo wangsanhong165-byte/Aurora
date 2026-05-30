@@ -8,15 +8,20 @@ All arguments are forwarded to gsvi.py — only webbrowser.open is suppressed.
 import os
 import sys
 
-# Change to GSVI directory so relative paths work
 GSVI_DIR = os.path.join(os.path.dirname(__file__), "..", "models", "GPT-SoVITS-1007-cu128")
-os.chdir(os.path.abspath(GSVI_DIR))
+GSVI_DIR = os.path.abspath(GSVI_DIR)
+os.chdir(GSVI_DIR)
+sys.path.insert(0, GSVI_DIR)
 
-# Suppress browser before anything else
+# Suppress browser
 import webbrowser
-_original_open = webbrowser.open
 webbrowser.open = lambda url: print(f"[GSVI] Browser suppressed. WebUI: {url}")
 
-# Forward all arguments to gsvi.py
+# Run gsvi.py with full module globals so __file__, __name__ etc. all work
 sys.argv = ["gsvi.py"] + sys.argv[1:]
-exec(open("gsvi.py", encoding="utf-8").read())
+gsvi_path = os.path.join(GSVI_DIR, "gsvi.py")
+gsvi_globals = {"__name__": "__main__", "__file__": gsvi_path}
+with open(gsvi_path, encoding="utf-8") as f:
+    code = compile(f.read(), gsvi_path, "exec")
+exec(code, gsvi_globals)
+
