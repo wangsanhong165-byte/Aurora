@@ -79,8 +79,9 @@ def record_vad(
         if status:
             print(f"[VAD] stream status: {status}")
 
-        # Convert float32 [-1,1] to int16 PCM for webrtcvad
-        pcm = (indata[:, 0] * 32767).astype(np.int16).tobytes()
+# Convert float32 [-1,1] to int16 PCM for webrtcvad (handle 1D/2D indata)
+        mono = indata if indata.ndim == 1 else indata[:, 0]
+        pcm = (mono * 32767).astype(np.int16).tobytes()
         is_speech = vad.is_speech(pcm, sample_rate)
 
         ring_buffer.append(pcm)
@@ -104,7 +105,7 @@ def record_vad(
                 ring_buffer.clear()
                 print("[VAD] Speech detected, recording...")
         else:
-            speech_frames.append(indata[:, 0].copy())
+            speech_frames.append(mono.copy())
             if is_speech:
                 silent_frames = 0
             else:
@@ -206,3 +207,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
