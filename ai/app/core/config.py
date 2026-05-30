@@ -18,6 +18,7 @@ MEMORY_URL = os.environ.get("MEMORY_URL", "http://127.0.0.1:8040")
 GSVI_DIR = MODELS_DIR / "GPT-SoVITS-1007-cu128"
 GSVI_PYTHON = GSVI_DIR / "runtime" / "python.exe"
 GSVI_SCRIPT = GSVI_DIR / "gsvi.py"
+GSVI_HEADLESS = BASE_DIR / "scripts" / "run_gsvi_headless.py"
 GSVI_CONFIG_PATH = GSVI_DIR / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
 GSVI_URL = os.environ.get("GSVI_URL", "http://127.0.0.1:8050")
 

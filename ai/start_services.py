@@ -1,10 +1,10 @@
-import argparse
+﻿import argparse
 import os
 import subprocess
 import sys
 from pathlib import Path
 
-from app.core.config import DEFAULT_ENV_PATH, GSVI_CONFIG_PATH, GSVI_DIR, GSVI_PYTHON, GSVI_SCRIPT, load_env_file
+from app.core.config import DEFAULT_ENV_PATH, GSVI_CONFIG_PATH, GSVI_DIR, GSVI_HEADLESS, GSVI_PYTHON, load_env_file
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -28,12 +28,12 @@ def env_bool(name: str, default: bool) -> bool:
 def start_gsvi(host: str, port: str) -> subprocess.Popen:
     if not GSVI_PYTHON.exists():
         raise RuntimeError(f"GPT-SoVITS runtime not found: {GSVI_PYTHON}")
-    if not GSVI_SCRIPT.exists():
-        raise RuntimeError(f"GPT-SoVITS entrypoint not found: {GSVI_SCRIPT}")
+    if not GSVI_HEADLESS.exists():
+        raise RuntimeError(f"GSVI headless wrapper not found: {GSVI_HEADLESS}")
 
     command = [
         str(GSVI_PYTHON),
-        str(GSVI_SCRIPT),
+        str(GSVI_HEADLESS),
         "-s",
         host,
         "-p",
