@@ -26,7 +26,7 @@ SERVICES = [
     ("memory", "app.modules.memory.api", "8040"),
 ]
 
-GSVI_DIR = BASE_DIR / "models" / "GPT-SoVITS-1007-cu128"
+GSVI_DIR = BASE_DIR / "models" / "tts" / "GPT-SoVITS-1007-cu128"
 GSVI_HEADLESS = BASE_DIR / "scripts" / "run_gsvi_headless.py"
 GSVI_PYTHON = GSVI_DIR / "runtime" / "python.exe"
 GSVI_CONFIG = GSVI_DIR / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
@@ -150,3 +150,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

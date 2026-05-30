@@ -8,7 +8,7 @@ All arguments are forwarded to gsvi.py — only webbrowser.open is suppressed.
 import os
 import sys
 
-GSVI_DIR = os.path.join(os.path.dirname(__file__), "..", "models", "GPT-SoVITS-1007-cu128")
+GSVI_DIR = os.path.join(os.path.dirname(__file__), "..", "models", "tts", "GPT-SoVITS-1007-cu128")
 GSVI_DIR = os.path.abspath(GSVI_DIR)
 os.chdir(GSVI_DIR)
 sys.path.insert(0, GSVI_DIR)
@@ -24,4 +24,5 @@ gsvi_globals = {"__name__": "__main__", "__file__": gsvi_path}
 with open(gsvi_path, encoding="utf-8") as f:
     code = compile(f.read(), gsvi_path, "exec")
 exec(code, gsvi_globals)
+
 
