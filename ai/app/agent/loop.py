@@ -1,8 +1,11 @@
 ﻿"""Main agent loop — ties input state machine to the orchestrator."""
 
+import time
+
 from app.agent.orchestrator import Orchestrator
 from app.core.state import InputState
 from app.input import InputManager
+from app.input.interrupt import InterruptDetector
 
 
 class AgentLoop:
@@ -11,6 +14,7 @@ class AgentLoop:
     def __init__(self, orchestrator: Orchestrator | None = None) -> None:
         self.orchestrator = orchestrator or Orchestrator()
         self.input = InputManager(silence_timeout=1.5, max_duration=30.0)
+        self._interrupt = InterruptDetector()
         self._running = False
 
     def run(self) -> None:
@@ -55,6 +59,27 @@ class AgentLoop:
                     if error_turns >= 5:
                         print("Auto-exiting after 5 consecutive errors.")
                         break
+
+                # ── Interrupt check ─────────────────────────
+                # After TTS finishes, check if user spoke during playback.
+                # Drain buffered frames and check for speech.
+                self.input.transition(InputState.SPEAKING)
+                self._interrupt.reset()
+
+                # Drain any frames queued during TTS playback
+                import numpy as np
+                for _ in range(20):  # check up to 20 frames
+                    frame = self.input._read_frame(timeout=0.05)
+                    if frame is not None:
+                        self._interrupt.feed(frame)
+                    else:
+                        break
+
+                if self._interrupt.interrupted:
+                    print("    ⚡ Interrupt detected — listening immediately")
+                    self.input.transition(InputState.IDLE)
+                    continue
+                # ─────────────────────────────────────────────
 
                 self.input.transition(InputState.IDLE)
 
