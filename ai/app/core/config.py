@@ -1,11 +1,12 @@
-import os
+﻿import os
 from pathlib import Path
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
+MODELS_DIR = BASE_DIR / "models"
 DEFAULT_AUDIO_PATH = BASE_DIR / "last_recording.wav"
 DEFAULT_MEMORY_PATH = BASE_DIR / "memory.short.jsonl"
-DEFAULT_MODEL_DIR = BASE_DIR / "Qwen3-ASR-1.7B"
+DEFAULT_MODEL_DIR = MODELS_DIR / "Qwen3-ASR-1.7B"
 DEFAULT_ENV_PATH = BASE_DIR / ".env"
 
 RECORDER_URL = os.environ.get("RECORDER_URL", "http://127.0.0.1:8010")
@@ -14,7 +15,7 @@ LLM_URL = os.environ.get("LLM_URL", "http://127.0.0.1:8020")
 TTS_URL = os.environ.get("TTS_URL", "http://127.0.0.1:8030")
 MEMORY_URL = os.environ.get("MEMORY_URL", "http://127.0.0.1:8040")
 
-GSVI_DIR = BASE_DIR / "GPT-SoVITS-1007-cu128"
+GSVI_DIR = MODELS_DIR / "GPT-SoVITS-1007-cu128"
 GSVI_PYTHON = GSVI_DIR / "runtime" / "python.exe"
 GSVI_SCRIPT = GSVI_DIR / "gsvi.py"
 GSVI_CONFIG_PATH = GSVI_DIR / "GPT_SoVITS" / "configs" / "tts_infer.yaml"

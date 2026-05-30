@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import json
 import os
 import sys
@@ -14,7 +14,7 @@ import requests
 
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_MODEL_DIR = BASE_DIR / "Qwen3-ASR-1.7B"
+DEFAULT_MODEL_DIR = BASE_DIR / "models" / "Qwen3-ASR-1.7B"
 DEFAULT_MEMORY_PATH = BASE_DIR / "memory.short.jsonl"
 DEFAULT_AUDIO_PATH = BASE_DIR / "last_recording.wav"
 DEFAULT_ENV_PATH = BASE_DIR / ".env"
@@ -273,3 +273,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
