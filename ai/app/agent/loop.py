@@ -1,4 +1,4 @@
-"""Main agent loop — ties input state machine to the orchestrator."""
+﻿"""Main agent loop — ties input state machine to the orchestrator."""
 
 import time
 
@@ -7,19 +7,25 @@ from app.core.event_bus import bus
 from app.core.state import InputState
 from app.input import InputManager
 from app.input.interrupt import InterruptDetector
+from app.tts.player import AsyncAudioPlayer
 
 
 class AgentLoop:
-    """Continuous voice agent: listen → process → speak → repeat."""
+    """Continuous voice agent: listen → process → speak → repeat.
+
+    Uses streaming LLM + sentence‑buffer TTS + async player for low latency.
+    """
 
     def __init__(self, orchestrator: Orchestrator | None = None) -> None:
         self.orchestrator = orchestrator or Orchestrator()
         self.input = InputManager(silence_timeout=1.5, max_duration=30.0)
         self._interrupt = InterruptDetector()
+        self._player = AsyncAudioPlayer()
         self._running = False
 
     def run(self) -> None:
         self._running = True
+        self._player.start()
         self.input.start()
 
         print("\n" + "=" * 48)
@@ -51,15 +57,20 @@ class AgentLoop:
 
                 self._emit_state(InputState.PROCESSING)
                 silent_turns = 0
+                error_turns = 0
                 bus.emit("log", f"[{turn}] Processing...")
-                result = self.orchestrator.run_turn(event["audio_path"])
+
+                result = self.orchestrator.run_turn_streaming(
+                    event["audio_path"], self._player
+                )
 
                 if result["ok"]:
                     bus.emit("user_text", result["user_text"])
                     bus.emit("assistant_reply", result["reply_text"])
                     print(f"    User: {result['user_text']}")
                     print(f"    Assistant: {result['reply_text']}")
-                    error_turns = 0
+                    sentence_count = result.get("sentence_count", 0)
+                    bus.emit("log", f"[{turn}] Sent {sentence_count} sentence(s) to player")
                 else:
                     error_turns += 1
                     bus.emit("log", f"[{turn}] Error: {result.get('error')}")
@@ -68,22 +79,21 @@ class AgentLoop:
                         bus.emit("log", "Auto-exiting after 5 consecutive errors.")
                         break
 
-                # Interrupt check
                 self.input.transition(InputState.SPEAKING)
                 self._emit_state(InputState.SPEAKING)
                 self._interrupt.reset()
 
-                for _ in range(20):
+                monitor_start = time.monotonic()
+                while self._player.is_playing:
+                    if time.monotonic() - monitor_start > 30.0:
+                        break
                     frame = self.input._read_frame(timeout=0.05)
                     if frame is not None:
                         self._interrupt.feed(frame)
-                    else:
+                    if self._interrupt.interrupted:
+                        bus.emit("log", "Interrupt detected — stopping playback")
+                        self._player.stop()
                         break
-
-                if self._interrupt.interrupted:
-                    bus.emit("log", "Interrupt detected")
-                    self.input.transition(InputState.IDLE)
-                    continue
 
                 self.input.transition(InputState.IDLE)
 
@@ -92,6 +102,7 @@ class AgentLoop:
             print(f"\nStopped after {turn} turn(s).")
         finally:
             self.input.stop()
+            self._player.shutdown(wait=False)
 
     def _emit_state(self, state: InputState) -> None:
         bus.emit("state_changed", state.name)
@@ -99,3 +110,4 @@ class AgentLoop:
     def stop(self) -> None:
         self._running = False
         self.input.stop()
+        self._player.shutdown(wait=False)

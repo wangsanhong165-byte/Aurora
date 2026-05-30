@@ -1,17 +1,20 @@
+﻿"""Add SSE streaming endpoint and helper to LLM service."""
+
 import argparse
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from openai import OpenAI
 
 from app.core.config import DEFAULT_ENV_PATH, load_env_file
 from app.core.schemas import LLMRequest, LLMResponse
 
 
-app = FastAPI(title="Cloud LLM Adapter API", version="1.0.0")
+app = FastAPI(title="Cloud LLM Adapter API", version="1.1.0")
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -46,10 +49,10 @@ def build_messages(request: LLMRequest) -> list[dict[str, str]]:
         (
             "You are a voice assistant. Return JSON only, no Markdown. "
             "JSON schema: {"
-            '"reply_text": "natural language response to speak to the user", '
-            '"intent": "short intent name", '
-            '"actions": [{"type": "action name", "args": {}}], '
-            '"memory": {"summary": "short memory summary", "facts": []}'
+            "\"reply_text\": \"natural language response to speak to the user\", "
+            "\"intent\": \"short intent name\", "
+            "\"actions\": [{\"type\": \"action name\", \"args\": {}}], "
+            "\"memory\": {\"summary\": \"short memory summary\", \"facts\": []}"
             "}."
         ),
     )
@@ -59,17 +62,30 @@ def build_messages(request: LLMRequest) -> list[dict[str, str]]:
     ]
 
 
+def build_stream_messages(request: LLMRequest) -> list[dict[str, str]]:
+    """Simpler prompt for streaming — natural language, no JSON."""
+    system_prompt = os.environ.get(
+        "LLM_STREAM_SYSTEM_PROMPT",
+        "你是一个语音助手。用自然口语简短回复，不要用 Markdown。",
+    )
+    user_content = json.dumps(
+        {"transcript": request.event.transcript, "recent_memory": request.recent_memory},
+        ensure_ascii=False,
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+
 def build_extra_body() -> dict[str, Any] | None:
     extra_body: dict[str, Any] = {}
-
     thinking_type = os.environ.get("LLM_THINKING_TYPE", "enabled").strip().lower()
     if thinking_type and thinking_type not in {"none", "off", "disabled"}:
         extra_body["thinking"] = {"type": thinking_type}
-
     raw_extra_body = os.environ.get("LLM_EXTRA_BODY_JSON")
     if raw_extra_body:
         extra_body.update(json.loads(raw_extra_body))
-
     return extra_body or None
 
 
@@ -113,6 +129,38 @@ def call_cloud_llm(request: LLMRequest) -> LLMResponse:
     )
 
 
+def _stream_tokens(request: LLMRequest) -> Generator[str, None, None]:
+    """Generator yielding SSE-formatted token events."""
+    api_key, _ = get_api_key()
+    base_url = os.environ.get("LLM_BASE_URL", "https://api.deepseek.com")
+    model = os.environ.get("LLM_MODEL", "deepseek-v4-flash")
+    temperature = float(os.environ.get("LLM_TEMPERATURE", "0.3"))
+    reasoning_effort = os.environ.get("LLM_REASONING_EFFORT", "medium")
+    timeout = float(os.environ.get("LLM_TIMEOUT_SECONDS", "120"))
+
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
+
+    params: dict[str, Any] = {
+        "model": model,
+        "messages": build_stream_messages(request),
+        "stream": True,
+        "temperature": temperature,
+    }
+    if reasoning_effort:
+        params["reasoning_effort"] = reasoning_effort
+
+    stream = client.chat.completions.create(**params)
+    for chunk in stream:
+        delta = chunk.choices[0].delta if chunk.choices else None
+        if delta and delta.content:
+            yield f"data: {json.dumps({'token': delta.content})}\n\n"
+
+    yield "data: [DONE]\n\n"
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 @app.get("/health")
 def health() -> dict[str, Any]:
     key_env = os.environ.get("LLM_API_KEY_ENV", "DEEPSEEK_API_KEY")
@@ -134,6 +182,16 @@ def chat(request: LLMRequest) -> LLMResponse:
         return call_cloud_llm(request)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/v1/llm/chat/stream")
+def chat_stream(request: LLMRequest):
+    """SSE streaming endpoint — yields tokens as text/event-stream."""
+    return StreamingResponse(
+        _stream_tokens(request),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def main() -> None:

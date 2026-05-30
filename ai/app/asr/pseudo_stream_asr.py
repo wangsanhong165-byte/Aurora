@@ -172,7 +172,7 @@ class PseudoStreamASR:
         """Signal the loop to stop (e.g. from a signal handler)."""
         self._running = False
 
-    # ------------------------------------------------------------------
+
     # Recording
     # ------------------------------------------------------------------
     def _audio_callback(self, indata: np.ndarray, frames: int,
