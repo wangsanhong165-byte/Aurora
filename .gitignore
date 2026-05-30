@@ -1,0 +1,22 @@
+﻿# Exclude sibling projects
+/ccx/
+/code/
+/dev c++/
+/python/
+
+# IDE and cache
+ai/.idea/
+ai/__pycache__/
+ai/**/__pycache__/
+
+# Large model & runtime files
+ai/GPT-SoVITS-1007-cu128/
+ai/Qwen3-ASR-1.7B/
+
+# Temp / generated files
+ai/tts_outputs/
+ai/last_recording.wav
+ai/memory.short.jsonl
+
+# Secrets (contains API keys)
+ai/.env

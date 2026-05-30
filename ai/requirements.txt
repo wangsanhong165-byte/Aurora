@@ -1,0 +1,10 @@
+requests
+openai
+fastapi
+pydantic>=2
+uvicorn[standard]
+python-multipart
+sounddevice
+soundfile
+pyttsx3
+qwen-asr
