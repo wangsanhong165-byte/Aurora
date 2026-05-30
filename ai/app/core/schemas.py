@@ -1,4 +1,4 @@
-from typing import Any
+﻿from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -14,6 +14,23 @@ class RecordResponse(BaseModel):
     audio_path: str
     seconds: float
     sample_rate: int
+
+
+class VADListenRequest(BaseModel):
+    sample_rate: int = Field(default=16000, gt=0)
+    output_path: str | None = None
+    silence_timeout: float = Field(default=1.5, gt=0, description="Seconds of silence before stopping")
+    speech_threshold: float = Field(default=0.5, gt=0, le=1.0, description="Fraction of frames that must be voiced to trigger")
+    max_duration: float = Field(default=30.0, gt=0, description="Max recording seconds even if still speaking")
+    aggressiveness: int = Field(default=2, ge=0, le=3, description="webrtcvad aggressiveness (0=least, 3=most)")
+
+
+class VADListenResponse(BaseModel):
+    ok: bool
+    audio_path: str
+    duration: float
+    sample_rate: int
+    triggered: bool
 
 
 class ASRRequest(BaseModel):
@@ -103,6 +120,9 @@ class PipelineRequest(BaseModel):
     tts_voice: str | None = None
     tts_emotion: str | None = None
     tts_speed: float | None = None
+    vad: bool = False
+    vad_silence_timeout: float = Field(default=1.5, gt=0)
+    vad_max_duration: float = Field(default=30.0, gt=0)
 
 
 class PipelineResponse(BaseModel):

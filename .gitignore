@@ -5,6 +5,7 @@
 /python/
 
 # IDE and cache
+.idea/
 ai/.idea/
 ai/__pycache__/
 ai/**/__pycache__/

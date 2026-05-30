@@ -1,4 +1,4 @@
-requests
+﻿requests
 openai
 fastapi
 pydantic>=2
@@ -8,3 +8,5 @@ sounddevice
 soundfile
 pyttsx3
 qwen-asr
+webrtcvad
+numpy
