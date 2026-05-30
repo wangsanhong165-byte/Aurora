@@ -149,7 +149,7 @@ def main() -> int:
     for name, proc in processes:
         if proc is None:
             continue
-        _, port, _ = next((s for s in SERVICES if s[0] == name), (None, None, None))
+        port = next((s[2] for s in SERVICES if s[0] == name), None)
         ok, elapsed = wait_for_health(name, port or "")
         if ok:
             print(f"  [ok] {name} ready ({elapsed:.1f}s)")
@@ -267,3 +267,4 @@ def _build_pipeline_args(args: argparse.Namespace):
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
