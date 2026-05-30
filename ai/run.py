@@ -157,6 +157,7 @@ def save_memory(text: str, reply: dict) -> None:
 # ── Run modes ───────────────────────────────────────────────────
 
 def run_vad_loop() -> int:
+    from app.core.state import InputState
     from app.input import InputManager
 
     mgr = InputManager(silence_timeout=1.5, max_duration=30.0)
@@ -215,7 +216,7 @@ def run_vad_loop() -> int:
                     print("Auto-exiting after 5 consecutive errors.")
                     break
 
-            mgr.transition(app.core.state.InputState.IDLE)
+            mgr.transition(InputState.IDLE)
 
         return 0
     except KeyboardInterrupt:
@@ -301,3 +302,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

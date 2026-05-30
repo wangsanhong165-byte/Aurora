@@ -53,7 +53,7 @@ class InputManager:
         # Trigger / silence counters
         self._voiced_frames = 0
         self._silent_frames = 0
-        self._trigger_count = int(0.2 * 1000 / self.frame_ms)   # ~7 frames
+        self._trigger_count = int(0.5 * 1000 / self.frame_ms)   # ~7 frames
         self._silence_limit = int(silence_timeout * 1000 / self.frame_ms)
         self._max_frames = int(max_duration * 1000 / self.frame_ms)
 
@@ -198,5 +198,11 @@ class InputManager:
         duration = len(audio) / self.sample_rate
         print(f"[Input] Recorded {duration:.1f}s → {path}")
 
+        if duration < 0.5:
+            print(f"[Input] Too short ({duration:.1f}s), ignoring")
+            self._state = InputState.IDLE
+            return {"type": "empty"}
+
         self._state = InputState.PROCESSING
         return {"type": "speech", "audio_path": str(path), "duration": duration}
+
