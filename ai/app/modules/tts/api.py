@@ -12,7 +12,37 @@ from app.core.config import DEFAULT_ENV_PATH, DEFAULT_TTS_ENGINE, DEFAULT_TTS_OU
 from app.core.schemas import TTSRequest, TTSResponse
 
 
-app = FastAPI(title="Local TTS API", version="1.1.0")
+app = FastAPI(title="Local TTS API", version="1.2.0")
+
+# ── GSVI 标签映射：英文/简写 → GSVI 内部使用的中文标签 ──
+_EMOTION_MAP = {
+    "default": "默认", "happy": "开心", "sad": "悲伤",
+    "angry": "愤怒", "surprise": "惊讶", "fear": "恐惧",
+    "neutral": "中性", "calm": "平静", "excited": "激动",
+    "serious": "严肃", "gentle": "温柔",
+}
+_TEXT_LANG_MAP = {
+    "zh": "中英混合", "cn": "中英混合", "chinese": "中英混合",
+    "mixed": "中英混合", "auto": "中英混合", "zh_en": "中英混合",
+    "en": "英文", "english": "英文",
+    "ja": "日文", "jp": "日文", "japanese": "日文",
+    "ko": "韩文", "kr": "韩文", "korean": "韩文",
+    "yue": "粤语", "cantonese": "粤语",
+}
+_PROMPT_LANG_MAP = {
+    "zh": "中文", "cn": "中文", "chinese": "中文",
+    "mixed": "中文", "auto": "中文", "zh_en": "中文",
+    "en": "英文", "english": "英文",
+    "ja": "日文", "jp": "日文", "japanese": "日文",
+    "ko": "韩文", "kr": "韩文", "korean": "韩文",
+    "yue": "粤语", "cantonese": "粤语",
+}
+
+
+def _map_label(raw: str, mapping: dict[str, str], fallback: str) -> str:
+    """英文简写 → 中文标签；已经是中文的直传不走映射"""
+    key = raw.strip().lower()
+    return mapping.get(key, raw.strip())
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -37,13 +67,17 @@ def tts_engine(request: TTSRequest) -> str:
 
 
 def gsvi_options(request: TTSRequest) -> dict[str, Any]:
+    raw_emotion = request.emotion or os.environ.get("GSVI_EMOTION", "默认")
+    raw_text_lang = request.text_lang or os.environ.get("GSVI_TEXT_LANG", "中英混合")
+    raw_prompt_lang = request.prompt_lang or os.environ.get("GSVI_PROMPT_LANG", "中文")
+
     return {
         "url": os.environ.get("GSVI_URL", GSVI_URL).rstrip("/"),
         "model": request.model or os.environ.get("GSVI_MODEL", "GSVI-v4"),
         "voice": request.voice or os.environ.get("GSVI_VOICE", "明日方舟-中文-阿米娅"),
-        "emotion": request.emotion or os.environ.get("GSVI_EMOTION", "默认"),
-        "text_lang": request.text_lang or os.environ.get("GSVI_TEXT_LANG", "中英混合"),
-        "prompt_lang": request.prompt_lang or os.environ.get("GSVI_PROMPT_LANG", "中文"),
+        "emotion": _map_label(raw_emotion, _EMOTION_MAP, "默认"),
+        "text_lang": _map_label(raw_text_lang, _TEXT_LANG_MAP, "中英混合"),
+        "prompt_lang": _map_label(raw_prompt_lang, _PROMPT_LANG_MAP, "中文"),
         "response_format": request.response_format or os.environ.get("GSVI_RESPONSE_FORMAT", "wav"),
         "speed": request.speed if request.speed is not None else env_float("GSVI_SPEED", 1.0),
         "timeout": env_float("GSVI_TIMEOUT", 180.0),
