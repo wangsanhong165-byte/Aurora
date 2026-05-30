@@ -1,4 +1,4 @@
-﻿"""Main agent loop — ties input state machine to the orchestrator."""
+"""Main agent loop — ties input state machine to the orchestrator."""
 
 import time
 

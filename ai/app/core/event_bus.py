@@ -1,4 +1,4 @@
-﻿"""Lightweight event bus with queue for UI polling."""
+"""Lightweight event bus with queue for UI polling."""
 
 from __future__ import annotations
 

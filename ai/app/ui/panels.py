@@ -1,4 +1,4 @@
-﻿"""TUI panels: status, conversation turn, logs."""
+"""TUI panels: status, conversation turn, logs."""
 
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical

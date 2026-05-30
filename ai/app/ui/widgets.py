@@ -1,4 +1,4 @@
-﻿"""Reusable TUI widgets."""
+"""Reusable TUI widgets."""
 
 from textual.app import ComposeResult
 from textual.widgets import Static

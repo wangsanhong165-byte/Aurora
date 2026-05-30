@@ -1,4 +1,4 @@
-﻿"""
+"""
 v1 Voice Agent — one-click launcher with input state machine.
 
 Usage:

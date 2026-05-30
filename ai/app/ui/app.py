@@ -1,4 +1,4 @@
-﻿"""Voice Agent v1 TUI — Textual-based observability panel."""
+"""Voice Agent v1 TUI — Textual-based observability panel."""
 
 from textual.app import App, ComposeResult
 from textual.containers import Container
