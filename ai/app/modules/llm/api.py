@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import json
 import os
 from pathlib import Path
@@ -44,7 +44,7 @@ def build_messages(request: LLMRequest) -> list[dict[str, str]]:
     system_prompt = os.environ.get(
         "LLM_SYSTEM_PROMPT",
         (
-            "你是语音助手。只返回JSON。要求：1~2句话，口语化，有停顿感。禁止\"请问\"、\"您是否\"、\"明白了\"、\"很高兴\"这类客服话术。用户是说话不是写作文，允许\"嗯\"\"对\"\"这个\"等碎片表达，结合上下文理解，不要立即追问。用户说\"打开微信\"就直接说\"好，打开微信\"，不要反问确认。"
+            "You are a voice assistant. Return JSON only, no Markdown. "
             "JSON schema: {"
             '"reply_text": "natural language response to speak to the user", '
             '"intent": "short intent name", '
@@ -152,5 +152,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
