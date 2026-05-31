@@ -19,7 +19,7 @@ class AgentLoop:
     def __init__(self, orchestrator: Orchestrator | None = None) -> None:
         self.orchestrator = orchestrator or Orchestrator()
         self.input = InputManager(silence_timeout=0.7, max_duration=30.0)
-        self._interrupt = InterruptDetector()
+        self._interrupt = InterruptDetector(rms_threshold=0.05)  # avoid echo-triggered false interrupt
         self._player = AsyncAudioPlayer()
         self._running = False
 

@@ -171,14 +171,18 @@ class Orchestrator:
             },
             "recent_memory": context,
         }
-        r = requests.post(
-            f"{self.llm_url}/v1/llm/chat/stream",
-            json=payload,
-            stream=True,
-            timeout=120,
-        )
-        r.raise_for_status()
-        yield from _parse_sse_tokens(r)
+        try:
+            r = requests.post(
+                f"{self.llm_url}/v1/llm/chat/stream",
+                json=payload,
+                stream=True,
+                timeout=120,
+            )
+            r.raise_for_status()
+            yield from _parse_sse_tokens(r)
+        except Exception as exc:
+            print(f"[Orchestrator] LLM stream error: {exc}")
+            # Yield nothing ? caller handles empty result
 
     def _synthesize(self, text: str) -> bytes:
         engine = os.environ.get("TTS_ENGINE", "gsvi").lower()
@@ -238,7 +242,11 @@ class Orchestrator:
 
         ctx = self.load_context()
         t_llm_tts_start = time.time()
-        result = self._finish_streaming(text, ctx, player)
+        try:
+            result = self._finish_streaming(text, ctx, player)
+        except Exception as exc:
+            print(f"[Orchestrator] Streaming pipeline error: {exc}")
+            result = {"ok": False, "error": str(exc), "user_text": text}
         t_llm_tts = time.time() - t_llm_tts_start
         print(f"[Timing] ASR={t_asr:.1f}s  LLM+TTS={t_llm_tts:.1f}s  total={t_asr+t_llm_tts:.1f}s")
         return result

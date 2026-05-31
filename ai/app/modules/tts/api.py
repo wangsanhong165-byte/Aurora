@@ -30,6 +30,7 @@ _qwen_model: Any = None
 _QWEN_MODEL_DIR = Path(__file__).resolve().parents[3] / "models" / "tts" / "Qwen3-TTS-12Hz-1.7B-Base"
 
 _SPEAKERS = []  # Base model has no built-in speakers; voice cloned from reference audio
+_voice_clone_prompt = None  # Pre-computed once for consistent voice across all sentences
 
 
 def _load_qwen_model() -> Any:
@@ -54,7 +55,25 @@ def _load_qwen_model() -> Any:
         device_map=device,
         dtype=dtype,
     )
-    print(f"[TTS] Qwen3TTS loaded, VRAM: {torch.cuda.memory_allocated()/1e9:.1f}GB" if device.startswith("cuda") else "[TTS] Qwen3TTS loaded")
+    print(f"[TTS] Qwen3TTS loaded")
+
+    # Pre-compute voice clone prompt for consistent voice across all sentences
+    global _voice_clone_prompt
+    ref_audio = os.environ.get("TTS_REF_AUDIO", "")
+    ref_text = os.environ.get("TTS_REF_TEXT", "")
+    if ref_audio:
+        try:
+            _voice_clone_prompt = _qwen_model.create_voice_clone_prompt(
+                ref_audio=ref_audio,
+                ref_text=ref_text if ref_text else None,
+                x_vector_only_mode=True,
+            )
+            print(f"[TTS] Voice clone prompt cached (x_vector_only, {ref_audio})")
+        except Exception as exc:
+            print(f"[TTS] Failed to pre-compute clone prompt: {exc}")
+    else:
+        print("[TTS] TTS_REF_AUDIO/TTS_REF_TEXT not set, clone prompt will be created on first call")
+
     return _qwen_model
 
 
@@ -207,12 +226,21 @@ def synthesize_with_qwen(text: str, speaker: str = "", language: str = "") -> by
     if not ref_audio:
         raise RuntimeError("TTS_REF_AUDIO not set in .env ? Base model requires a reference audio file for voice cloning")
 
-    result = model.generate_voice_clone(
-        text=text,
-        language=lang_label,
-        ref_audio=ref_audio,
-        ref_text=ref_text,
-    )
+    global _voice_clone_prompt
+    if _voice_clone_prompt is not None:
+        print("[TTS] Using cached voice prompt")
+        result = model.generate_voice_clone(
+            text=text,
+            language=lang_label,
+            voice_clone_prompt=_voice_clone_prompt,
+        )
+    else:
+        result = model.generate_voice_clone(
+            text=text,
+            language=lang_label,
+            ref_audio=ref_audio,
+            ref_text=ref_text,
+        )
     # result = (list_of_ndarray, sample_rate), extract first channel
     wavs_list, sr = result
     wavs = np.asarray(wavs_list[0], dtype=np.float32)
