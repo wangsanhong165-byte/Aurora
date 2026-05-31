@@ -67,7 +67,9 @@ def start_services(args: argparse.Namespace) -> list[subprocess.Popen]:
 
 
 def wait_services() -> bool:
-    all_services = [("gsvi", "8050")] + [(s[0], s[2]) for s in SERVICES]
+    all_services = [(s[0], s[2]) for s in SERVICES]
+    if env_bool("START_GSVI", False):
+        all_services.insert(0, ("gsvi", "8050"))
     ok = True
     for name, port in all_services:
         timeout = SERVICE_TIMEOUTS.get(name, 15.0)
