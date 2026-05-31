@@ -108,7 +108,7 @@ class Orchestrator:
         r = requests.post(
             f"{self.asr_url}/v1/asr/transcribe",
             json={"audio_path": audio_path, "language": language},
-            timeout=300,
+            timeout=120,
         )
         r.raise_for_status()
         body = r.json()
@@ -127,7 +127,7 @@ class Orchestrator:
                 },
                 "recent_memory": context,
             },
-            timeout=300,
+            timeout=120,
         )
         r.raise_for_status()
         return r.json()
@@ -175,7 +175,7 @@ class Orchestrator:
             f"{self.llm_url}/v1/llm/chat/stream",
             json=payload,
             stream=True,
-            timeout=300,
+            timeout=120,
         )
         r.raise_for_status()
         yield from _parse_sse_tokens(r)
@@ -199,7 +199,7 @@ class Orchestrator:
             r = requests.post(
                 f"{gsvi_url}/v1/audio/speech",
                 json=payload,
-                timeout=300,
+                timeout=120,
             )
             r.raise_for_status()
             return r.content
@@ -210,7 +210,7 @@ class Orchestrator:
             r = requests.post(
                 f"{self.tts_url}/v1/tts/synthesize",
                 json={"text": text, "speaker": speaker, "language": language},
-                timeout=300,
+                timeout=120,
             )
             r.raise_for_status()
             return r.content

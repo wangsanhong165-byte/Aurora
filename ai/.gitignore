@@ -3,3 +3,7 @@ memory.short.jsonl
 __pycache__/
 .idea/
 *.pyc
+
+models/
+*.safetensors
+*.safetensors.index.json

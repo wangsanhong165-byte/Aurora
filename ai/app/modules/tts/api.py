@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import soundfile as sf
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -194,21 +196,19 @@ def synthesize_with_gsvi(request: TTSRequest) -> TTSResponse:
 def synthesize_with_qwen(text: str, speaker: str = "", language: str = "") -> bytes:
     """Generate audio from text using Qwen3TTS. Returns raw WAV bytes."""
     model = _load_qwen_model()
-    spk = speaker or os.environ.get("TTS_SPEAKER", "serena")
+    spk = speaker or os.environ.get("TTS_SPEAKER", "serena").lower()
     lang = language or os.environ.get("TTS_LANGUAGE", "zh")
     lang_map = {"zh": "Chinese", "cn": "Chinese", "en": "English", "ja": "Japanese", "ko": "Korean"}
     lang_label = lang_map.get(lang.lower(), "Chinese")
     result = model.generate_custom_voice(text=text, language=lang_label, speaker=spk)
-    if isinstance(result, tuple):
-        wavs, sr = result
-    else:
-        import soundfile as sf
-        wavs, sr = sf.read(str(result))
+    # result = (list_of_ndarray, sample_rate), extract first channel
+    wavs_list, sr = result
+    wavs = np.asarray(wavs_list[0], dtype=np.float32)
+    if wavs.ndim == 2:
+        wavs = wavs.flatten()
     buf = io.BytesIO()
-    import soundfile as sf
     sf.write(buf, wavs, sr, format="WAV")
     return buf.getvalue()
-
 
 # ── Routing ─────────────────────────────────────────────────────
 def speak(request: TTSRequest) -> TTSResponse:
