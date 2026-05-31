@@ -137,8 +137,8 @@ class Orchestrator:
             payload["engine"] = engine
         requests.post(f"{self.tts_url}/v1/tts/speak", json=payload, timeout=180)
 
-    def load_context(self, limit: int = 8) -> list[dict]:
-        full = self._memory.load(limit=0)
+    def load_context(self, limit: int = 8, max_age_minutes: float | None = 30.0) -> list[dict]:
+        full = self._memory.load(limit=0, max_age_minutes=max_age_minutes)
         return self._summarizer.compress(full, keep_recent=limit)
 
     def save_memory(self, text: str, reply: dict) -> None:

@@ -1,7 +1,7 @@
 ﻿"""Short-term conversation memory — JSONL-based rolling window."""
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -17,19 +17,35 @@ class ShortTermMemory:
         self.path = path or (Path(__file__).resolve().parents[2] / "memory" / "short_term.jsonl")
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def load(self, limit: int = 8) -> list[dict[str, Any]]:
+    def load(self, limit: int = 8, max_age_minutes: float | None = None) -> list[dict[str, Any]]:
+        """Load recent turns, optionally filtering out records older than max_age_minutes."""
         if not self.path.exists():
             return []
         rows: list[dict[str, Any]] = []
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+            if max_age_minutes is not None
+            else None
+        )
         with self.path.open("r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
                 try:
-                    rows.append(json.loads(line))
+                    rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                if cutoff is not None:
+                    created = rec.get("created_at", "")
+                    if created:
+                        try:
+                            t = datetime.fromisoformat(created)
+                            if t < cutoff:
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+                rows.append(rec)
         return rows[-limit:] if limit else rows
 
     def append(self, user_text: str, reply: dict[str, Any]) -> None:
@@ -48,5 +64,3 @@ class ShortTermMemory:
 
     def clear(self) -> None:
         self.path.unlink(missing_ok=True)
-
-

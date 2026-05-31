@@ -63,15 +63,26 @@ def build_messages(request: LLMRequest) -> list[dict[str, str]]:
 
 
 def build_stream_messages(request: LLMRequest) -> list[dict[str, str]]:
-    """Simpler prompt for streaming — natural language, no JSON."""
+    """Plain-text context — no JSON metadata overhead, only conversation text."""
     system_prompt = os.environ.get(
         "LLM_STREAM_SYSTEM_PROMPT",
         "你是一个语音助手。用自然口语简短回复，不要用 Markdown。",
     )
-    user_content = json.dumps(
-        {"transcript": request.event.transcript, "recent_memory": request.recent_memory},
-        ensure_ascii=False,
-    )
+    history_lines: list[str] = []
+    for rec in request.recent_memory or []:
+        if isinstance(rec, dict):
+            user = str(rec.get("user", "")).strip()
+            assistant = str(rec.get("assistant", "")).strip()
+            if user:
+                history_lines.append(f"用户：{user}")
+            if assistant:
+                history_lines.append(f"助手：{assistant}")
+    history_block = "\n".join(history_lines[-20:])
+    transcript = request.event.transcript.strip()
+    if history_block:
+        user_content = f"[对话历史]\n{history_block}\n\n[当前]\n用户：{transcript}"
+    else:
+        user_content = f"用户：{transcript}"
     return [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
