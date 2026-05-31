@@ -126,6 +126,14 @@ class InputManager:
         except queue.Empty:
             return None
 
+    def _drain_queue(self) -> None:
+        """Flush all pending frames from the queue."""
+        while not self._frame_queue.empty():
+            try:
+                self._frame_queue.get_nowait()
+            except queue.Empty:
+                break
+
     # ── state transitions ───────────────────────────────────────
 
     def _enter_idle(self) -> None:
@@ -134,6 +142,8 @@ class InputManager:
         self._voiced_frames = 0
         self._silent_frames = 0
         self._state = InputState.LISTENING
+        # Drain stale frames accumulated during PROCESSING/SPEAKING
+        self._drain_queue()
         print("[Input] LISTENING...")
 
     def _run_listening(self) -> dict | None:
