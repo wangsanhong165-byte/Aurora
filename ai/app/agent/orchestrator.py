@@ -12,6 +12,7 @@ import json
 import os
 import re
 import uuid
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -217,12 +218,18 @@ class Orchestrator:
         player: AsyncAudioPlayer,
         language: str | None = None,
     ) -> dict:
+        t_asr_start = time.time()
         text, _lang = self.transcribe(audio_path, language)
+        t_asr = time.time() - t_asr_start
         if not text:
             return {"ok": False, "error": "ASR returned empty text", "user_text": ""}
 
         ctx = self.load_context()
-        return self._finish_streaming(text, ctx, player)
+        t_llm_tts_start = time.time()
+        result = self._finish_streaming(text, ctx, player)
+        t_llm_tts = time.time() - t_llm_tts_start
+        print(f"[Timing] ASR={t_asr:.1f}s  LLM+TTS={t_llm_tts:.1f}s  total={t_asr+t_llm_tts:.1f}s")
+        return result
     def _finish_streaming(
         self, user_text: str, ctx: list[dict], player: AsyncAudioPlayer
     ) -> dict:
@@ -236,9 +243,15 @@ class Orchestrator:
         first = True
 
         # Phase 1: stream LLM, submit TTS in parallel
+        t_llm_start = time.time()
         tokens = self._stream_llm(user_text, ctx)
+        t_first_sentence = None
+        t_last_sentence = None
         for sentence in _split_sentences(tokens, min_length=5, max_length=50):
             reply_full.append(sentence)
+            if t_first_sentence is None:
+                t_first_sentence = time.time()
+            t_last_sentence = time.time()
 
             if first:
                 player.stop()
@@ -248,10 +261,12 @@ class Orchestrator:
             future = self._tts_executor.submit(self._synthesize, sentence)
             tts_futures.append((sentence, future))
 
+        t_llm_done = time.time()
         if not reply_full:
             return {"ok": False, "error": "LLM returned empty", "user_text": user_text}
 
         # Phase 2: resolve futures in order, enqueue audio
+        t_tts_start = time.time()
         sentence_count = 0
         for sentence, future in tts_futures:
             sentence_count += 1
@@ -260,6 +275,10 @@ class Orchestrator:
                 player.enqueue(wav)
             except Exception as exc:
                 print(f"[Orchestrator] TTS error for sentence: {exc}")
+        t_tts_done = time.time()
+
+        if t_first_sentence:
+            print(f"[Timing] LLM-stream={t_first_sentence-t_llm_start:.1f}s LLM-total={t_llm_done-t_llm_start:.1f}s TTS-wait={t_tts_done-t_tts_start:.1f}s sentences={sentence_count}")
 
         reply_text = "".join(reply_full).strip()
 

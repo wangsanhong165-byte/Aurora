@@ -124,6 +124,25 @@ def main() -> int:
         if not wait_services():
             return 1
 
+        # Warmup ASR model (first call loads from disk ~9s, avoid on first utterance)
+        print("\nWarming up ASR...")
+        import tempfile
+        import numpy as np
+        import soundfile as sf
+        warmup_audio = np.zeros(16000, dtype=np.float32)
+        warmup_path = Path(tempfile.gettempdir()) / "_asr_warmup.wav"
+        sf.write(str(warmup_path), warmup_audio, 16000)
+        try:
+            r = requests.post("http://127.0.0.1:8000/v1/asr/transcribe",
+                             json={"audio_path": str(warmup_path), "language": None},
+                             timeout=120)
+            r.raise_for_status()
+            print("[warmup] ASR model loaded")
+        except Exception:
+            print("[warmup] ASR warmup skipped (will load on first utterance)")
+        finally:
+            warmup_path.unlink(missing_ok=True)
+
         if args.no_vad:
             import sounddevice as sd
             import soundfile as sf
