@@ -181,26 +181,39 @@ class Orchestrator:
         yield from _parse_sse_tokens(r)
 
     def _synthesize(self, text: str) -> bytes:
-        gsvi_url = os.environ.get("GSVI_URL", "http://127.0.0.1:8050").rstrip("/")
-        payload = {
-            "model": os.environ.get("GSVI_MODEL", "GSVI-v4"),
-            "input": text,
-            "voice": os.environ.get("GSVI_VOICE", ""),
-            "response_format": "wav",
-            "speed": float(os.environ.get("GSVI_SPEED", "1.0")),
-            "other_params": {
-                "text_lang": os.environ.get("GSVI_TEXT_LANG", "中英混合"),
-                "prompt_lang": os.environ.get("GSVI_PROMPT_LANG", "中文"),
-                "emotion": os.environ.get("GSVI_EMOTION", "默认"),
-            },
-        }
-        r = requests.post(
-            f"{gsvi_url}/v1/audio/speech",
-            json=payload,
-            timeout=120,
-        )
-        r.raise_for_status()
-        return r.content
+        engine = os.environ.get("TTS_ENGINE", "gsvi").lower()
+        if engine == "gsvi":
+            gsvi_url = os.environ.get("GSVI_URL", "http://127.0.0.1:8050").rstrip("/")
+            payload = {
+                "model": os.environ.get("GSVI_MODEL", "GSVI-v4"),
+                "input": text,
+                "voice": os.environ.get("GSVI_VOICE", ""),
+                "response_format": "wav",
+                "speed": float(os.environ.get("GSVI_SPEED", "1.0")),
+                "other_params": {
+                    "text_lang": os.environ.get("GSVI_TEXT_LANG", "中英混合"),
+                    "prompt_lang": os.environ.get("GSVI_PROMPT_LANG", "中文"),
+                    "emotion": os.environ.get("GSVI_EMOTION", "默认"),
+                },
+            }
+            r = requests.post(
+                f"{gsvi_url}/v1/audio/speech",
+                json=payload,
+                timeout=120,
+            )
+            r.raise_for_status()
+            return r.content
+        else:
+            # Qwen3TTS via TTS service
+            speaker = os.environ.get("TTS_SPEAKER", "serena")
+            language = os.environ.get("TTS_LANGUAGE", "zh")
+            r = requests.post(
+                f"{self.tts_url}/v1/tts/synthesize",
+                json={"text": text, "speaker": speaker, "language": language},
+                timeout=120,
+            )
+            r.raise_for_status()
+            return r.content
 
     def run_turn_streaming_from_text(
         self, text: str, player: AsyncAudioPlayer

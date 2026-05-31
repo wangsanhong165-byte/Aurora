@@ -1,4 +1,4 @@
-"""
+﻿"""
 v1 Voice Agent — one-click launcher with input state machine.
 
 Usage:
@@ -32,7 +32,7 @@ GSVI_HEADLESS = BASE_DIR / "scripts" / "run_gsvi_headless.py"
 GSVI_PYTHON = GSVI_DIR / "runtime" / "python.exe"
 GSVI_CONFIG = GSVI_DIR / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
 
-SERVICE_TIMEOUTS = {"asr": 60.0, "gsvi": 120.0}
+SERVICE_TIMEOUTS = {"asr": 60.0, "gsvi": 120.0, "tts": 120.0}
 
 
 def env_bool(name: str, default: bool) -> bool:
