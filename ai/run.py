@@ -145,6 +145,19 @@ def main() -> int:
         finally:
             warmup_path.unlink(missing_ok=True)
 
+        # Warmup TTS model (first load ~60s, avoid on first utterance)
+        print("\nWarming up TTS...")
+        try:
+            r = requests.post("http://127.0.0.1:8030/v1/tts/synthesize",
+                             json={"text": "测试", "speaker": "serena", "language": "zh"},
+                             timeout=180)
+            if r.status_code == 200:
+                print("[warmup] TTS model loaded")
+            else:
+                print(f"[warmup] TTS returned {r.status_code}")
+        except Exception as e:
+            print(f"[warmup] TTS warmup skipped: {e}")
+
         if args.no_vad:
             import sounddevice as sd
             import soundfile as sf
