@@ -44,15 +44,15 @@ def _load_qwen_model() -> Any:
         raise RuntimeError(f"Qwen3TTS model not found: {_QWEN_MODEL_DIR}")
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    load_8bit = device.startswith("cuda") and os.environ.get("TTS_LOAD_8BIT", "1") == "1"
+    dtype = torch.bfloat16 if device.startswith("cuda") else torch.float32
 
-    print(f"[TTS] Loading Qwen3TTS from {_QWEN_MODEL_DIR} (device={device}, 8bit={load_8bit})")
+    print(f"[TTS] Loading Qwen3TTS from {_QWEN_MODEL_DIR} (device={device}, dtype={dtype})")
     _qwen_model = Qwen3TTSModel.from_pretrained(
         str(_QWEN_MODEL_DIR),
         device_map=device,
-        load_in_8bit=load_8bit,
+        dtype=dtype,
     )
-    print("[TTS] Qwen3TTS loaded")
+    print(f"[TTS] Qwen3TTS loaded, VRAM: {torch.cuda.memory_allocated()/1e9:.1f}GB" if device.startswith("cuda") else "[TTS] Qwen3TTS loaded")
     return _qwen_model
 
 
