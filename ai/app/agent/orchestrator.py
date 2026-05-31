@@ -205,11 +205,10 @@ class Orchestrator:
             return r.content
         else:
             # Qwen3TTS via TTS service
-            speaker = os.environ.get("TTS_SPEAKER", "serena")
             language = os.environ.get("TTS_LANGUAGE", "zh")
             r = requests.post(
                 f"{self.tts_url}/v1/tts/synthesize",
-                json={"text": text, "speaker": speaker, "language": language},
+                json={"text": text, "language": language},
                 timeout=120,
             )
             r.raise_for_status()

@@ -27,9 +27,9 @@ app = FastAPI(title="Local TTS API", version="2.0.0")
 
 # ── Qwen3TTS singleton ──────────────────────────────────────────
 _qwen_model: Any = None
-_QWEN_MODEL_DIR = Path(__file__).resolve().parents[3] / "models" / "tts" / "Qwen3-TTS-12Hz-1.7B-CustomVoice"
+_QWEN_MODEL_DIR = Path(__file__).resolve().parents[3] / "models" / "tts" / "Qwen3-TTS-12Hz-1.7B-Base"
 
-_SPEAKERS = ["serena", "vivian", "uncle_fu", "ryan", "aiden", "ono_anna", "sohee", "eric", "dylan"]
+_SPEAKERS = []  # Base model has no built-in speakers; voice cloned from reference audio
 
 
 def _load_qwen_model() -> Any:
@@ -194,13 +194,25 @@ def synthesize_with_gsvi(request: TTSRequest) -> TTSResponse:
 
 # ── Qwen3TTS synthesis ──────────────────────────────────────────
 def synthesize_with_qwen(text: str, speaker: str = "", language: str = "") -> bytes:
-    """Generate audio from text using Qwen3TTS. Returns raw WAV bytes."""
+    """Generate audio from text using Qwen3TTS Base (voice clone)."""
     model = _load_qwen_model()
-    spk = speaker or os.environ.get("TTS_SPEAKER", "serena").lower()
     lang = language or os.environ.get("TTS_LANGUAGE", "zh")
     lang_map = {"zh": "Chinese", "cn": "Chinese", "en": "English", "ja": "Japanese", "ko": "Korean"}
     lang_label = lang_map.get(lang.lower(), "Chinese")
-    result = model.generate_custom_voice(text=text, language=lang_label, speaker=spk)
+
+    # Reference audio for voice cloning
+    ref_audio = os.environ.get("TTS_REF_AUDIO", "")
+    ref_text = os.environ.get("TTS_REF_TEXT", "")
+
+    if not ref_audio:
+        raise RuntimeError("TTS_REF_AUDIO not set in .env ? Base model requires a reference audio file for voice cloning")
+
+    result = model.generate_voice_clone(
+        text=text,
+        language=lang_label,
+        ref_audio=ref_audio,
+        ref_text=ref_text,
+    )
     # result = (list_of_ndarray, sample_rate), extract first channel
     wavs_list, sr = result
     wavs = np.asarray(wavs_list[0], dtype=np.float32)
@@ -209,6 +221,7 @@ def synthesize_with_qwen(text: str, speaker: str = "", language: str = "") -> by
     buf = io.BytesIO()
     sf.write(buf, wavs, sr, format="WAV")
     return buf.getvalue()
+
 
 # ── Routing ─────────────────────────────────────────────────────
 def speak(request: TTSRequest) -> TTSResponse:
@@ -246,7 +259,7 @@ def health() -> dict[str, Any]:
         "module": "tts",
         "engine": tts_engine(),
         "qwen_model_loaded": _qwen_model is not None,
-        "speakers": _SPEAKERS,
+        "speakers": _SPEAKERS,  # Base model: voice cloned from reference audio,
         "gsvi_url": os.environ.get("GSVI_URL", GSVI_URL),
     }
 
