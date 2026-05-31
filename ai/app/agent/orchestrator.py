@@ -98,7 +98,7 @@ class Orchestrator:
         self.tts_url = tts_url
         self._memory = ShortTermMemory()
         self._summarizer = Summarizer()
-        self._tts_executor = ThreadPoolExecutor(max_workers=2)
+        self._tts_executor = ThreadPoolExecutor(max_workers=4)
 
     # ==================================================================
     # Legacy synchronous API (unchanged)
@@ -260,23 +260,17 @@ class Orchestrator:
         """
         reply_full: list[str] = []
         tts_futures: list[tuple[str, Any]] = []  # (sentence, Future[bytes])
-        first = True
 
         # Phase 1: stream LLM, submit TTS in parallel
         t_llm_start = time.time()
         tokens = self._stream_llm(user_text, ctx)
         t_first_sentence = None
         t_last_sentence = None
-        for sentence in _split_sentences(tokens, min_length=5, max_length=50):
+        for sentence in _split_sentences(tokens, min_length=3, max_length=30):
             reply_full.append(sentence)
             if t_first_sentence is None:
                 t_first_sentence = time.time()
             t_last_sentence = time.time()
-
-            if first:
-                player.stop()
-                player.resume()
-                first = False
 
             future = self._tts_executor.submit(self._synthesize, sentence)
             tts_futures.append((sentence, future))

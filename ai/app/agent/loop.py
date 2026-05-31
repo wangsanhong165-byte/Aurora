@@ -1,25 +1,49 @@
-﻿"""Main agent loop — ties input state machine to the orchestrator."""
+"""Main agent loop ? ties input state machine to the orchestrator.
+
+Flow: listen ? process ? speak ? wait ? beep ? listen (no echo interrupt)
+"""
 
 import time
+from pathlib import Path
+
+import numpy as np
+import sounddevice as sd
+import soundfile as sf
 
 from app.agent.orchestrator import Orchestrator
 from app.core.event_bus import bus
 from app.core.state import InputState
 from app.input import InputManager
-from app.input.interrupt import InterruptDetector
 from app.tts.player import AsyncAudioPlayer
 
 
-class AgentLoop:
-    """Continuous voice agent: listen → process → speak → repeat.
+BEEP_START = Path(__file__).resolve().parent.parent.parent / "recordings" / "beep_start.wav"
+BEEP_END = Path(__file__).resolve().parent.parent.parent / "recordings" / "beep_end.wav"
 
-    Uses streaming LLM + sentence-buffer TTS + async player for low latency.
+
+def _play_beep(path: Path) -> None:
+    """Play a short beep from the given WAV file."""
+    try:
+        data, sr = sf.read(str(path), dtype="float32")
+        if data.ndim == 1:
+            data = data.reshape(-1, 1)
+        sd.play(data, sr)
+        sd.wait()
+    except Exception:
+        pass  # silent fail if audio device not available
+
+
+class AgentLoop:
+    """Continuous voice agent: beep ? listen ? process ? speak ? wait ? repeat.
+
+    Playback and listening are fully serialized:
+    - AI speaks ? wait for all audio to finish ? beep ? start listening.
+    - No interrupt monitoring during playback (avoids echo false-positives).
     """
 
     def __init__(self, orchestrator: Orchestrator | None = None) -> None:
         self.orchestrator = orchestrator or Orchestrator()
-        self.input = InputManager(silence_timeout=0.7, max_duration=30.0)
-        self._interrupt = InterruptDetector(rms_threshold=0.05)  # avoid echo-triggered false interrupt
+        self.input = InputManager(silence_timeout=1.0, max_duration=30.0)
         self._player = AsyncAudioPlayer()
         self._running = False
 
@@ -29,13 +53,16 @@ class AgentLoop:
         self.input.start()
 
         print("\n" + "=" * 48)
-        print("  All services ready — listening now")
+        print("  All services ready ? listening now")
         print("  Speak to interact. Ctrl+C to stop.")
         print("=" * 48 + "\n")
 
         turn = 0
         silent_turns = 0
         error_turns = 0
+
+        # Play initial beep to signal readiness
+        _play_beep(BEEP_START)
 
         try:
             while self._running:
@@ -55,6 +82,8 @@ class AgentLoop:
                         break
                     continue
 
+                # Confirm reception with end beep
+                _play_beep(BEEP_END)
                 self._emit_state(InputState.PROCESSING)
                 silent_turns = 0
                 error_turns = 0
@@ -79,21 +108,14 @@ class AgentLoop:
                         bus.emit("log", "Auto-exiting after 5 consecutive errors.")
                         break
 
-                self.input.transition(InputState.SPEAKING)
+                # Wait for ALL TTS playback to finish (no interrupt monitoring)
                 self._emit_state(InputState.SPEAKING)
-                self._interrupt.reset()
+                self._player.wait_done(timeout=60.0)
+                # Small pause before beep to avoid overlap
+                time.sleep(0.2)
 
-                monitor_start = time.monotonic()
-                while self._player.is_playing:
-                    if time.monotonic() - monitor_start > 30.0:
-                        break
-                    frame = self.input._read_frame(timeout=0.05)
-                    if frame is not None:
-                        self._interrupt.feed(frame)
-                    if self._interrupt.interrupted:
-                        bus.emit("log", "Interrupt detected — stopping playback")
-                        self._player.stop()
-                        break
+                # Signal "ready to listen" with a beep
+                _play_beep(BEEP_START)
 
                 self.input.transition(InputState.IDLE)
 
