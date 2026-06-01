@@ -52,7 +52,7 @@ class InputManager:
         self._trigger_count = int(0.2 * 1000 / self.frame_ms)
         self._silence_limit = int(silence_timeout * 1000 / self.frame_ms)
         self._max_frames = int(max_duration * 1000 / self.frame_ms)
-        self._min_record_frames = int(1.0 * 1000 / self.frame_ms)  # at least 1s before silence can stop
+        self._min_record_frames = int(2.0 * 1000 / self.frame_ms)  # at least 1s before silence can stop
 
     @property
     def state(self) -> InputState:

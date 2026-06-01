@@ -1,4 +1,4 @@
-﻿"""Pipeline orchestrator: ASR → Memory → LLM(stream via service) → SentenceBuffer → TTS → Player.
+"""Pipeline orchestrator: ASR → Memory → LLM(stream via service) → SentenceBuffer → TTS → Player.
 
 Two modes:
 - ``run_turn()`` — legacy synchronous (backward compatible)
@@ -253,7 +253,7 @@ class Orchestrator:
     def _finish_streaming(
         self, user_text: str, ctx: list[dict], player: AsyncAudioPlayer
     ) -> dict:
-        """Shared streaming logic: LLM → sentence buffer → parallel TTS → player.
+        """Shared streaming logic: LLM -> sentence buffer -> parallel TTS -> player.
 
         TTS tasks are submitted to a thread pool as sentences become available,
         then resolved in order to guarantee correct playback sequence.
@@ -282,17 +282,21 @@ class Orchestrator:
         # Phase 2: resolve futures in order, enqueue audio
         t_tts_start = time.time()
         sentence_count = 0
+        t_first_enqueue = None
         for sentence, future in tts_futures:
             sentence_count += 1
             try:
                 wav = future.result()
                 player.enqueue(wav)
+                if t_first_enqueue is None:
+                    t_first_enqueue = time.time()
             except Exception as exc:
                 print(f"[Orchestrator] TTS error for sentence: {exc}")
         t_tts_done = time.time()
 
         if t_first_sentence:
-            print(f"[Timing] LLM-stream={t_first_sentence-t_llm_start:.1f}s LLM-total={t_llm_done-t_llm_start:.1f}s TTS-wait={t_tts_done-t_tts_start:.1f}s sentences={sentence_count}")
+            enq_delay = f"first-enqueue={t_first_enqueue-t_first_sentence:.1f}s" if t_first_enqueue else ""
+            print(f"[Timing] LLM-stream={t_first_sentence-t_llm_start:.1f}s LLM-total={t_llm_done-t_llm_start:.1f}s TTS-wait={t_tts_done-t_tts_start:.1f}s sentences={sentence_count} {enq_delay}")
 
         reply_text = "".join(reply_full).strip()
 
@@ -312,4 +316,3 @@ class Orchestrator:
             "reply": reply_dict,
             "sentence_count": sentence_count,
         }
-
