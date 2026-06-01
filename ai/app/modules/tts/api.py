@@ -27,7 +27,8 @@ app = FastAPI(title="Local TTS API", version="2.0.0")
 
 # ── Qwen3TTS singleton ──────────────────────────────────────────
 _qwen_model: Any = None
-_QWEN_MODEL_DIR = Path(__file__).resolve().parents[3] / "models" / "tts" / "Qwen3-TTS-12Hz-1.7B-Base"
+_MODELS_ROOT = Path(__file__).resolve().parents[3] / "models" / "tts"
+_QWEN_MODEL_DIR = Path(os.environ.get("TTS_MODEL_DIR", str(_MODELS_ROOT / "Qwen3-TTS-12Hz-0.6B-Base")))
 
 _SPEAKERS = []  # Base model has no built-in speakers; voice cloned from reference audio
 _voice_clone_prompt = None  # Pre-computed once for consistent voice across all sentences
@@ -233,6 +234,9 @@ def synthesize_with_qwen(text: str, speaker: str = "", language: str = "") -> by
             text=text,
             language=lang_label,
             voice_clone_prompt=_voice_clone_prompt,
+            max_new_tokens=200,
+            do_sample=False,
+            non_streaming_mode=True,
         )
     else:
         result = model.generate_voice_clone(
@@ -240,6 +244,9 @@ def synthesize_with_qwen(text: str, speaker: str = "", language: str = "") -> by
             language=lang_label,
             ref_audio=ref_audio,
             ref_text=ref_text,
+            max_new_tokens=200,
+            do_sample=False,
+            non_streaming_mode=True,
         )
     # result = (list_of_ndarray, sample_rate), extract first channel
     wavs_list, sr = result
