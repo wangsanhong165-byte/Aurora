@@ -29,7 +29,9 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-_SENTENCE_END = re.compile(r"[。，！？!?；;\n]")
+_STRONG_END = re.compile(r"[。！？!?；;\n]")
+_WEAK_END = re.compile(r"[，、：]")
+_MIN_WEAK = 8
 
 
 def _split_sentences(
@@ -47,19 +49,40 @@ def _split_sentences(
         length += len(token)
 
         text = "".join(buf)
-        m = _SENTENCE_END.search(text)
-        if m:
-            end = m.end()
+
+        # 1) Strong split: always split on sentence-ending punctuation
+        m_strong = _STRONG_END.search(text)
+        if m_strong:
+            end = m_strong.end()
             sentence = text[:end].strip()
             remainder = text[end:].lstrip()
             if len(sentence) >= min_length:
                 yield sentence
+                print(f"[SPLIT] strong len={len(sentence)}: {sentence[:20]}...")
                 buf = [remainder] if remainder else []
                 length = len(remainder)
-        elif length >= max_length:
+            continue
+
+        # 2) Weak split: comma/colon only when chunk is long enough
+        if length >= _MIN_WEAK:
+            weak_matches = list(_WEAK_END.finditer(text))
+            if weak_matches:
+                end = weak_matches[-1].end()  # last match = longest chunk
+                sentence = text[:end].strip()
+                remainder = text[end:].lstrip()
+                if len(sentence) >= min_length:
+                    yield sentence
+                    print(f"[SPLIT] weak len={len(sentence)}: {sentence[:20]}...")
+                    buf = [remainder] if remainder else []
+                    length = len(remainder)
+                continue
+
+        # 3) Hard max: force split to prevent ultra-long chunks
+        if length >= max_length:
             sentence = text.strip()
             if sentence:
                 yield sentence
+                print(f"[SPLIT] hard_max len={len(sentence)}: {sentence[:20]}...")
             buf.clear()
             length = 0
 
@@ -267,7 +290,7 @@ class Orchestrator:
         tokens = self._stream_llm(user_text, ctx)
         t_first_sentence = None
         t_last_sentence = None
-        for sentence in _split_sentences(tokens, min_length=3, max_length=30):
+        for sentence in _split_sentences(tokens, min_length=3, max_length=20):
             reply_full.append(sentence)
             if t_first_sentence is None:
                 t_first_sentence = time.time()
