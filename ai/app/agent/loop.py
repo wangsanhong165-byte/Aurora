@@ -41,6 +41,10 @@ class AgentLoop:
     - No interrupt monitoring during playback (avoids echo false-positives).
     """
 
+    # ── Turn transition timing (seconds) ──
+    POST_PLAY_PAUSE = 0.25   # pause after last sentence before beep
+    POST_BEEP_PAUSE = 0.12   # pause after beep before recording
+
     def __init__(self, orchestrator: Orchestrator | None = None) -> None:
         self.orchestrator = orchestrator or Orchestrator()
         self.input = InputManager(silence_timeout=1.0, max_duration=30.0)
@@ -62,7 +66,10 @@ class AgentLoop:
         error_turns = 0
 
         # Play initial beep to signal readiness
+        print("[Input] beep")
         _play_beep(BEEP_START)
+        time.sleep(self.POST_BEEP_PAUSE)
+        print(f"[Input] post_beep_pause={self.POST_BEEP_PAUSE:.1f}s")
 
         try:
             while self._running:
@@ -111,11 +118,16 @@ class AgentLoop:
                 # Wait for ALL TTS playback to finish (no interrupt monitoring)
                 self._emit_state(InputState.SPEAKING)
                 self._player.wait_done(timeout=60.0)
-                # Small pause before beep to avoid overlap
-                time.sleep(0.2)
 
-                # Signal "ready to listen" with a beep
+                # ── Natural turn transition ──
+                time.sleep(self.POST_PLAY_PAUSE)
+                print(f"[Input] post_play_pause={self.POST_PLAY_PAUSE:.1f}s")
+
+                print("[Input] beep")
                 _play_beep(BEEP_START)
+
+                time.sleep(self.POST_BEEP_PAUSE)
+                print(f"[Input] post_beep_pause={self.POST_BEEP_PAUSE:.1f}s")
 
                 self.input.transition(InputState.IDLE)
 

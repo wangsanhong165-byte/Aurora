@@ -149,7 +149,7 @@ def main() -> int:
         print("\nWarming up TTS...")
         try:
             r = requests.post("http://127.0.0.1:8030/v1/tts/synthesize",
-                             json={"text": "测试", "speaker": "serena", "language": "zh"},
+                             json={"text": "你好，我是罗德岛的阿米娅", "speaker": "serena", "language": "zh"},
                              timeout=180)
             if r.status_code == 200:
                 print("[warmup] TTS model loaded")
@@ -169,6 +169,7 @@ def main() -> int:
             if not args.audio_path:
                 print(f"Recording {args.seconds}s...")
                 audio = sd.rec(int(args.seconds * args.sample_rate),
+
                                samplerate=args.sample_rate, channels=1, dtype="float32")
                 sd.wait()
                 path.parent.mkdir(parents=True, exist_ok=True)

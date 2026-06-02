@@ -98,7 +98,7 @@ class Orchestrator:
         self.tts_url = tts_url
         self._memory = ShortTermMemory()
         self._summarizer = Summarizer()
-        self._tts_executor = ThreadPoolExecutor(max_workers=4)
+        self._tts_executor = ThreadPoolExecutor(max_workers=1)
 
     # ==================================================================
     # Legacy synchronous API (unchanged)
@@ -258,6 +258,7 @@ class Orchestrator:
         TTS tasks are submitted to a thread pool as sentences become available,
         then resolved in order to guarantee correct playback sequence.
         """
+        player.begin_turn()
         reply_full: list[str] = []
         tts_futures: list[tuple[str, Any]] = []  # (sentence, Future[bytes])
 
@@ -272,11 +273,13 @@ class Orchestrator:
                 t_first_sentence = time.time()
             t_last_sentence = time.time()
 
-            future = self._tts_executor.submit(self._synthesize, sentence)
+            ts = time.time(); future = self._tts_executor.submit(self._synthesize, sentence)
             tts_futures.append((sentence, future))
+            print(f"[ORCH] submit s{len(tts_futures)-1} t={ts-t_llm_start:.1f}s: {sentence[:30]}...")
 
         t_llm_done = time.time()
         if not reply_full:
+            player.end_turn()
             return {"ok": False, "error": "LLM returned empty", "user_text": user_text}
 
         # Phase 2: resolve futures in order, enqueue audio
@@ -286,12 +289,16 @@ class Orchestrator:
         for sentence, future in tts_futures:
             sentence_count += 1
             try:
-                wav = future.result()
-                player.enqueue(wav)
+                print(f"[ORCH] resolve_start s{sentence_count-1} t={time.time()-t_llm_start:.1f}")
+                tr = time.time(); wav = future.result()
+                player.enqueue(wav, text=sentence)
+                waited = time.time() - tr
+                print(f"[ORCH] resolve_finish s{sentence_count-1} t={time.time()-t_llm_start:.1f} waited={waited:.1f}s")
                 if t_first_enqueue is None:
                     t_first_enqueue = time.time()
             except Exception as exc:
                 print(f"[Orchestrator] TTS error for sentence: {exc}")
+        player.end_turn()
         t_tts_done = time.time()
 
         if t_first_sentence:

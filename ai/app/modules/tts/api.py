@@ -7,6 +7,9 @@ Routes based on TTS_ENGINE env var:
 """
 
 import argparse
+import asyncio
+import threading
+import time
 import hashlib
 import io
 import os
@@ -228,26 +231,31 @@ def synthesize_with_qwen(text: str, speaker: str = "", language: str = "") -> by
         raise RuntimeError("TTS_REF_AUDIO not set in .env ? Base model requires a reference audio file for voice cloning")
 
     global _voice_clone_prompt
+    tid = threading.current_thread().ident
+    t_start = time.time()
     if _voice_clone_prompt is not None:
-        print("[TTS] Using cached voice prompt")
+        print(f"[TTS] tid={tid} generate_start t={t_start:.1f} text={text[:20]}...")
         result = model.generate_voice_clone(
             text=text,
             language=lang_label,
             voice_clone_prompt=_voice_clone_prompt,
-            max_new_tokens=200,
+            max_new_tokens=160,
             do_sample=False,
             non_streaming_mode=True,
         )
     else:
+        print(f"[TTS] tid={tid} generate_start t={t_start:.1f} (no cache) text={text[:20]}...")
         result = model.generate_voice_clone(
             text=text,
             language=lang_label,
             ref_audio=ref_audio,
             ref_text=ref_text,
-            max_new_tokens=200,
+            max_new_tokens=160,
             do_sample=False,
             non_streaming_mode=True,
         )
+    t_end = time.time()
+    print(f"[TTS] tid={tid} generate_finish t={t_end:.1f} duration={t_end-t_start:.1f}s")
     # result = (list_of_ndarray, sample_rate), extract first channel
     wavs_list, sr = result
     wavs = np.asarray(wavs_list[0], dtype=np.float32)
@@ -345,7 +353,7 @@ async def synthesize_endpoint(request: dict) -> Response:
             # Qwen3TTS path
             speaker = request.get("speaker", "")
             language = request.get("language", "")
-            audio = synthesize_with_qwen(text, speaker=speaker, language=language)
+            audio = await asyncio.to_thread(synthesize_with_qwen, text, speaker, language)
             return Response(content=audio, media_type="audio/wav")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
