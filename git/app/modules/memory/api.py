@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
-from app.core.config import UVICORN_LOG_CONFIG, DEFAULT_MEMORY_PATH
+from app.core.config import DEFAULT_MEMORY_PATH
 from app.core.schemas import MemoryAppendRequest, MemoryRecentRequest, MemoryResponse
 
 
@@ -80,7 +80,7 @@ def main() -> None:
 
     import uvicorn
 
-    uvicorn.run(app, host=args.host, port=args.port, log_config=UVICORN_LOG_CONFIG)
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

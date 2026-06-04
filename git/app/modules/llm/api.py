@@ -1,4 +1,4 @@
-"""Add SSE streaming endpoint and helper to LLM service."""
+﻿"""Add SSE streaming endpoint and helper to LLM service."""
 
 import argparse
 import json
@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from openai import OpenAI
 
-from app.core.config import UVICORN_LOG_CONFIG, DEFAULT_ENV_PATH, load_env_file
+from app.core.config import DEFAULT_ENV_PATH, load_env_file
 from app.core.schemas import LLMRequest, LLMResponse
 
 
@@ -77,7 +77,7 @@ def build_stream_messages(request: LLMRequest) -> list[dict[str, str]]:
                 history_lines.append(f"用户：{user}")
             if assistant:
                 history_lines.append(f"助手：{assistant}")
-    history_block = "\n".join(history_lines[-10:])
+    history_block = "\n".join(history_lines[-20:])
     transcript = request.event.transcript.strip()
     if history_block:
         user_content = f"[对话历史]\n{history_block}\n\n[当前]\n用户：{transcript}"
@@ -216,7 +216,7 @@ def main() -> None:
 
     import uvicorn
 
-    uvicorn.run(app, host=args.host, port=args.port, log_config=UVICORN_LOG_CONFIG)
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

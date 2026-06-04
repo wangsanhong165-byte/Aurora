@@ -112,16 +112,16 @@ class Orchestrator:
 
     def __init__(
         self,
-        asr_url: str | None = None,
-        llm_url: str | None = None,
-        tts_url: str | None = None,
+        asr_url: str = "http://127.0.0.1:8000",
+        llm_url: str = "http://127.0.0.1:8020",
+        tts_url: str = "http://127.0.0.1:8030",
     ) -> None:
-        self.asr_url = asr_url or os.environ.get("ASR_URL", "http://127.0.0.1:8000")
-        self.llm_url = llm_url or os.environ.get("LLM_URL", "http://127.0.0.1:8020")
-        self.tts_url = tts_url or os.environ.get("TTS_URL", "http://127.0.0.1:8030")
+        self.asr_url = asr_url
+        self.llm_url = llm_url
+        self.tts_url = tts_url
         self._memory = ShortTermMemory()
         self._summarizer = Summarizer()
-        self._tts_executor = ThreadPoolExecutor(max_workers=2)
+        self._tts_executor = ThreadPoolExecutor(max_workers=1)
 
     # ==================================================================
     # Legacy synchronous API (unchanged)
@@ -271,7 +271,7 @@ class Orchestrator:
             print(f"[Orchestrator] Streaming pipeline error: {exc}")
             result = {"ok": False, "error": str(exc), "user_text": text}
         t_llm_tts = time.time() - t_llm_tts_start
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] [Timing] ASR={t_asr:.1f}s  LLM+TTS={t_llm_tts:.1f}s  total={t_asr+t_llm_tts:.1f}s")
+        print(f"[Timing] ASR={t_asr:.1f}s  LLM+TTS={t_llm_tts:.1f}s  total={t_asr+t_llm_tts:.1f}s")
         return result
     def _finish_streaming(
         self, user_text: str, ctx: list[dict], player: AsyncAudioPlayer
@@ -326,7 +326,7 @@ class Orchestrator:
 
         if t_first_sentence:
             enq_delay = f"first-enqueue={t_first_enqueue-t_first_sentence:.1f}s" if t_first_enqueue else ""
-            import datetime; print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] [Timing] LLM-stream={t_first_sentence-t_llm_start:.1f}s LLM-total={t_llm_done-t_llm_start:.1f}s TTS-wait={t_tts_done-t_tts_start:.1f}s sentences={sentence_count} {enq_delay}")
+            print(f"[Timing] LLM-stream={t_first_sentence-t_llm_start:.1f}s LLM-total={t_llm_done-t_llm_start:.1f}s TTS-wait={t_tts_done-t_tts_start:.1f}s sentences={sentence_count} {enq_delay}")
 
         reply_text = "".join(reply_full).strip()
 

@@ -14,7 +14,7 @@ class ShortTermMemory:
     """Manages recent conversation turns as JSONL."""
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or (Path(__file__).resolve().parents[2] / "memory" / "memory.jsonl")
+        self.path = path or (Path(__file__).resolve().parents[2] / "memory" / "short_term.jsonl")
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def load(self, limit: int = 8, max_age_minutes: float | None = None) -> list[dict[str, Any]]:

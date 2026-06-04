@@ -1,4 +1,4 @@
-"""
+﻿"""
 v1 Voice Agent — one-click launcher with input state machine.
 
 Usage:
@@ -21,13 +21,14 @@ sys.path.insert(0, str(BASE_DIR))
 from app.core.config import DEFAULT_ENV_PATH, load_env_file
 
 SERVICES = [
-    ("asr",    "app.modules.asr.api",    os.environ.get("ASR_PORT", "8000")),
-    ("llm",    "app.modules.llm.api",    os.environ.get("LLM_PORT", "8020")),
-    ("tts",    "app.modules.tts.api",    os.environ.get("TTS_PORT", "8030")),
-    ("memory", "app.modules.memory.api", os.environ.get("MEMORY_PORT", "8040")),
+    ("asr",    "app.modules.asr.api",    "8000"),
+    ("llm",    "app.modules.llm.api",    "8020"),
+    ("tts",    "app.modules.tts.api",    "8030"),
+    ("memory", "app.modules.memory.api", "8040"),
 ]
 
 GSVI_DIR = BASE_DIR / "models" / "tts" / "GPT-SoVITS-1007-cu128"
+GSVI_HEADLESS = BASE_DIR / "scripts" / "run_gsvi_headless.py"
 GSVI_PYTHON = GSVI_DIR / "runtime" / "python.exe"
 GSVI_CONFIG = GSVI_DIR / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
 
@@ -39,21 +40,17 @@ def env_bool(name: str, default: bool) -> bool:
     return v.strip().lower() in {"1", "true", "yes", "on"} if v else default
 
 
-def start_services(args: argparse.Namespace, log_dir: Path) -> tuple[list[subprocess.Popen], list]:
+def start_services(args: argparse.Namespace) -> list[subprocess.Popen]:
     procs: list[subprocess.Popen] = []
-    log_files = []
 
     if env_bool("START_GSVI", True):
         os.environ.setdefault("GSVI_PORT", "8050")
         os.environ.setdefault("GSVI_URL", "http://127.0.0.1:8050")
+        cmd = [str(GSVI_PYTHON), str(GSVI_HEADLESS), "-s", "127.0.0.1", "-p", "8050", "-c", str(GSVI_CONFIG)]
         env = os.environ.copy()
         env["PATH"] = f"{GSVI_DIR / 'runtime'};{env.get('PATH', '')}"
-        env["BROWSER"] = "none"
-        cmd = [str(GSVI_PYTHON), str(GSVI_DIR / "gsvi.py"), "-s", "127.0.0.1", "-p", "8050", "-c", str(GSVI_CONFIG), "--no-browser"]
-        gsvi_log = open(str(log_dir / "gsvi.log"), "w")
-        log_files.append(gsvi_log)
         p = subprocess.Popen(cmd, cwd=GSVI_DIR, env=env,
-                             stdout=gsvi_log, stderr=gsvi_log)
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         procs.append(p)
         print("[start] GSVI → :8050")
 
@@ -62,13 +59,11 @@ def start_services(args: argparse.Namespace, log_dir: Path) -> tuple[list[subpro
         if module in {"app.modules.llm.api", "app.modules.tts.api"}:
             cmd.extend(["--env-file", str(args.env_file)])
         cmd.extend(["--host", "127.0.0.1", "--port", port])
-        svc_log = open(str(log_dir / f"{name}.log"), "w")
-        log_files.append(svc_log)
         p = subprocess.Popen(cmd, cwd=BASE_DIR,
-                             stdout=svc_log, stderr=svc_log)
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         procs.append(p)
         print(f"[start] {name} → :{port}")
-    return procs, log_files
+    return procs
 
 
 def wait_services() -> bool:
@@ -124,31 +119,12 @@ def main() -> int:
     load_env_file(Path(args.env_file))
     os.environ.setdefault("TTS_ENGINE", "gsvi")
 
-    # Setup logging
-    from datetime import datetime
-    log_dir = BASE_DIR / "logs" / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\n[log] {log_dir}")
     print("\nStarting services...")
-    procs, log_files = start_services(args, log_dir)
+    procs = start_services(args)
     try:
         print("\nWaiting for services...")
         if not wait_services():
             return 1
-
-        print("\nWarming up TTS...")
-        try:
-            tts_port = os.environ.get("TTS_PORT", "8030")
-            r = requests.post(f"http://127.0.0.1:{tts_port}/v1/tts/synthesize",
-                             json={"text": "你好，我是罗德岛的阿米娅", "speaker": "serena", "language": "zh"},
-                             timeout=180)
-            if r.status_code == 200:
-                print("[warmup] TTS model loaded")
-            else:
-                print(f"[warmup] TTS returned {r.status_code}")
-        except Exception as e:
-            print(f"[warmup] TTS warmup skipped: {e}")
-
 
         # Warmup ASR model (first call loads from disk ~9s, avoid on first utterance)
         print("\nWarming up ASR...")
@@ -159,8 +135,7 @@ def main() -> int:
         warmup_path = Path(tempfile.gettempdir()) / "_asr_warmup.wav"
         sf.write(str(warmup_path), warmup_audio, 16000)
         try:
-            asr_port = os.environ.get("ASR_PORT", "8000")
-            r = requests.post(f"http://127.0.0.1:{asr_port}/v1/asr/transcribe",
+            r = requests.post("http://127.0.0.1:8000/v1/asr/transcribe",
                              json={"audio_path": str(warmup_path), "language": None},
                              timeout=120)
             r.raise_for_status()
@@ -171,6 +146,18 @@ def main() -> int:
             warmup_path.unlink(missing_ok=True)
 
         # Warmup TTS model (first load ~60s, avoid on first utterance)
+        print("\nWarming up TTS...")
+        try:
+            r = requests.post("http://127.0.0.1:8030/v1/tts/synthesize",
+                             json={"text": "你好，我是罗德岛的阿米娅", "speaker": "serena", "language": "zh"},
+                             timeout=180)
+            if r.status_code == 200:
+                print("[warmup] TTS model loaded")
+            else:
+                print(f"[warmup] TTS returned {r.status_code}")
+        except Exception as e:
+            print(f"[warmup] TTS warmup skipped: {e}")
+
         if args.no_vad:
             import sounddevice as sd
             import soundfile as sf
@@ -209,9 +196,6 @@ def main() -> int:
         print("Shutting down...")
         for p in procs:
             p.terminate()
-        for f in log_files:
-            try: f.close()
-            except Exception: pass
         print("All services stopped.")
 
 

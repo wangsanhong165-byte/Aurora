@@ -1,4 +1,4 @@
-"""TTS API — supports Qwen3TTS (primary) and GSVI (legacy).
+﻿"""TTS API — supports Qwen3TTS (primary) and GSVI (legacy).
 
 Routes based on TTS_ENGINE env var:
   - qwen3-tts → local Qwen3TTS 1.7B CustomVoice (8-bit)
@@ -22,9 +22,8 @@ import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 
-from app.core.config import UVICORN_LOG_CONFIG, DEFAULT_ENV_PATH, DEFAULT_TTS_ENGINE, DEFAULT_TTS_OUTPUT_DIR, GSVI_URL, load_env_file
+from app.core.config import DEFAULT_ENV_PATH, DEFAULT_TTS_ENGINE, DEFAULT_TTS_OUTPUT_DIR, GSVI_URL, load_env_file
 from app.core.schemas import TTSRequest, TTSResponse
-from app.modules.tts.engines import edge
 
 
 app = FastAPI(title="Local TTS API", version="2.0.0")
@@ -58,7 +57,8 @@ def _load_qwen_model() -> Any:
     _qwen_model = Qwen3TTSModel.from_pretrained(
         str(_QWEN_MODEL_DIR),
         device_map=device,
-        dtype=dtype,
+        torch_dtype=dtype,
+        low_cpu_mem_usage=True,
     )
     print(f"[TTS] Qwen3TTS loaded")
 
@@ -350,9 +350,6 @@ async def synthesize_endpoint(request: dict) -> Response:
             r = requests.post(f"{gsvi_url}/v1/audio/speech", json=payload, timeout=180)
             r.raise_for_status()
             return Response(content=r.content, media_type="audio/wav")
-        elif engine == "edge-tts":
-            audio = await asyncio.to_thread(edge.synthesize, text)
-            return Response(content=audio, media_type="audio/wav")
         else:
             # Qwen3TTS path
             speaker = request.get("speaker", "")
@@ -371,7 +368,7 @@ def main() -> None:
     args = parser.parse_args()
     load_env_file(Path(args.env_file))
     import uvicorn
-    uvicorn.run(app, host=args.host, port=args.port, log_config=UVICORN_LOG_CONFIG)
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
