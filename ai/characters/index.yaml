@@ -1,0 +1,5 @@
+characters:
+- id: monika
+  name: Monika
+  path: characters/monika/character.json
+default: monika

@@ -15,13 +15,13 @@ LLM_URL = os.environ.get("LLM_URL", "http://127.0.0.1:8020")
 TTS_URL = os.environ.get("TTS_URL", "http://127.0.0.1:8030")
 MEMORY_URL = os.environ.get("MEMORY_URL", "http://127.0.0.1:8040")
 
-GSVI_DIR = MODELS_DIR / "tts" / "GPT-SoVITS-1007-cu128"
+# ---- GSVI v2Pro (nvidia50) ----
+GSVI_DIR = MODELS_DIR / "tts" / "GPT-SoVITS-v2pro-20250604-nvidia50"
 GSVI_PYTHON = GSVI_DIR / "runtime" / "python.exe"
-GSVI_SCRIPT = GSVI_DIR / "gsvi.py"
+GSVI_SCRIPT = GSVI_DIR / "api_v2.py"
 GSVI_HEADLESS = BASE_DIR / "scripts" / "run_gsvi_headless.py"
 GSVI_CONFIG_PATH = GSVI_DIR / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
 GSVI_URL = os.environ.get("GSVI_URL", "http://127.0.0.1:8050")
-
 
 
 # ---- uvicorn log config (adds timestamps) ----
@@ -53,7 +53,7 @@ UVICORN_LOG_CONFIG = {
     },
 }
 
-DEFAULT_TTS_ENGINE = os.environ.get("TTS_ENGINE", "gsvi").lower()
+DEFAULT_TTS_ENGINE = os.environ.get("TTS_ENGINE", "gsvi-v2pro").lower()
 DEFAULT_TTS_OUTPUT_DIR = BASE_DIR / "tts_outputs"
 
 

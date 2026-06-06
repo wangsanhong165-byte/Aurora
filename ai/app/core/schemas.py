@@ -97,6 +97,8 @@ class TTSRequest(BaseModel):
     text_lang: str | None = None
     prompt_lang: str | None = None
     response_format: str | None = None
+    ref_audio_path: str | None = None  # v2pro: reference audio
+    prompt_text: str | None = None     # v2pro: transcript of ref audio
 
 
 class TTSResponse(BaseModel):

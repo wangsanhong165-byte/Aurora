@@ -1,4 +1,4 @@
-Screen {
+﻿Screen {
     background: #1a1a2e;
 }
 
@@ -9,14 +9,50 @@ Header {
 
 #status-panel {
     dock: top;
-    height: 7;
+    height: 9;
     border: solid #0f3460;
     margin: 1;
     padding: 0 1;
 }
 
+#top-row {
+    height: 1;
+    margin-bottom: 1;
+}
+
+.spacer {
+    width: 3;
+}
+
+#state-badge {
+    content-align: center middle;
+    width: 16;
+}
+
+#emotion-badge {
+    content-align: center middle;
+    width: 12;
+}
+
+#activity-line {
+    height: 1;
+    color: #a0a0c0;
+}
+
+#memory-line {
+    height: 1;
+    color: #a0a0c0;
+}
+
 #turn-panel {
     height: 4;
+    border: solid #0f3460;
+    margin: 1;
+    padding: 0 1;
+}
+
+#initiative-panel {
+    height: 3;
     border: solid #0f3460;
     margin: 1;
     padding: 0 1;
@@ -34,18 +70,16 @@ Header {
     height: 1;
 }
 
-#state-badge {
-    content-align: center middle;
-    height: 1;
-    margin-bottom: 1;
-}
-
 #turn-user {
     color: #f0c040;
 }
 
 #turn-ai {
     color: #40c0f0;
+}
+
+#init-info {
+    color: #a0c0a0;
 }
 
 #log-lines {

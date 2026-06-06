@@ -1,88 +1,95 @@
-"""TTS API — supports Qwen3TTS (primary) and GSVI (legacy).
+"""TTS API -- multi-engine router.
 
-Routes based on TTS_ENGINE env var:
-  - qwen3-tts → local Qwen3TTS 1.7B CustomVoice (8-bit)
-  - gsvi      → GPT-SoVITS HTTP (:8050)
-  - pyttsx3   → system TTS fallback
+Set TTS_ENGINE in .env to switch:
+  qwen3-tts   -> local Qwen3TTS model
+  gsvi         -> legacy GPT-SoVITS (OpenAI-compatible HTTP)
+  gsvi-v2pro   -> GPT-SoVITS v2Pro nvidia50 (/tts endpoint)
+  edge-tts     -> Microsoft Edge TTS (cloud, free)
+  cloud-tts    -> external cloud TTS API
+  pyttsx3      -> system TTS fallback
 """
 
 import argparse
 import asyncio
-import threading
-import time
 import hashlib
 import io
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import soundfile as sf
 import requests
+import soundfile as sf
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 
-from app.core.config import UVICORN_LOG_CONFIG, DEFAULT_ENV_PATH, DEFAULT_TTS_ENGINE, DEFAULT_TTS_OUTPUT_DIR, GSVI_URL, load_env_file
+from app.core.config import (
+    UVICORN_LOG_CONFIG, DEFAULT_ENV_PATH, DEFAULT_TTS_ENGINE,
+    DEFAULT_TTS_OUTPUT_DIR, GSVI_URL, load_env_file,
+)
 from app.core.schemas import TTSRequest, TTSResponse
-from app.modules.tts.engines import edge
+from app.modules.tts.engines import edge, gsvi, gsvi_v2
 
 
-app = FastAPI(title="Local TTS API", version="2.0.0")
+app = FastAPI(title="Local TTS API", version="3.0.0")
 
-# ── Qwen3TTS singleton ──────────────────────────────────────────
-_qwen_model: Any = None
-_MODELS_ROOT = Path(__file__).resolve().parents[3] / "models" / "tts"
-_QWEN_MODEL_DIR = Path(os.environ.get("TTS_MODEL_DIR", str(_MODELS_ROOT / "Qwen3-TTS-12Hz-0.6B-Base")))
-
-_SPEAKERS = []  # Base model has no built-in speakers; voice cloned from reference audio
-_voice_clone_prompt = None  # Pre-computed once for consistent voice across all sentences
-
-
-def _load_qwen_model() -> Any:
-    global _qwen_model
-    if _qwen_model is not None:
-        return _qwen_model
-
-    os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(os.environ.get("TEMP", "/tmp"), "numba_cache"))
-
-    import torch
-    from qwen_tts import Qwen3TTSModel
-
-    if not _QWEN_MODEL_DIR.exists():
-        raise RuntimeError(f"Qwen3TTS model not found: {_QWEN_MODEL_DIR}")
-
-    device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    dtype = torch.bfloat16 if device.startswith("cuda") else torch.float32
-
-    print(f"[TTS] Loading Qwen3TTS from {_QWEN_MODEL_DIR} (device={device}, dtype={dtype})")
-    _qwen_model = Qwen3TTSModel.from_pretrained(
-        str(_QWEN_MODEL_DIR),
-        device_map=device,
-        dtype=dtype,
-    )
-    print(f"[TTS] Qwen3TTS loaded")
-
-    # Pre-compute voice clone prompt for consistent voice across all sentences
-    global _voice_clone_prompt
-    ref_audio = os.environ.get("TTS_REF_AUDIO", "")
-    ref_text = os.environ.get("TTS_REF_TEXT", "")
-    if ref_audio:
-        try:
-            _voice_clone_prompt = _qwen_model.create_voice_clone_prompt(
-                ref_audio=ref_audio,
-                ref_text=ref_text if ref_text else None,
-                x_vector_only_mode=True,
-            )
-            print(f"[TTS] Voice clone prompt cached (x_vector_only, {ref_audio})")
-        except Exception as exc:
-            print(f"[TTS] Failed to pre-compute clone prompt: {exc}")
-    else:
-        print("[TTS] TTS_REF_AUDIO/TTS_REF_TEXT not set, clone prompt will be created on first call")
-
-    return _qwen_model
+# ================================================================
+#  helpers (shared)
+# ================================================================
+def env_bool(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    return v.strip().lower() in {"1", "true", "yes", "on"} if v else default
 
 
-# ── GSVI helpers (unchanged) ────────────────────────────────────
+def env_float(name: str, default: float) -> float:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    try:
+        return float(v)
+    except ValueError:
+        return default
+
+
+def tts_engine(request: TTSRequest | None = None) -> str:
+    return (request.engine if request else None) or os.environ.get("TTS_ENGINE") or DEFAULT_TTS_ENGINE
+
+
+def output_path(text: str, audio: bytes, suffix: str) -> Path:
+    d = Path(os.environ.get("TTS_OUTPUT_DIR", str(DEFAULT_TTS_OUTPUT_DIR)))
+    d.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.md5(text.encode() + audio).hexdigest()
+    return d / f"{digest}.{suffix}"
+
+
+def play_audio_bytes(audio: bytes) -> bool:
+    if not audio:
+        return False
+    import sounddevice as sd
+    data, sr = sf.read(io.BytesIO(audio), dtype="float32")
+    sd.play(data, sr)
+    sd.wait()
+    return True
+
+
+# ================================================================
+#  engine 1: pyttsx3 (system TTS fallback)
+# ================================================================
+def _speak_pyttsx3(text: str) -> TTSResponse:
+    if not text.strip():
+        return TTSResponse(ok=True, spoken=False, text=text, engine="pyttsx3")
+    import pyttsx3
+    eng = pyttsx3.init()
+    eng.say(text)
+    eng.runAndWait()
+    return TTSResponse(ok=True, spoken=True, text=text, engine="pyttsx3")
+
+
+# ================================================================
+#  engine 2: gsvi (legacy GPT-SoVITS, OpenAI-compatible API)
+# ================================================================
 _EMOTION_MAP = {
     "default": "默认", "happy": "开心", "sad": "悲伤",
     "angry": "愤怒", "surprise": "惊讶", "fear": "恐惧",
@@ -107,157 +114,119 @@ _PROMPT_LANG_MAP = {
 }
 
 
-def _map_label(raw: str, mapping: dict[str, str], fallback: str) -> str:
-    key = raw.strip().lower()
-    return mapping.get(key, raw.strip())
+def _map(raw: str, mapping: dict[str, str], fallback: str) -> str:
+    return mapping.get(raw.strip().lower(), raw.strip() or fallback)
 
 
-def env_bool(name: str, default: bool) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def env_float(name: str, default: float) -> float:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    try:
-        return float(value)
-    except ValueError:
-        return default
-
-
-def tts_engine(request: TTSRequest | None = None) -> str:
-    return (request.engine if request else None) or os.environ.get("TTS_ENGINE") or DEFAULT_TTS_ENGINE
-
-
-# ── GSVI synthesis ──────────────────────────────────────────────
-def gsvi_options(request: TTSRequest) -> dict[str, Any]:
-    raw_emotion = request.emotion or os.environ.get("GSVI_EMOTION", "默认")
-    raw_text_lang = request.text_lang or os.environ.get("GSVI_TEXT_LANG", "中英混合")
-    raw_prompt_lang = request.prompt_lang or os.environ.get("GSVI_PROMPT_LANG", "中文")
-    return {
-        "url": os.environ.get("GSVI_URL", GSVI_URL).rstrip("/"),
-        "model": request.model or os.environ.get("GSVI_MODEL", "GSVI-v4"),
-        "voice": request.voice or os.environ.get("GSVI_VOICE", "明日方舟-中文-阿米娅"),
-        "emotion": _map_label(raw_emotion, _EMOTION_MAP, "默认"),
-        "text_lang": _map_label(raw_text_lang, _TEXT_LANG_MAP, "中英混合"),
-        "prompt_lang": _map_label(raw_prompt_lang, _PROMPT_LANG_MAP, "中文"),
-        "response_format": request.response_format or os.environ.get("GSVI_RESPONSE_FORMAT", "wav"),
-        "speed": request.speed if request.speed is not None else env_float("GSVI_SPEED", 1.0),
-        "timeout": env_float("GSVI_TIMEOUT", 180.0),
-    }
-
-
-def output_path(text: str, audio: bytes, suffix: str) -> Path:
-    output_dir = Path(os.environ.get("TTS_OUTPUT_DIR", str(DEFAULT_TTS_OUTPUT_DIR)))
-    output_dir.mkdir(parents=True, exist_ok=True)
-    digest = hashlib.md5(text.encode("utf-8") + audio).hexdigest()
-    return output_dir / f"{digest}.{suffix}"
-
-
-def play_audio_bytes(audio: bytes, audio_format: str) -> bool:
-    if not audio:
-        return False
-    try:
-        import sounddevice as sd
-        import soundfile as sf
-    except ImportError as exc:
-        raise RuntimeError("Missing playback dependencies") from exc
-    data, sr = sf.read(io.BytesIO(audio), dtype="float32")
-    sd.play(data, sr)
-    sd.wait()
-    return True
-
-
-def speak_with_pyttsx3(text: str) -> TTSResponse:
-    if not text.strip():
-        return TTSResponse(ok=True, spoken=False, text=text, engine="pyttsx3")
-    try:
-        import pyttsx3
-    except ImportError as exc:
-        raise RuntimeError("Missing pyttsx3") from exc
-    engine = pyttsx3.init()
-    engine.say(text)
-    engine.runAndWait()
-    return TTSResponse(ok=True, spoken=True, text=text, engine="pyttsx3")
-
-
-def synthesize_with_gsvi(request: TTSRequest) -> TTSResponse:
+def _speak_gsvi(request: TTSRequest) -> TTSResponse:
     text = request.text.strip()
     if not text:
-        return TTSResponse(ok=True, spoken=False, text=request.text, engine="gsvi")
-    options = gsvi_options(request)
+        return TTSResponse(ok=True, spoken=False, text=text, engine="gsvi")
+    gsvi_url = os.environ.get("GSVI_URL", GSVI_URL).rstrip("/")
     payload = {
-        "model": options["model"],
+        "model": request.model or os.environ.get("GSVI_MODEL", "GSVI-v4"),
         "input": text,
-        "voice": options["voice"],
-        "response_format": options["response_format"],
-        "speed": options["speed"],
+        "voice": request.voice or os.environ.get("GSVI_VOICE", ""),
+        "response_format": request.response_format or os.environ.get("GSVI_RESPONSE_FORMAT", "wav"),
+        "speed": request.speed if request.speed is not None else env_float("GSVI_SPEED", 1.0),
         "other_params": {
-            "text_lang": options["text_lang"],
-            "prompt_lang": options["prompt_lang"],
-            "emotion": options["emotion"],
+            "text_lang": _map(request.text_lang or os.environ.get("GSVI_TEXT_LANG", "中英混合"), _TEXT_LANG_MAP, "中英混合"),
+            "prompt_lang": _map(request.prompt_lang or os.environ.get("GSVI_PROMPT_LANG", "中文"), _PROMPT_LANG_MAP, "中文"),
+            "emotion": _map(request.emotion or os.environ.get("GSVI_EMOTION", "默认"), _EMOTION_MAP, "默认"),
         },
     }
-    response = requests.post(f"{options['url']}/v1/audio/speech", json=payload, timeout=options["timeout"])
-    response.raise_for_status()
-    content_type = response.headers.get("content-type", "")
-    if "application/json" in content_type:
-        body = response.json()
-        raise RuntimeError(str(body.get("error") or body))
-    audio_format = str(options["response_format"]).lower()
-    audio_path = output_path(text, response.content, audio_format)
-    audio_path.write_bytes(response.content)
-    spoken = play_audio_bytes(response.content, audio_format)
-    return TTSResponse(ok=True, spoken=spoken, text=request.text, engine="gsvi",
-                       voice=options["voice"], emotion=options["emotion"], audio_path=str(audio_path))
+    r = requests.post(f"{gsvi_url}/v1/audio/speech", json=payload,
+                      timeout=env_float("GSVI_TIMEOUT", 180))
+    r.raise_for_status()
+    if "application/json" in r.headers.get("content-type", ""):
+        raise RuntimeError(str(r.json().get("error") or r.json()))
+    audio_path = output_path(text, r.content, "wav")
+    audio_path.write_bytes(r.content)
+    spoken = play_audio_bytes(r.content)
+    return TTSResponse(ok=True, spoken=spoken, text=text, engine="gsvi",
+                       voice=payload["voice"], emotion=payload["other_params"]["emotion"],
+                       audio_path=str(audio_path))
 
 
-# ── Qwen3TTS synthesis ──────────────────────────────────────────
-def synthesize_with_qwen(text: str, speaker: str = "", language: str = "") -> bytes:
-    """Generate audio from text using Qwen3TTS Base (voice clone)."""
+# ================================================================
+#  engine 3: gsvi-v2pro (GPT-SoVITS v2Pro nvidia50)
+# ================================================================
+def _speak_gsvi_v2pro(request: TTSRequest) -> TTSResponse:
+    text = request.text.strip()
+    if not text:
+        return TTSResponse(ok=True, spoken=False, text=text, engine="gsvi-v2pro")
+    audio = gsvi_v2.synthesize(
+        text,
+        ref_audio_path=request.ref_audio_path or os.environ.get("GSVI_REF_AUDIO", ""),
+        prompt_text=request.prompt_text or os.environ.get("GSVI_PROMPT_TEXT", ""),
+        prompt_lang=request.prompt_lang or os.environ.get("GSVI_PROMPT_LANG", ""),
+        text_lang=request.text_lang or os.environ.get("GSVI_TEXT_LANG", ""),
+        speed_factor=request.speed if request.speed is not None else env_float("GSVI_SPEED", 1.0),
+        gpt_weights=os.environ.get("GSVI_GPT_WEIGHTS", ""),
+        sovits_weights=os.environ.get("GSVI_SOVITS_WEIGHTS", ""),
+    )
+    audio_path = output_path(text, audio, "wav")
+    audio_path.write_bytes(audio)
+    spoken = play_audio_bytes(audio)
+    return TTSResponse(ok=True, spoken=spoken, text=text, engine="gsvi-v2pro",
+                       engine_type="gsvi-v2pro", audio_path=str(audio_path))
+
+
+# ================================================================
+#  engine 4: qwen3-tts (local Qwen3TTS model)
+# ================================================================
+_qwen_model: Any = None
+_MODELS_ROOT = Path(__file__).resolve().parents[3] / "models" / "tts"
+_QWEN_MODEL_DIR = Path(os.environ.get("TTS_MODEL_DIR", str(_MODELS_ROOT / "Qwen3-TTS-12Hz-0.6B-Base")))
+_voice_clone_prompt: Any = None
+
+
+def _load_qwen_model() -> Any:
+    global _qwen_model, _voice_clone_prompt
+    if _qwen_model is not None:
+        return _qwen_model
+    os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(os.environ.get("TEMP", "/tmp"), "numba_cache"))
+    import torch
+    from qwen_tts import Qwen3TTSModel
+    if not _QWEN_MODEL_DIR.exists():
+        raise RuntimeError(f"Qwen3TTS model not found: {_QWEN_MODEL_DIR}")
+    device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    dtype = torch.bfloat16 if device.startswith("cuda") else torch.float32
+    print(f"[TTS] Loading Qwen3TTS from {_QWEN_MODEL_DIR} (device={device}, dtype={dtype})")
+    _qwen_model = Qwen3TTSModel.from_pretrained(str(_QWEN_MODEL_DIR), device_map=device, dtype=dtype)
+    print("[TTS] Qwen3TTS loaded")
+    ref_audio = os.environ.get("TTS_REF_AUDIO", "")
+    ref_text = os.environ.get("TTS_REF_TEXT", "")
+    if ref_audio:
+        try:
+            _voice_clone_prompt = _qwen_model.create_voice_clone_prompt(
+                ref_audio=ref_audio, ref_text=ref_text if ref_text else None, x_vector_only_mode=True)
+            print(f"[TTS] Voice clone prompt cached ({ref_audio})")
+        except Exception as exc:
+            print(f"[TTS] Clone prompt failed: {exc}")
+    return _qwen_model
+
+
+def _synthesize_qwen(text: str, speaker: str = "", language: str = "") -> bytes:
     model = _load_qwen_model()
     lang = language or os.environ.get("TTS_LANGUAGE", "zh")
     lang_map = {"zh": "Chinese", "cn": "Chinese", "en": "English", "ja": "Japanese", "ko": "Korean"}
     lang_label = lang_map.get(lang.lower(), "Chinese")
-
-    # Reference audio for voice cloning
     ref_audio = os.environ.get("TTS_REF_AUDIO", "")
-    ref_text = os.environ.get("TTS_REF_TEXT", "")
-
     if not ref_audio:
-        raise RuntimeError("TTS_REF_AUDIO not set in .env ? Base model requires a reference audio file for voice cloning")
-
+        raise RuntimeError("TTS_REF_AUDIO not set")
     global _voice_clone_prompt
-    tid = threading.current_thread().ident
     t_start = time.time()
     if _voice_clone_prompt is not None:
-        print(f"[TTS] tid={tid} generate_start t={t_start:.1f} text={text[:20]}...")
-        result = model.generate_voice_clone(
-            text=text,
-            language=lang_label,
-            voice_clone_prompt=_voice_clone_prompt,
-            max_new_tokens=160,
-            do_sample=False,
-            non_streaming_mode=True,
-        )
+        result = model.generate_voice_clone(text=text, language=lang_label,
+            voice_clone_prompt=_voice_clone_prompt, max_new_tokens=160,
+            do_sample=False, non_streaming_mode=True)
     else:
-        print(f"[TTS] tid={tid} generate_start t={t_start:.1f} (no cache) text={text[:20]}...")
-        result = model.generate_voice_clone(
-            text=text,
-            language=lang_label,
-            ref_audio=ref_audio,
-            ref_text=ref_text,
-            max_new_tokens=160,
-            do_sample=False,
-            non_streaming_mode=True,
-        )
-    t_end = time.time()
-    print(f"[TTS] tid={tid} generate_finish t={t_end:.1f} duration={t_end-t_start:.1f}s")
-    # result = (list_of_ndarray, sample_rate), extract first channel
+        ref_text = os.environ.get("TTS_REF_TEXT", "")
+        result = model.generate_voice_clone(text=text, language=lang_label,
+            ref_audio=ref_audio, ref_text=ref_text, max_new_tokens=160,
+            do_sample=False, non_streaming_mode=True)
+    print(f"[TTS] qwen generate: {time.time()-t_start:.1f}s")
     wavs_list, sr = result
     wavs = np.asarray(wavs_list[0], dtype=np.float32)
     if wavs.ndim == 2:
@@ -267,35 +236,125 @@ def synthesize_with_qwen(text: str, speaker: str = "", language: str = "") -> by
     return buf.getvalue()
 
 
-# ── Routing ─────────────────────────────────────────────────────
+def _speak_qwen(request: TTSRequest) -> TTSResponse:
+    audio = _synthesize_qwen(request.text)
+    audio_path = output_path(request.text, audio, "wav")
+    audio_path.write_bytes(audio)
+    spoken = play_audio_bytes(audio)
+    return TTSResponse(ok=True, spoken=spoken, text=request.text, engine="qwen3-tts",
+                       voice=os.environ.get("TTS_SPEAKER", "serena"), audio_path=str(audio_path))
+
+
+# ================================================================
+#  engine 5: edge-tts (Microsoft cloud TTS, free)
+# ================================================================
+def _speak_edge(request: TTSRequest) -> TTSResponse:
+    text = request.text.strip()
+    if not text:
+        return TTSResponse(ok=True, spoken=False, text=text, engine="edge-tts")
+    if request.voice:
+        os.environ["TTS_EDGE_VOICE"] = request.voice
+    audio = edge.synthesize(text)
+    audio_path = output_path(text, audio, "wav")
+    audio_path.write_bytes(audio)
+    spoken = play_audio_bytes(audio)
+    return TTSResponse(ok=True, spoken=spoken, text=text, engine="edge-tts",
+                       voice=voice, audio_path=str(audio_path))
+
+
+# ================================================================
+#  engine 6: cloud-tts (external cloud TTS API)
+# ================================================================
+def _speak_cloud_tts(request: TTSRequest) -> TTSResponse:
+    text = request.text.strip()
+    if not text:
+        return TTSResponse(ok=True, spoken=False, text=text, engine="cloud-tts")
+    api_url = os.environ.get("TTS_API_URL", "").rstrip("/")
+    api_key = os.environ.get("TTS_API_KEY", "")
+    if not api_url:
+        raise RuntimeError("TTS_API_URL not set in .env")
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    headers["Content-Type"] = "application/json"
+    payload = {
+        "model": request.model or os.environ.get("TTS_CLOUD_MODEL", "tts-1"),
+        "input": text,
+        "voice": request.voice or os.environ.get("TTS_CLOUD_VOICE", "alloy"),
+        "response_format": request.response_format or "wav",
+        "speed": request.speed if request.speed is not None else 1.0,
+    }
+    r = requests.post(f"{api_url}/audio/speech", json=payload, headers=headers,
+                      timeout=env_float("TTS_CLOUD_TIMEOUT", 60))
+    r.raise_for_status()
+    audio_path = output_path(text, r.content, "wav")
+    audio_path.write_bytes(r.content)
+    spoken = play_audio_bytes(r.content)
+    return TTSResponse(ok=True, spoken=spoken, text=text, engine="cloud-tts",
+                       voice=payload["voice"], audio_path=str(audio_path))
+
+
+# ================================================================
+#  main router
+# ================================================================
 def speak(request: TTSRequest) -> TTSResponse:
     engine = tts_engine(request)
+    text_preview = request.text[:40].replace("\n", " ")
+    print(f"[TTS] speak engine={engine} text='{text_preview}...'")
+
+    # 1. pyttsx3
     if engine == "pyttsx3":
-        return speak_with_pyttsx3(request.text)
+        return _speak_pyttsx3(request.text)
+
+    # 2. gsvi (legacy)
     if engine == "gsvi":
         try:
-            return synthesize_with_gsvi(request)
+            return _speak_gsvi(request)
         except Exception:
             if env_bool("TTS_FALLBACK_TO_PYTTSX3", True):
-                return speak_with_pyttsx3(request.text)
+                return _speak_pyttsx3(request.text)
             raise
+
+    # 3. gsvi-v2pro
+    if engine == "gsvi-v2pro":
+        try:
+            return _speak_gsvi_v2pro(request)
+        except Exception:
+            if env_bool("TTS_FALLBACK_TO_PYTTSX3", True):
+                return _speak_pyttsx3(request.text)
+            raise
+
+    # 4. qwen3-tts
     if engine == "qwen3-tts":
         try:
-            audio = synthesize_with_qwen(request.text)
-            audio_format = "wav"
-            audio_path = output_path(request.text, audio, audio_format)
-            audio_path.write_bytes(audio)
-            spoken = play_audio_bytes(audio, audio_format)
-            return TTSResponse(ok=True, spoken=spoken, text=request.text, engine="qwen3-tts",
-                               voice=os.environ.get("TTS_SPEAKER", "serena"), audio_path=str(audio_path))
+            return _speak_qwen(request)
         except Exception:
             if env_bool("TTS_FALLBACK_TO_PYTTSX3", True):
-                return speak_with_pyttsx3(request.text)
+                return _speak_pyttsx3(request.text)
             raise
+
+    # 5. edge-tts
+    if engine == "edge-tts":
+        try:
+            return _speak_edge(request)
+        except Exception:
+            if env_bool("TTS_FALLBACK_TO_PYTTSX3", True):
+                return _speak_pyttsx3(request.text)
+            raise
+
+    # 6. cloud-tts
+    if engine == "cloud-tts":
+        try:
+            return _speak_cloud_tts(request)
+        except Exception:
+            if env_bool("TTS_FALLBACK_TO_PYTTSX3", True):
+                return _speak_pyttsx3(request.text)
+            raise
+
     raise RuntimeError(f"Unsupported TTS engine: {engine}")
 
 
-# ── Endpoints ───────────────────────────────────────────────────
+# ================================================================
+#  endpoints
+# ================================================================
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
@@ -303,7 +362,6 @@ def health() -> dict[str, Any]:
         "module": "tts",
         "engine": tts_engine(),
         "qwen_model_loaded": _qwen_model is not None,
-        "speakers": _SPEAKERS,  # Base model: voice cloned from reference audio,
         "gsvi_url": os.environ.get("GSVI_URL", GSVI_URL),
     }
 
@@ -316,24 +374,22 @@ def speak_text(request: TTSRequest) -> TTSResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-class SynthesizeRequest:
-    """Minimal request for orchestrator's streaming path."""
-    def __init__(self, text: str, speaker: str = "", language: str = ""):
-        self.text = text
-        self.speaker = speaker
-        self.language = language
-
-
 @app.post("/v1/tts/synthesize")
-async def synthesize_endpoint(request: dict) -> Response:
-    """Return raw WAV bytes — used by orchestrator for streaming playback."""
-    text = request.get("text", "").strip()
+async def synthesize_endpoint(req: dict) -> Response:
+    """Return raw WAV bytes -- used by orchestrator for streaming playback."""
+    text = req.get("text", "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is empty")
     try:
         engine = tts_engine()
+
+        # 1. pyttsx3 (no raw bytes, synthesize via qwen as fallback)
+        if engine == "pyttsx3":
+            audio = await asyncio.to_thread(_synthesize_qwen, text)
+            return Response(content=audio, media_type="audio/wav")
+
+        # 2. gsvi (legacy)
         if engine == "gsvi":
-            # GSVI path
             gsvi_url = os.environ.get("GSVI_URL", GSVI_URL).rstrip("/")
             payload = {
                 "model": os.environ.get("GSVI_MODEL", "GSVI-v4"),
@@ -342,23 +398,61 @@ async def synthesize_endpoint(request: dict) -> Response:
                 "response_format": "wav",
                 "speed": float(os.environ.get("GSVI_SPEED", "1.0")),
                 "other_params": {
-                    "text_lang": os.environ.get("GSVI_TEXT_LANG", "中英混合"),
-                    "prompt_lang": os.environ.get("GSVI_PROMPT_LANG", "中文"),
-                    "emotion": os.environ.get("GSVI_EMOTION", "默认"),
+                    "text_lang": os.environ.get("GSVI_TEXT_LANG", "涓嫳娣峰悎"),
+                    "prompt_lang": os.environ.get("GSVI_PROMPT_LANG", "涓枃"),
+                    "emotion": os.environ.get("GSVI_EMOTION", "榛樿"),
                 },
             }
             r = requests.post(f"{gsvi_url}/v1/audio/speech", json=payload, timeout=180)
             r.raise_for_status()
             return Response(content=r.content, media_type="audio/wav")
-        elif engine == "edge-tts":
+
+        # 3. gsvi-v2pro
+        if engine == "gsvi-v2pro":
+            audio = await asyncio.to_thread(gsvi_v2.synthesize, text,
+                ref_audio_path=os.environ.get("GSVI_REF_AUDIO", ""),
+                prompt_text=os.environ.get("GSVI_PROMPT_TEXT", ""),
+                prompt_lang=os.environ.get("GSVI_PROMPT_LANG", ""),
+                text_lang=os.environ.get("GSVI_TEXT_LANG", ""),
+                speed_factor=float(os.environ.get("GSVI_SPEED", "1.0")),
+                gpt_weights=os.environ.get("GSVI_GPT_WEIGHTS", ""),
+                sovits_weights=os.environ.get("GSVI_SOVITS_WEIGHTS", ""),
+            )
+            return Response(content=audio, media_type="audio/wav")
+
+        # 4. qwen3-tts
+        if engine == "qwen3-tts":
+            speaker = req.get("speaker", "")
+            language = req.get("language", "")
+            audio = await asyncio.to_thread(_synthesize_qwen, text, speaker, language)
+            return Response(content=audio, media_type="audio/wav")
+
+        # 5. edge-tts
+        if engine == "edge-tts":
             audio = await asyncio.to_thread(edge.synthesize, text)
             return Response(content=audio, media_type="audio/wav")
-        else:
-            # Qwen3TTS path
-            speaker = request.get("speaker", "")
-            language = request.get("language", "")
-            audio = await asyncio.to_thread(synthesize_with_qwen, text, speaker, language)
-            return Response(content=audio, media_type="audio/wav")
+
+        # 6. cloud-tts
+        if engine == "cloud-tts":
+            api_url = os.environ.get("TTS_API_URL", "").rstrip("/")
+            api_key = os.environ.get("TTS_API_KEY", "")
+            if not api_url:
+                raise RuntimeError("TTS_API_URL not set")
+            headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            headers["Content-Type"] = "application/json"
+            r = requests.post(f"{api_url}/audio/speech", json={
+                "model": os.environ.get("TTS_CLOUD_MODEL", "tts-1"),
+                "input": text,
+                "voice": os.environ.get("TTS_CLOUD_VOICE", "alloy"),
+                "response_format": "wav",
+            }, headers=headers, timeout=60)
+            r.raise_for_status()
+            return Response(content=r.content, media_type="audio/wav")
+
+        # fallback
+        audio = await asyncio.to_thread(_synthesize_qwen, text)
+        return Response(content=audio, media_type="audio/wav")
+
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

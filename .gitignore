@@ -19,6 +19,11 @@ ai/tts_outputs/
 ai/last_recording.wav
 ai/memory/
 
+# Character packs & model weights (large binary, use Hugging Face / releases)
+ai/characters/*.char
+ai/characters/*/model/
+ai/characters/*/voice/
+
 # Secrets (contains API keys)
 ai/.env
 

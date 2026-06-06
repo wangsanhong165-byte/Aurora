@@ -55,6 +55,33 @@ python run.py
 IDLE → LISTENING → RECORDING → PROCESSING → SPEAKING → IDLE
 ```
 
+## 架构方向
+
+项目定位已经从“语音聊天机器人”调整为“长期陪伴型 AI”。后续开发遵守
+[Architecture Constitution](docs/ARCHITECTURE.md)：
+
+- 只有一个决策中心：`Brain`
+- 输入、输出和主动触发统一表现为 `Event`
+- `Memory`、`State`、`Project`、`Character` 只存储信息，不做自主决策
+- 记忆整理走后台管线，不阻塞对话
+- 模型和工具通过 Adapter/Router 接入，业务层不绑定具体供应商
+
+当前第一阶段地基：
+
+```
+Input/Event → EventBus → Brain → Output/Event
+                     ↘
+               Memory / State / Project / Tool
+```
+
+第二阶段开始收敛运行入口：
+
+```
+AgentLoop → TurnRuntime → TurnResult
+```
+
+`AgentLoop` 只负责收集输入；一轮对话的处理归 `TurnRuntime`。
+
 ## 模型
 
 | 模块 | 模型 | 端口 |
