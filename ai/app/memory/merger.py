@@ -68,9 +68,14 @@ class MemoryMerger:
             reverse=True,
         )
 
-        # Cap
+        # Cap: keep episode/relationship cards, trim only fact/summary/etc
+        _protected = {"episode", "relationship"}
         if len(merged) > self.max_cards:
-            merged = merged[:self.max_cards]
+            protected = [c for c in merged if c.get("type") in _protected]
+            trimmable = [c for c in merged if c.get("type") not in _protected]
+            # Keep all protected + fill remaining with top trimmable
+            keep = min(self.max_cards - len(protected), len(trimmable))
+            merged = protected + trimmable[:keep]
 
         return merged
 

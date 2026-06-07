@@ -59,10 +59,15 @@ class LongTermMemoryStore:
         rows = self.load()
         rows.append(card.to_dict())
         if len(rows) > self.max_cards:
-            rows = sorted(
-                rows,
+            _protected = {"episode", "relationship"}
+            protected = [r for r in rows if r.get("type") in _protected]
+            trimmable = [r for r in rows if r.get("type") not in _protected]
+            trimmable = sorted(
+                trimmable,
                 key=lambda item: (float(item.get("importance", 0)), item.get("created_at", "")),
-            )[-self.max_cards :]
+            )
+            keep = min(self.max_cards - len(protected), len(trimmable))
+            rows = protected + trimmable[-keep:] if keep > 0 else protected
         with self.path.open("w", encoding="utf-8") as file:
             for row in rows:
                 file.write(json.dumps(row, ensure_ascii=False) + "\n")

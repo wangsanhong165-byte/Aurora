@@ -13,16 +13,21 @@ from app.memory.long_term import MemoryCard
 
 _EXTRACTION_PROMPT = """你是一个记忆提取助手。从以下对话中提取关键信息。
 
-规则：
-1. 提取用户提到的事实（姓名、偏好、计划、重要事件等）
-2. 提取助手给用户的承诺或约定
-3. 用一句话总结这段对话的主题
-4. 如果没有任何有价值的信息，返回空列表
+提取以下四类信息：
+1. facts: 用户提到的事实（姓名、偏好、计划、重要事件等）
+2. relationship: 用户和助手之间的关系事件（如一起做了什么、关系变化、情感流露的时刻）
+3. self_experience: 助手（Monika）从这次对话中学到的或感受到的（用第一人称，如"我注意到用户今天心情不好"）
+4. summary: 一句话主题总结
+5. promises: 助手给用户的承诺或约定
 
-返回 JSON 格式：
+注意：relationship 关注的是"我们"，不是单独的"你"或"我"。
+
+返回 JSON：
 {
-  "facts": ["事实1", "事实2"],
-  "summary": "一句话主题总结",
+  "facts": ["事实1"],
+  "relationship": ["关系事件1"],
+  "self_experience": ["自我感受1"],
+  "summary": "一句话总结",
   "promises": ["承诺1"]
 }
 
@@ -106,6 +111,30 @@ class MemoryExtractor:
                     content=text,
                     importance=0.8,
                     confidence=0.8,
+                    source=source,
+                ))
+
+        # Relationship events ("we" memories — shared experiences, emotional moments)
+        for rel_text in parsed.get("relationship", [])[:3]:
+            text = str(rel_text).strip()
+            if text and len(text) > 3:
+                cards.append(MemoryCard(
+                    type="relationship",
+                    content=text,
+                    importance=0.7,
+                    confidence=0.7,
+                    source=source,
+                ))
+
+        # Self-experience (Monika's own feelings/observations from this conversation)
+        for self_text in parsed.get("self_experience", [])[:3]:
+            text = str(self_text).strip()
+            if text and len(text) > 3:
+                cards.append(MemoryCard(
+                    type="self",
+                    content=text,
+                    importance=0.6,
+                    confidence=0.6,
                     source=source,
                 ))
 

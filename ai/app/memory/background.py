@@ -147,6 +147,60 @@ class BackgroundMemoryWorker:
         )
         print(f"[Memory] Flushed {len(pending)} candidates → {len(merged)} total cards")
 
+    def summarize_session(self, llm_adapter: Any) -> None:
+        """Generate a session-level episode summary and write it to long-term memory.
+
+        Called on shutdown. Reads recent turns from short-term memory,
+        asks the LLM to produce a 1-2 sentence summary, and stores it
+        as an episode MemoryCard (protected from trimming).
+        """
+        turns = self.short_term.load(limit=0)
+        if not turns:
+            return
+
+        # Format turns into readable conversation
+        lines = []
+        for t in turns[-30:]:
+            user = str(t.get("user", "")).strip()
+            assistant = str(t.get("assistant", "")).strip()
+            if user:
+                lines.append("User: " + user)
+            if assistant:
+                lines.append("Monika: " + assistant)
+        conv = chr(10).join(lines)
+        if len(conv) < 20:
+            return
+
+        prompt = (
+            "Summarise this conversation session into 1-2 sentences.\n"
+            "Focus on: what was discussed, any decisions made, user mood or state.\n"
+            "Write in Chinese, from Monika first-person perspective.\n"
+            "Example: \u6211\u548c\u7528\u6237\u8ba8\u8bba\u4e86Monika\u4eba\u683c\u7cfb\u7edf\uff0c\u51b3\u5b9a\u524a\u5f31\u5b64\u72ec\u5c5e\u6027\u3002\n"
+            "\nConversation:\n" + conv + "\n\n"
+            "Episode summary:"
+        )
+
+        try:
+            result = llm_adapter.generate(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+            )
+            summary = str(result.get("content", "")).strip()
+            if not summary or len(summary) < 5:
+                return
+        except Exception:
+            return
+
+        card = MemoryCard(
+            type="episode",
+            content=summary,
+            importance=0.9,
+            confidence=0.8,
+            source="session_summary",
+        )
+        self.long_term.append(card)
+        print("[Episode] Session summary: " + summary[:80] + "...")
+
     def _write_all(self, cards: list[dict[str, Any]]) -> None:
         path = self.long_term.path
         with path.open("w", encoding="utf-8") as file:

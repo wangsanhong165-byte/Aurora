@@ -172,6 +172,12 @@ class TurnRuntime:
 
         full_response = "".join(raw_chunks).strip()
 
+        # Debug: log raw LLM response
+        if len(full_response) < 10:
+            print(f"[LLM-raw] EMPTY or near-empty, len={len(full_response)}")
+        else:
+            print(f"[LLM-raw] len={len(full_response)} first=120:{full_response[:120]}")
+
         # Parse JSON reply and extract display text
         reply_text, segments = self._extract_reply_text(full_response)
 
@@ -185,15 +191,30 @@ class TurnRuntime:
                 self.on_segment(tone, zh, en)
             bus.publish(EventType.ASSISTANT_SEGMENT, {"tone": tone, "zh": zh, "en": en}, source="turn_runtime")
 
-        # Split display text into sentences for TTS
-        if reply_text:
-            tts_sentences = _split_text(reply_text, min_len=5, max_len=50)
+        # Build TTS text from character's native language (NOT final_reply which is Chinese)
+        # Determine native language from character card
+        try:
+            char_card = self.pipeline.runtime.character.active
+            native_lang = char_card.get("tts", {}).get("prompt_lang", "ja")
+        except Exception:
+            native_lang = "ja"
+        # Collect native-language text from all segments for TTS
+        native_parts: list[str] = []
+        for seg in segments:
+            native_text = seg.get(native_lang, "") or seg.get("en", "") or seg.get("ja", "")
+            if native_text:
+                native_parts.append(native_text)
+        tts_text = " ".join(native_parts).strip()
+        if tts_text:
+            tts_sentences = _split_text(tts_text, min_len=5, max_len=50)
+            print(f"[TTS-lang] native={native_lang}  tts_text_len={len(tts_text)}  sentences={len(tts_sentences)}")
         else:
             tts_sentences = []
+            print(f"[TTS-lang] no native text found, lang={native_lang}")
 
-        # Guard: if reply_text appears to be raw JSON, skip TTS
+        # Guard: if tts_text appears to be raw JSON, skip TTS
         if tts_sentences and tts_sentences[0].startswith("{"):
-            print(f"[TTS-guard] SKIP: reply_text appears to be raw JSON, len={len(reply_text)}")
+            print(f"[TTS-guard] SKIP: tts_text appears to be raw JSON, len={len(tts_text)}")
             tts_sentences = []
 
         tts_futures: list[tuple[str, Any]] = []
@@ -219,6 +240,8 @@ class TurnRuntime:
         reply_dict = {"reply_text": reply_text, "intent": "unknown", "actions": [], "memory": {}, "raw": {}}
         from app.memory.background import memory_worker
         memory_worker.enqueue_turn(text, reply_dict)
+        # Persist history back to pipeline for next turn continuity
+        self.pipeline.history = brain.history[:]
 
         bus.publish(EventType.ASSISTANT_REPLY, {"text": reply_text}, source="turn_runtime")
         bus.publish(EventType.TURN_COMPLETED, {"reply": reply_text, "stats": {"streaming": True, "mode": mode, "tts_sentences": len(tts_sentences)}}, source="turn_runtime")
@@ -235,23 +258,32 @@ class TurnRuntime:
         segments: list[dict] = []
         display = raw_response
 
-        # Try to parse as JSON
+        # Try to parse as JSON — with multiple fallback strategies
+        data = None
         try:
             data = json.loads(raw_response)
-        except json.JSONDecodeError:
-            # Try to extract JSON from the response
+        except (json.JSONDecodeError, Exception):
+            pass
+
+        if data is None:
+            # Fallback 1: extract JSON between { }
             start = raw_response.find("{")
             end = raw_response.rfind("}") + 1
             if start >= 0 and end > start:
                 try:
                     data = json.loads(raw_response[start:end])
-                except json.JSONDecodeError:
-                    return display, segments
-            else:
-                return display, segments
-        # Also catch any other exceptions (Unicode, type errors, etc.)
-        except Exception:
-            print(f"[TTS-extract] parse error, raw (first 120): {raw_response[:120]}")
+                except (json.JSONDecodeError, Exception):
+                    pass
+
+        if data is None and "segments" in raw_response:
+            # Fallback 2: LLM forgot outer braces — wrap and retry
+            try:
+                data = json.loads("{" + raw_response + "}")
+            except (json.JSONDecodeError, Exception):
+                pass
+
+        if data is None:
+            print(f"[TTS-extract] all parse strategies failed, raw (first 120): {raw_response[:120]}")
             return display, segments
 
         # Extract segments

@@ -61,6 +61,7 @@ class Brain:
         screen_context: str = "",
         temperature: float = 0.3,
         llm_adapter: Any = None,
+        record: bool = True,  # False for initiative calls to avoid polluting history/memory
     ) -> BrainResult:
         bus.publish(
             EventType.BRAIN_STARTED,
@@ -77,7 +78,8 @@ class Brain:
             llm_adapter=llm_adapter,
         )
         final_reply = result.get("final_reply", "")
-        self._record_turn(user_text, final_reply)
+        if record:
+            self._record_turn(user_text, final_reply)
 
         bus.publish(
             EventType.BRAIN_FINISHED,
@@ -153,6 +155,14 @@ class Brain:
         from app.core.emotion import emotion_tracker
         emotion = emotion_tracker.infer(user_text, final_reply)
         state_store.update(emotion=emotion)
+
+        # Update relationship memory (trust, familiarity, respect, concern)
+        from app.core.relationship import relationship
+        relationship.update(user_text, final_reply)
+        # Periodically save relationship state (~5% chance per turn)
+        import random
+        if random.random() < 0.05:
+            relationship.save()
 
         reply_dict = {
             "reply_text": final_reply,

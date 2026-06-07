@@ -11,18 +11,6 @@ from app.runtime.turn import TurnRuntime
 from app.tools.registry import ToolRegistry
 
 
-_PROACTIVE_PROMPT = """[系统提示]
-你是用户的长期陪伴AI助手。现在你检测到用户已经闲置了一段时间，或者发生了一些值得关注的事件。
-
-当前状态: {state_summary}
-触发原因: {trigger_reasons}
-
-请根据以上信息，决定是否主动和用户说话：
-- 如果有重要的事情要说，请自然地说出来
-- 如果没什么特别的事，简短打个招呼或关心一下
-- 如果用户状态是"focused"或"sleeping"，保持安静，返回空字符串
-
-直接回复你要说的话（纯文本，不需要JSON）。如果不说话，返回空。"""
 
 
 # App → activity mapping for state auto-inference
@@ -62,6 +50,8 @@ class AgentLoop:
         self._initiative: Any = None
         self._screen_watcher: Any = None
         self._screen_enabled = os.environ.get("SCREEN_ENABLED", "0") == "1"
+        self._last_initiative_time: float = 0.0
+        self._initiative_cooldown: float = 120.0  # seconds between proactive messages
 
     # ---- start / stop ----------------------------------------------------
     def start(self) -> None:
@@ -94,6 +84,14 @@ class AgentLoop:
         memory_worker.start()
         print(f"[AgentLoop] Memory worker started (LLM-powered)")
 
+        # Load relationship memory from disk
+        from app.core.relationship import relationship
+        if relationship.load():
+            d = relationship.to_dict()
+            print(f"[AgentLoop] Relationship loaded: trust={d['trust']:.0f} fam={d['familiarity']:.0f} resp={d['respect']:.0f} conc={d['concern']:.0f}")
+        else:
+            print(f"[AgentLoop] Relationship memory fresh start")
+
         # --- Initiative checker ---
         idle_sec = float(os.environ.get("INITIATIVE_IDLE_SEC", "300"))
         check_sec = float(os.environ.get("INITIATIVE_CHECK_SEC", "15"))
@@ -124,6 +122,9 @@ class AgentLoop:
 
         self._running = True
         print(f"[AgentLoop] Started (character={self.character.active_id}, text_mode={self.text_mode}, model={adapter.model})")
+        # Start initiative buffer expiry thread (cleans unanswered entries)
+        from app.core.initiative_buffer import initiative_buffer
+        initiative_buffer.start_expiry()
 
         try:
             if self.text_mode:
@@ -134,6 +135,9 @@ class AgentLoop:
             if self._screen_watcher:
                 self._screen_watcher.stop()
             self._initiative.stop()
+            # Save session episode before stopping memory
+            if self._llm_adapter:
+                memory_worker.summarize_session(self._llm_adapter)
             memory_worker.stop(wait=False)
             if self.turns:
                 self.turns.shutdown()
@@ -264,7 +268,11 @@ class AgentLoop:
 
     def _on_segment(self, tone: str, zh: str, ja: str) -> None:
         self.character.portrait_for(tone)
-        print(f"  [{tone}] {zh or ''}")
+        en = ja or ""
+        if en:
+            print(f"  [{tone}] {en}")
+        if zh:
+            print(f"         {zh}")
 
     def _on_tts(self, text: str, tone: str) -> None:
         return None
@@ -277,31 +285,74 @@ class AgentLoop:
     def _on_initiative(self, events: list) -> None:
         """Called by InitiativeChecker when agent should proactively speak."""
         from app.core.state import state_store
+        from app.core.state import mental_state
+        from app.core.focus import focus_store
+        from app.core.relationship import relationship
+        from app.core.intent import compute_candidates, decide_action, describe_candidate
         from app.brain.service import Brain
+        from app.brain.prompt_builder import PromptBuilder
 
         if not self._llm_adapter:
             print("[Initiative] No LLM adapter, skipping")
             return
 
-        event_types = [e.type for e in events]
-        reasons = ", ".join(event_types)
-        state = state_store.snapshot()
-        state_summary = f"activity={state['activity']}, attention={state['attention']}, emotion={state['emotion']}"
+        # Cooldown check: prevent spamming from rapid screen_change events
+        elapsed_since_last = time.time() - self._last_initiative_time
+        if elapsed_since_last < self._initiative_cooldown and self._last_initiative_time > 0:
+            return
 
-        prompt = _PROACTIVE_PROMPT.format(state_summary=state_summary, trigger_reasons=reasons)
-        print(f"[Initiative] Triggered: {reasons} | state={state_summary}")
+        # Step 1: compute initiative candidates from live state
+        idle_sec = self._initiative.idle_seconds() if hasattr(self._initiative, 'idle_seconds') else time.time() - self._last_interaction
+        ctx = state_store.snapshot() if self._screen_enabled else {}
+        candidates = compute_candidates(idle_sec, mental_state, focus_store, relationship, events=events, context=ctx)
+
+        # Step 2: decide whether to speak
+        candidate = decide_action(candidates)
+        self._last_initiative_time = time.time()  # record even if silent
+        if candidate is None:
+            if candidates:
+                print(f"[Initiative] {len(candidates)} candidate(s) below threshold, staying silent")
+            else:
+                print(f"[Initiative] No candidates (idle={idle_sec:.0f}s), staying silent")
+            return
+
+        print(f"[Initiative] {describe_candidate(candidate)}")
+
+        # Step 3: build structured initiative prompt from intent
+        ms = mental_state.to_dict()
+        initiative_prompt = PromptBuilder.build_initiative_prompt(
+            candidate["type"], candidate["topic"], ms["mood"], ms["curiosity"],
+            activity=ctx.get("activity", ""),
+            app_name=ctx.get("context", ""),
+        )
 
         brain = Brain(character=self.character, tools=self.tools, runtime=self.runtime)
         brain.history = self.turns.pipeline.history if self.turns else []
 
         try:
-            result = brain.respond(llm_adapter=self._llm_adapter, user_text=prompt, temperature=0.4)
-            reply = result.final_reply.strip()
-            if reply:
-                print(f"[Initiative] Assistant: {reply}")
-                # Speak proactively (voice and text mode both)
+            result = brain.respond(llm_adapter=self._llm_adapter, user_text=initiative_prompt, temperature=0.4)
+            segments = result.segments  # list of {"en":..., "zh":..., "tone":...}
+            reply_cn = result.final_reply.strip()
+            if not reply_cn and segments:
+                reply_cn = "".join(s.get("zh", "") for s in segments).strip()
+            if reply_cn:
+                print(f"[Initiative] Assistant: {reply_cn}")
+                # Display segments (same pipeline as normal conversation)
+                for seg in segments:
+                    tone = seg.get("tone", "neutral")
+                    zh = seg.get("zh", "")
+                    en = seg.get("en", "")
+                    self._on_segment(tone, zh, en)
+                # Build TTS text from native language segments
+                tts_text = " ".join(s.get("en", "") or s.get("ja", "") for s in segments).strip()
+                if not tts_text:
+                    tts_text = reply_cn
                 if self.turns:
-                    self._speak_proactive(reply)
+                    self._speak_proactive(tts_text)
+                # Track for closure
+                from app.core.initiative_buffer import initiative_buffer
+                topic = reply_cn[:80]
+                initiative_buffer.push(topic, tts_text)
         except Exception as exc:
             print(f"[Initiative] Brain call failed: {exc}")
 
