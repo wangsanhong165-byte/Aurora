@@ -1,216 +1,135 @@
-﻿# 项目架构宪法 (Architecture Constitution)
+# Companion AI Architecture Constitution
 
-> 这不是功能文档，是架构边界宪法。以后所有 AI Code / Codex / Claude Code / Cursor 都必须先读这一份。
+Version: 1.0
+Status: Foundational
 
----
+## Mission
 
-## 一、项目定位
+This project is a long-term companion AI, not a character chat platform.
 
-**构建一个长期陪伴型 AI，而非角色聊天平台。**
+Core values:
 
-核心价值：长期陪伴 · 长期记忆 · 主动交互 · 项目协助 · 自然语音
+- Long-term memory
+- Long-term companionship
+- Proactive interaction
+- Project assistance
+- Natural voice and text interaction
+- Continuous growth
 
----
+Non-goals:
 
-## 二、架构总图（只看三张图）
+- Character marketplace
+- Multi-character simulation
+- Digital human showcase platform
 
-### 图1：总架构
+## Core Principles
 
-```
-                       ┌─────────────┐
-                       │   State     │ ← Activity / Attention / Emotion / Context
-                       └──────┬──────┘
-                              │ reads
-                              ▼
-┌────────┐   Event    ┌──────────────┐   Event    ┌────────┐
-│ Input  │ ────────►  │    Brain     │ ────────►  │ Output │
-│ (ASR)  │            │  (唯一决策)   │            │ (TTS)  │
-└────────┘            └──┬───┬───┬───┘            └────────┘
-                         │   │   │
-              ┌──────────┘   │   └──────────┐
-              ▼              ▼              ▼
-        ┌──────────┐  ┌──────────┐  ┌──────────┐
-        │  Memory  │  │  Tools   │  │ Project  │
-        │(后台异步) │  │(插件路由) │  │(项目记忆) │
-        └──────────┘  └──────────┘  └──────────┘
-```
+1. Single Brain
 
-**核心原则**：所有模块只和 Event Bus 说话，不直接互相调用。
+   The system has exactly one decision center: `Brain`. Memory, state,
+   character, and project modules store data. They do not make autonomous
+   decisions.
 
-### 图2：记忆流
+2. Event-driven system
 
-```
-Conversation (Raw Log)
-      │
-      ▼
-┌──────────────┐
-│  Extractor   │ ← LLM 提取事实/摘要（后台异步，不阻塞回复）
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│  Candidate   │
-│  Memory      │
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│   Merger     │ ← 去重/合并/更新
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│  Long-Term   │ ← JSONL 主存储（不是向量库）
-│  Memory      │
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐
-│ Vector Index │ ← 只是索引，可重建
-└──────────────┘
-```
+   Inputs become events. Outputs are events. Modules communicate through the
+   event bus rather than direct cross-module calls whenever a boundary is
+   crossed.
 
-**关键**：Vector Index 不是主存储，只是索引。
+3. State and intelligence are separate
 
-### 图3：主动性流
+   `Brain` reads and updates state. State modules never decide what to do.
 
-```
-Screen Monitor / Timer / StateChange / ToolEvent
-      │
-      ▼
-┌───────────────┐
-│ Event Queue   │
-└───────┬───────┘
-        │
-        ▼
-┌───────────────┐
-│    Brain      │ ← 唯一决策点
-└───────┬───────┘
-        │
-        ▼
-   Should Speak?
-     Yes / No
+4. Memory must not block conversation
+
+   Raw conversation logging may be synchronous and cheap. Extraction,
+   compression, merging, and indexing run in the background.
+
+5. Fixed context budget
+
+   Conversation history may grow forever, but prompt size must stay bounded.
+   Only selected memory enters the prompt.
+
+6. Extensions must not pollute the core
+
+   Live2D, desktop pets, browser control, MCP, automation, and future tools
+   attach as plugins or execution adapters.
+
+## Module Classes
+
+- Input sources: voice, keyboard, screen, timer, plugins. They produce events.
+- State layer: memory, state, character, project. They store data.
+- Brain layer: the only reasoning and decision center.
+- Execution layer: TTS, UI, player, tools, notifications. They execute commands.
+
+## Top-Level Flow
+
+```mermaid
+flowchart TD
+    User[User or External Event] --> Input[Input Layer]
+    Input --> Bus[Event Bus]
+    Bus --> Turn[Turn Runtime]
+    Turn --> Brain[Brain]
+    Brain <--> Memory[Memory Store]
+    Brain <--> State[State Store]
+    Brain <--> Project[Project Store]
+    Brain --> Tools[Tool Router]
+    Brain --> Output[Output Events]
+    Output --> UI[UI]
+    Output --> TTS[TTS]
+    TTS --> Player[Player]
 ```
 
-**铁律**：ScreenWatcher / Timer / Plugin 永远不直接调 LLM。
+`AgentLoop` only collects input. It must not directly orchestrate ASR, LLM, TTS,
+memory, and playback. A single user-visible interaction goes through
+`TurnRuntime`, which returns a normalized `TurnResult`.
 
----
+Current transitional shape:
 
-## 三、六层架构
+- Text turn: `AgentLoop -> TurnRuntime -> ChatPipeline -> Brain`
+- Voice turn: `AgentLoop -> TurnRuntime -> Orchestrator`
 
-### 第一层：决策层（Brain）
+Target shape:
 
-- **唯一入口**：所有用户输入、主动事件、工具结果都只进 Brain
-- **Brain 不执行**：Brain 只做 Reasoning / Planning / Memory Decision / Tool Decision
-- Brain 调用下层协议，不调用具体实现
+- Text turn: `AgentLoop -> TurnRuntime -> Brain`
+- Voice turn: `AgentLoop -> TurnRuntime -> ASR Adapter -> Brain -> TTS Adapter -> Player`
 
-### 第二层：记忆层（Memory）
+The transitional shape is allowed only while preserving the current working
+voice streaming path.
 
-- **三层存储**：ShortTerm（窗口对话）→ Candidate（待确认记忆）→ LongTerm（持久卡片）
-- **后台异步**：记忆提取和整理绝不阻塞对话回复
-- **主存储是 JSONL**，向量索引可重建
+## Memory Flow
 
-### 第三层：主动层（Initiative）
-
-- 事件源 → 队列 → Brain → Speak?
-- 所有外部事件（屏幕变化/定时器/状态变更）统一进入队列
-- Brain 结合 State 决定是否说话
-
-### 第四层：状态层（State）
-
-- Activity / Attention / Emotion / Device / Context
-- 状态是事实，不是决策
-- 主动性先看 State，再决定说/不说
-
-### 第五层：模型层（Adapters）
-
-```
-LLMAdapter    → OpenAI / DeepSeek / Gemini / Local
-TTSAdapter    → GSVI / QwenTTS / EdgeTTS
-ASRAdapter    → Whisper / QwenASR / FunASR
-VisionAdapter → 屏幕分析 / 图像理解
+```mermaid
+flowchart TD
+    Conversation[Conversation Turn] --> Raw[Raw Conversation Log]
+    Raw --> Extractor[Background Extractor]
+    Extractor --> Candidate[Candidate Memory]
+    Candidate --> Merger[Memory Merger]
+    Merger --> LongTerm[Long-Term Memory Cards]
+    LongTerm --> Vector[Vector Index]
 ```
 
-**业务层永远不知道 "DeepSeek" 这个名字，只知道 `llm.generate()`**
+The vector index is only an index. It is not the source of truth.
 
-### 第六层：插件层（Plugins）
+## Initiative Flow
 
-```
-Brain → ToolRouter → Plugin → ToolResult → Brain
-```
-
-- 统一 Tool Request / Tool Result 格式
-- 插件注册、权限控制、分组开关
-
----
-
-## 四、目录结构
-
-```
-app/
-├── core/           # 事件总线、状态、配置
-│   ├── events.py
-│   ├── event_bus.py
-│   ├── state.py
-│   └── config.py
-│
-├── brain/          # 唯一决策中心
-│   └── service.py
-│
-├── runtime/        # 执行层（AgentRuntime / Turn / Pipeline）
-│   ├── agent_runtime.py
-│   ├── turn.py
-│   └── pipeline.py
-│
-├── memory/         # 记忆系统（后台异步）
-│   ├── short_term.py
-│   ├── long_term.py
-│   ├── background.py
-│   ├── extractor.py
-│   └── summarizer.py
-│
-├── models/         # 模型适配器
-│   ├── adapters.py
-│   └── http_adapters.py
-│
-├── character/      # 角色系统
-│   ├── registry.py
-│   └── loader.py
-│
-├── tools/          # 工具系统
-│   ├── registry.py
-│   └── builtins/
-│
-├── input/          # 输入层（VAD / 录音）
-├── tts/            # TTS 播放层
-├── initiative/     # 主动队列
-├── project/        # 项目记忆
-├── screen/         # 屏幕监控
-└── ui/             # TUI 面板
+```mermaid
+flowchart TD
+    Screen[Screen Event] --> Queue[Initiative Queue]
+    Timer[Timer Event] --> Queue
+    StateChange[State Change] --> Queue
+    ToolEvent[Tool Event] --> Queue
+    Queue --> Brain[Brain]
+    Brain --> Gate{Should speak?}
+    Gate -->|Yes| Output[Output Event]
+    Gate -->|No| Drop[Record and stay quiet]
 ```
 
----
+## Feature Gate
 
-## 五、开发铁律
+Every new feature must answer:
 
-1. **模块只和 Bus 说话，不直接互相调用**
-2. **所有 LLM 调用只走 Brain**
-3. **记忆操作不阻塞对话回复**
-4. **业务代码只依赖 Adapter 协议，不依赖具体模型名**
-5. **新功能 = 注册事件 + 挂到 Bus，不改旧模块**
-6. **Vector Index 可重建，LongTermMemory 是主存储**
-
----
-
-## 六、禁止清单
-
-- ❌ ScreenWatcher 直接调 LLM
-- ❌ Timer 直接调 LLM
-- ❌ 模块 A import 模块 B 只为调一个方法
-- ❌ 在对话主链路上做记忆提取
-- ❌ 硬编码模型名称到业务逻辑
-- ❌ 出现 `_v2.py` / `_new.py` / `_final.py` 文件
-
----
-
-*最后更新：2026-06-06*
+1. Is it state, event, decision, or execution?
+2. Does it create another Brain? If yes, redesign.
+3. Does it make the prompt grow over time? If yes, redesign.
+4. Can it be implemented as a plugin? If yes, keep the core unchanged.

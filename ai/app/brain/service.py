@@ -1,24 +1,16 @@
-﻿"""Brain boundary for the companion AI.
-
-The first implementation delegates model/tool execution to the existing
-``AgentRuntime``. The architectural change is ownership: callers talk to Brain,
-and Brain talks to state, memory, character, tools, and execution.
-"""
+"""Brain boundary for the companion AI."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Generator, TYPE_CHECKING
+from typing import Any, Generator
 
 from app.character.registry import CharacterRegistry
 from app.core.event_bus import bus
 from app.core.events import EventType
-from app.core.state import state_store
-from app.memory.background import memory_worker
+from app.core.state import state_store, mood_tracker
+from app.memory.store import memory_store
 from app.tools.registry import ToolRegistry
-
-if TYPE_CHECKING:
-    from app.runtime.agent_runtime import AgentRuntime
 
 
 @dataclass(slots=True)
@@ -38,7 +30,7 @@ class BrainResult:
 
 
 class Brain:
-    """The system's single decision center."""
+    """The system single decision center."""
 
     def __init__(
         self,
@@ -52,7 +44,6 @@ class Brain:
         self.runtime = runtime or AgentRuntime(character=self.character, tools=self.tools)
         self.history: list[dict[str, str]] = []
 
-    # ---- non-streaming respond -------------------------------------------
     def respond(
         self,
         client: Any = None,
@@ -61,7 +52,7 @@ class Brain:
         screen_context: str = "",
         temperature: float = 0.3,
         llm_adapter: Any = None,
-        record: bool = True,  # False for initiative calls to avoid polluting history/memory
+        record: bool = True,
     ) -> BrainResult:
         bus.publish(
             EventType.BRAIN_STARTED,
@@ -93,7 +84,6 @@ class Brain:
             elapsed=float(result.get("elapsed", 0.0)),
         )
 
-    # ---- streaming respond -----------------------------------------------
     def respond_stream(
         self,
         llm_adapter: Any,
@@ -145,24 +135,20 @@ class Brain:
         return BrainResult(segments=[], final_reply=final_reply, tool_rounds=0, elapsed=elapsed)
 
     def _record_turn(self, user_text: str, final_reply: str) -> None:
-        """Record a turn in history, update emotion, enqueue memory work."""
         self.history.append({"role": "user", "content": user_text})
         self.history.append({"role": "assistant", "content": final_reply})
         if len(self.history) > 20:
             self.history = self.history[-20:]
 
-        # Auto-infer emotion from conversation
-        from app.core.emotion import emotion_tracker
-        emotion = emotion_tracker.infer(user_text, final_reply)
+        mood_tracker.update(user_text, final_reply)
+        mood_val = mood_tracker.mood
+        if mood_val > 65:
+            emotion = "happy"
+        elif mood_val < 40:
+            emotion = "sad"
+        else:
+            emotion = "neutral"
         state_store.update(emotion=emotion)
-
-        # Update relationship memory (trust, familiarity, respect, concern)
-        from app.core.relationship import relationship
-        relationship.update(user_text, final_reply)
-        # Periodically save relationship state (~5% chance per turn)
-        import random
-        if random.random() < 0.05:
-            relationship.save()
 
         reply_dict = {
             "reply_text": final_reply,
@@ -170,7 +156,7 @@ class Brain:
             "actions": [],
             "memory": {},
         }
-        memory_worker.enqueue_turn(user_text, reply_dict)
+        memory_store.enqueue_turn(user_text, reply_dict)
 
     def clear_history(self) -> None:
         self.history = []

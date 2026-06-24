@@ -52,13 +52,13 @@ class AgentLoop:
         self._screen_enabled = os.environ.get("SCREEN_ENABLED", "0") == "1"
         self._last_initiative_time: float = 0.0
         self._initiative_cooldown: float = 120.0  # seconds between proactive messages
+        self._web_mode: bool = False
 
     # ---- start / stop ----------------------------------------------------
     def start(self) -> None:
         """Start the main loop and all background services."""
         from app.models import OpenAILLMAdapter
-        from app.memory.background import memory_worker
-        from app.memory.vector_index import memory_index
+        from app.memory.store import memory_store
         from app.initiative import InitiativeChecker, initiative_queue
         from app.screen import ScreenWatcher
 
@@ -74,23 +74,17 @@ class AgentLoop:
         self.turns.on_segment = self._on_segment
         self.turns.on_tts = self._on_tts
         self.turns.on_complete = self._on_complete
+        self.turns.on_tts_wav = self._on_tts_wav
         self.turns.start()
 
+        # Web mode: disable local player (browser handles playback)
+        if self._web_mode:
+            self.turns.disable_local_player = True
+
         # --- Memory: rebuild index on startup ---
-        count = memory_worker.rebuild_index()
-        print(f"[AgentLoop] Memory index rebuilt: {count} cards")
+        memory_store.set_llm_adapter(adapter)
+        print(f"[AgentLoop] Memory store ready ({memory_store.rebuild_index()} facts)")
 
-        memory_worker.set_llm_adapter(adapter)
-        memory_worker.start()
-        print(f"[AgentLoop] Memory worker started (LLM-powered)")
-
-        # Load relationship memory from disk
-        from app.core.relationship import relationship
-        if relationship.load():
-            d = relationship.to_dict()
-            print(f"[AgentLoop] Relationship loaded: trust={d['trust']:.0f} fam={d['familiarity']:.0f} resp={d['respect']:.0f} conc={d['concern']:.0f}")
-        else:
-            print(f"[AgentLoop] Relationship memory fresh start")
 
         # --- Initiative checker ---
         idle_sec = float(os.environ.get("INITIATIVE_IDLE_SEC", "300"))
@@ -127,7 +121,11 @@ class AgentLoop:
         initiative_buffer.start_expiry()
 
         try:
-            if self.text_mode:
+            if self._web_mode:
+                from app.ui.web_ui import get_web_input_queue
+                wq = get_web_input_queue()
+                self._run_web_input_loop(wq)
+            elif self.text_mode:
                 self._run_text_loop()
             else:
                 self._run_voice_loop()
@@ -137,8 +135,20 @@ class AgentLoop:
             self._initiative.stop()
             # Save session episode before stopping memory
             if self._llm_adapter:
-                memory_worker.summarize_session(self._llm_adapter)
-            memory_worker.stop(wait=False)
+                memory_store.summarize_session(self._llm_adapter)
+            # Save project state (last active time, session count)
+            try:
+                from app.project.store import ProjectStore
+                ps = ProjectStore()
+                data = ps.load()
+                data["current"]["last_session"] = time.strftime("%Y-%m-%d %H:%M")
+                data["current"]["session_count"] = data["current"].get("session_count", 0) + 1
+                data["current"]["character"] = self.character.active_id
+                ps.save(data)
+                print("[Project] Session state saved")
+            except Exception:
+                pass
+            memory_store.stop(wait=False)
             if self.turns:
                 self.turns.shutdown()
 
@@ -246,6 +256,9 @@ class AgentLoop:
         print(f"  Agent v2 (text mode)  |  {self.character.active_id}")
         print("  Type to chat. /quit to exit.")
         print("=" * 48)
+        self._run_stdin_loop()
+
+    def _run_stdin_loop(self) -> None:
         while self._running:
             try:
                 user = input("\nYou: ").strip()
@@ -255,16 +268,46 @@ class AgentLoop:
                 continue
             if user.lower() in {"/quit", "/exit", "/q"}:
                 break
-            screen = self._capture_screen_if_enabled()
-            self._last_interaction = time.time()
+            self._process_user_text(user)
+
+    def _run_web_input_loop(self, wq) -> None:
+        import queue
+        import traceback
+        while self._running:
+            try:
+                msg = wq.get(timeout=0.5)
+                text = str(msg.get("text", "")).strip()
+                if text:
+                    if text.lower() in {"/quit", "/exit", "/q"}:
+                        break
+                    self._process_user_text(text)
+            except queue.Empty:
+                continue
+            except Exception:
+                traceback.print_exc()
+                print("[WebInput] error processing message, continuing loop")
+                continue
+
+    def _process_user_text(self, user: str) -> None:
+        screen = self._capture_screen_if_enabled()
+        self._last_interaction = time.time()
+        if hasattr(self._initiative, "touch"):
             self._initiative.touch()
-            if self.turns:
-                result = self.turns.process_text(user, screen_context=screen)
-                if result.reply_text:
-                    print(f"Assistant: {result.reply_text}")
-                    # TTS playback handled inside process_text (shared streaming pipeline)
-            else:
-                print("[AgentLoop] turn runtime not ready")
+        if self.turns:
+            result = self.turns.process_text(user, screen_context=screen)
+            if result.reply_text:
+                print(f"Assistant: {result.reply_text}")
+        else:
+            print("[AgentLoop] turn runtime not ready")
+
+    def _on_tts_wav(self, wav: bytes, text: str) -> None:
+        try:
+            from app.ui.web_ui import save_tts_audio, broadcast
+            path = save_tts_audio(wav, text)
+            if path:
+                broadcast("tts_audio", {"path": path, "text": text[:60]})
+        except Exception:
+            pass
 
     def _on_segment(self, tone: str, zh: str, ja: str) -> None:
         self.character.portrait_for(tone)
@@ -273,6 +316,12 @@ class AgentLoop:
             print(f"  [{tone}] {en}")
         if zh:
             print(f"         {zh}")
+        # SSE broadcast to Web UI
+        try:
+            from app.ui.web_ui import broadcast
+            broadcast("segment", {"tone": tone, "en": en, "zh": zh, "portrait": f"/portrait/{tone}"})
+        except Exception:
+            pass
 
     def _on_tts(self, text: str, tone: str) -> None:
         return None
@@ -285,9 +334,7 @@ class AgentLoop:
     def _on_initiative(self, events: list) -> None:
         """Called by InitiativeChecker when agent should proactively speak."""
         from app.core.state import state_store
-        from app.core.state import mental_state
-        from app.core.focus import focus_store
-        from app.core.relationship import relationship
+        from app.core.state import mood_tracker
         from app.core.intent import compute_candidates, decide_action, describe_candidate
         from app.brain.service import Brain
         from app.brain.prompt_builder import PromptBuilder
@@ -304,7 +351,8 @@ class AgentLoop:
         # Step 1: compute initiative candidates from live state
         idle_sec = self._initiative.idle_seconds() if hasattr(self._initiative, 'idle_seconds') else time.time() - self._last_interaction
         ctx = state_store.snapshot() if self._screen_enabled else {}
-        candidates = compute_candidates(idle_sec, mental_state, focus_store, relationship, events=events, context=ctx)
+        ms = mood_tracker
+        candidates = compute_candidates(idle_sec, ms.mood, activity=ctx.get("activity", ""), events=events)
 
         # Step 2: decide whether to speak
         candidate = decide_action(candidates)
@@ -319,9 +367,8 @@ class AgentLoop:
         print(f"[Initiative] {describe_candidate(candidate)}")
 
         # Step 3: build structured initiative prompt from intent
-        ms = mental_state.to_dict()
         initiative_prompt = PromptBuilder.build_initiative_prompt(
-            candidate["type"], candidate["topic"], ms["mood"], ms["curiosity"],
+            candidate["type"], candidate["topic"],
             activity=ctx.get("activity", ""),
             app_name=ctx.get("context", ""),
         )

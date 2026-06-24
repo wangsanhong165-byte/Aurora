@@ -1,4 +1,4 @@
-recordings/
+﻿recordings/
 memory.short.jsonl
 __pycache__/
 .idea/
@@ -8,3 +8,6 @@ models/
 *.safetensors
 *.safetensors.index.json
 logs/
+temp_audio/
+tts_outputs/
+.vscode/

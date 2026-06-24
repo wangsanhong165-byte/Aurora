@@ -1,4 +1,4 @@
-"""v1 Voice Agent  --one-click launcher with input state machine.
+﻿"""v1 Voice Agent  --one-click launcher with input state machine.
 
 Usage:
     python run.py              # Continuous VAD mode
@@ -130,7 +130,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-tts", action="store_true")
     p.add_argument("--no-vad", action="store_true", help="Single-turn mode")
     p.add_argument("--tts-engine", choices=["gsvi", "gsvi-v2pro", "pyttsx3"])
-    p.add_argument("--ui", action="store_true", help="Launch TUI control panel")
+    p.add_argument("--ui", choices=["tui", "web"], default=None, help="Launch UI: tui (terminal) or web (browser)")
     p.add_argument("--persona", default=None)
     p.add_argument("--text", action="store_true", help="Text-only chat mode (no audio)")
     p.add_argument("--audio-path", default="")
@@ -143,6 +143,7 @@ def main() -> int:
     dotenv_path = Path(args.env_file)
     if dotenv_path.exists():
         load_env_file(dotenv_path)
+    args.persona = args.persona or os.environ.get("ACTIVE_CHARACTER")
 
     # Persona
     if args.persona:
@@ -166,12 +167,10 @@ def main() -> int:
                     ref_audio = ref_audio[first_key]
                 os.environ["GSVI_REF_AUDIO"] = str(BASE_DIR / "characters" / persona_id / ref_audio)
             if tts_cfg.get("prompt_lang"):
-                lang_map = {"ja": "日语", "zh": "中文", "en": "英文", "ko": "韩文"}
-                raw_lang = tts_cfg["prompt_lang"]
-                os.environ["GSVI_PROMPT_LANG"] = lang_map.get(raw_lang, raw_lang)
+                os.environ["GSVI_PROMPT_LANG"] = tts_cfg["prompt_lang"]
             if tts_cfg.get("prompt_text"):
                 os.environ["GSVI_PROMPT_TEXT"] = tts_cfg["prompt_text"]
-            os.environ.setdefault("GSVI_EMOTION", "默认")
+            os.environ.setdefault("GSVI_EMOTION", "榛樿")
             # ---- Pass custom model weight paths (relative to GSVI dir) ----
             custom_model = tts_cfg.get("custom_model", {})
             if custom_model.get("t2s"):
@@ -206,7 +205,7 @@ def main() -> int:
         try:
             tts_port = os.environ.get("TTS_PORT", "8030")
             r = requests.post(f"http://127.0.0.1:{tts_port}/v1/tts/synthesize",
-                             json={"text": "你好", "language": "zh"},
+                             json={"text": "浣犲ソ", "language": "zh"},
                              timeout=180)
             if r.status_code == 200:
                 print("[warmup] TTS model loaded")
@@ -280,7 +279,17 @@ def main() -> int:
                 turns.shutdown()
 
         else:
-            if args.ui:
+            if args.ui == "web":
+                from app.ui.web_ui import start_server, stop_server
+                server = start_server()
+                try:
+                    from app.agent.loop import AgentLoop
+                    loop = AgentLoop(persona=args.persona, text_mode=args.text)
+                    loop._web_mode = True
+                    loop.start()
+                finally:
+                    stop_server(server)
+            elif args.ui == "tui":
                 from app.ui import VoiceAgentUI
                 VoiceAgentUI(persona=args.persona, text_mode=args.text).run()
             else:

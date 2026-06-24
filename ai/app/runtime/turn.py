@@ -1,4 +1,4 @@
-"""Unified turn runtime.
+﻿"""Unified turn runtime.
 
 Agent loops collect input. This module owns how a turn is processed, whether the
 input came from text or voice. Supports both non-streaming (via ChatPipeline) and
@@ -23,8 +23,8 @@ from app.tts.player import AsyncAudioPlayer
 
 
 # Sentence splitting regex (for TTS text, not raw JSON tokens)
-_STRONG_END = re.compile(r"[。！？!?；;\n]")
-_WEAK_END = re.compile(r"[，、：,:]")
+_STRONG_END = re.compile(r"[\u3002\uFF01\uFF1F\n]")
+_WEAK_END = re.compile(r"[\uFF0C\u3001\uFF1A,:]")
 _MIN_WEAK = 12
 
 
@@ -81,16 +81,14 @@ class TurnRuntime:
         self.asr = asr_adapter or HTTPASRAdapter()
         self.tts = tts_adapter or HTTPTTSAdapter()
         self.player = player or AsyncAudioPlayer()
-        self._capture_tts_requests = False
-        self._pending_tts: list[tuple[str, str]] = []
         self._tts_executor = ThreadPoolExecutor(max_workers=2)
 
+        self.disable_local_player: bool = False
         self.on_segment: Callable[[str, str, str], None] | None = None
-        self.on_tts: Callable[[str, str], None] | None = None
         self.on_complete: Callable[[list, dict], None] | None = None
+        self.on_tts_wav: Callable[[bytes, str], None] | None = None
 
         self.pipeline.on_segment = self._on_segment
-        self.pipeline.on_tts = self._on_tts
         self.pipeline.on_complete = self._on_complete
 
     def start(self) -> None:
@@ -108,8 +106,7 @@ class TurnRuntime:
             return self._process_streaming(text, mode="text")
         result = self.pipeline.process(text, screen_context=screen_context)
         reply = str(result.get("final_reply", ""))
-        self._speak_pending(result)
-        state_store.update(input_state=InputState.IDLE.name)
+        self._synthesize_tts_from_segments(result.get("segments", []))
         return TurnResult(ok=True, input_mode="text", user_text=text, reply_text=reply, raw=result)
 
     def process_audio(self, audio_path: str, language: str | None = None) -> TurnResult:
@@ -132,14 +129,9 @@ class TurnRuntime:
         if self.llm_adapter:
             return self._process_streaming(text, mode="voice")
 
-        self._capture_tts_requests = True
-        self._pending_tts = []
-        try:
-            result = self.pipeline.process(text)
-        finally:
-            self._capture_tts_requests = False
+        result = self.pipeline.process(text)
         reply = str(result.get("final_reply", ""))
-        self._speak_pending(result)
+        self._synthesize_tts_from_segments(result.get("segments", []))
         state_store.update(input_state=InputState.SPEAKING.name)
         return TurnResult(ok=True, input_mode="voice", user_text=text, reply_text=reply, raw=result)
 
@@ -154,7 +146,6 @@ class TurnRuntime:
         import time
         from app.brain.service import Brain
 
-        self.player.begin_turn()
         state_store.update(input_state=InputState.SPEAKING.name)
 
         brain = Brain(character=self.pipeline.brain.character, tools=self.pipeline.brain.tools, runtime=self.pipeline.runtime)
@@ -191,60 +182,16 @@ class TurnRuntime:
                 self.on_segment(tone, zh, en)
             bus.publish(EventType.ASSISTANT_SEGMENT, {"tone": tone, "zh": zh, "en": en}, source="turn_runtime")
 
-        # Build TTS text from character's native language (NOT final_reply which is Chinese)
-        # Determine native language from character card
-        try:
-            char_card = self.pipeline.runtime.character.active
-            native_lang = char_card.get("tts", {}).get("prompt_lang", "ja")
-        except Exception:
-            native_lang = "ja"
-        # Collect native-language text from all segments for TTS
-        native_parts: list[str] = []
-        for seg in segments:
-            native_text = seg.get(native_lang, "") or seg.get("en", "") or seg.get("ja", "")
-            if native_text:
-                native_parts.append(native_text)
-        tts_text = " ".join(native_parts).strip()
-        if tts_text:
-            tts_sentences = _split_text(tts_text, min_len=5, max_len=50)
-            print(f"[TTS-lang] native={native_lang}  tts_text_len={len(tts_text)}  sentences={len(tts_sentences)}")
-        else:
-            tts_sentences = []
-            print(f"[TTS-lang] no native text found, lang={native_lang}")
-
-        # Guard: if tts_text appears to be raw JSON, skip TTS
-        if tts_sentences and tts_sentences[0].startswith("{"):
-            print(f"[TTS-guard] SKIP: tts_text appears to be raw JSON, len={len(tts_text)}")
-            tts_sentences = []
-
-        tts_futures: list[tuple[str, Any]] = []
-        for sentence in tts_sentences:
-            sentence = sentence.strip()
-            if sentence:
-                future = self._tts_executor.submit(self.tts.synthesize, sentence)
-                tts_futures.append((sentence, future))
-                bus.publish(EventType.TTS_REQUESTED, {"text": sentence, "tone": "neutral"}, source="turn_runtime")
-
-        for sentence, future in tts_futures:
-            try:
-                wav = future.result()
-                if wav:
-                    self.player.enqueue(wav, text=sentence)
-                    bus.publish(EventType.TTS_READY, {"text": sentence, "bytes": len(wav)}, source="turn_runtime")
-            except Exception as exc:
-                print(f"[TTS-synth] FAIL: {exc}  |  text='{sentence[:80]}'")
-                bus.publish(EventType.LOG, {"message": f"TTS failed: {exc}"}, source="turn_runtime")
-
-        self.player.end_turn()
+        self._synthesize_tts_from_segments(segments)
 
         reply_dict = {"reply_text": reply_text, "intent": "unknown", "actions": [], "memory": {}, "raw": {}}
-        from app.memory.background import memory_worker
-        memory_worker.enqueue_turn(text, reply_dict)
+        from app.memory.store import memory_store
+        memory_store.enqueue_turn(text, reply_dict)
         # Persist history back to pipeline for next turn continuity
         self.pipeline.history = brain.history[:]
 
         bus.publish(EventType.ASSISTANT_REPLY, {"text": reply_text}, source="turn_runtime")
-        bus.publish(EventType.TURN_COMPLETED, {"reply": reply_text, "stats": {"streaming": True, "mode": mode, "tts_sentences": len(tts_sentences)}}, source="turn_runtime")
+        bus.publish(EventType.TURN_COMPLETED, {"reply": reply_text, "stats": {"streaming": True, "mode": mode, "segment_count": len(segments)}}, source="turn_runtime")
 
         return TurnResult(ok=True, input_mode=mode, user_text=text, reply_text=reply_text)
 
@@ -258,7 +205,7 @@ class TurnRuntime:
         segments: list[dict] = []
         display = raw_response
 
-        # Try to parse as JSON — with multiple fallback strategies
+        # Try to parse as JSON 鈥?with multiple fallback strategies
         data = None
         try:
             data = json.loads(raw_response)
@@ -276,7 +223,7 @@ class TurnRuntime:
                     pass
 
         if data is None and "segments" in raw_response:
-            # Fallback 2: LLM forgot outer braces — wrap and retry
+            # Fallback 2: LLM forgot outer braces 鈥?wrap and retry
             try:
                 data = json.loads("{" + raw_response + "}")
             except (json.JSONDecodeError, Exception):
@@ -322,35 +269,70 @@ class TurnRuntime:
         if self.on_segment:
             self.on_segment(tone, zh, ja)
 
-    def _on_tts(self, text: str, tone: str) -> None:
-        if self._capture_tts_requests and text:
-            self._pending_tts.append((text, tone))
-        if self.on_tts:
-            self.on_tts(text, tone)
-
     def _on_complete(self, segments: list, stats: dict) -> None:
         if self.on_complete:
             self.on_complete(segments, stats)
 
-    def _speak_pending(self, result: dict[str, Any]) -> None:
-        requests = list(self._pending_tts)
-        if not requests:
-            fallback = str(result.get("final_reply", "")).strip()
-            if fallback:
-                requests = [(fallback, "neutral")]
-        self.player.begin_turn()
-        enqueued = 0
-        for text, tone in requests:
+    def _synthesize_tts_from_segments(self, segments: list[dict]) -> None:
+        """Synthesize TTS from parsed LLM segments, enqueue to player, broadcast to Web UI.
+
+        Shared by streaming and non-streaming paths. Extracts native-language text
+        from segments, splits into sentences, synthesizes in thread pool,
+        enqueues for playback, and broadcasts audio URLs to web UI.
+        """
+        if not segments:
+            # If the non-streaming path produced no segments, skip
+            return
+
+        # Determine native language from character card
+        try:
+            char_card = self.pipeline.runtime.character.active
+            native_lang = char_card.get("tts", {}).get("prompt_lang", "ja")
+        except Exception:
+            native_lang = "ja"
+
+        # Collect native-language text from all segments
+        native_parts: list[str] = []
+        for seg in segments:
+            native_text = seg.get(native_lang, "") or seg.get("en", "") or seg.get("ja", "")
+            if native_text:
+                native_parts.append(native_text)
+        tts_text = " ".join(native_parts).strip()
+
+        if not tts_text:
+            print(f"[TTS-lang] no native text found, lang={native_lang}")
+            return
+
+        tts_sentences = _split_text(tts_text, min_len=5, max_len=50)
+        print(f"[TTS-lang] native={native_lang}  tts_text_len={len(tts_text)}  sentences={len(tts_sentences)}")
+
+        # Guard: if it appears to be raw JSON, skip
+        if tts_sentences and tts_sentences[0].startswith("{"):
+            print(f"[TTS-guard] SKIP: tts_text appears to be raw JSON, len={len(tts_text)}")
+            return
+
+        if not self.disable_local_player:
+            self.player.begin_turn()
+        tts_futures: list[tuple[str, Any]] = []
+        for sentence in tts_sentences:
+            sentence = sentence.strip()
+            if sentence:
+                future = self._tts_executor.submit(self.tts.synthesize, sentence)
+                tts_futures.append((sentence, future))
+                bus.publish(EventType.TTS_REQUESTED, {"text": sentence, "tone": "neutral"}, source="turn_runtime")
+
+        for sentence, future in tts_futures:
             try:
-                wav = self.tts.synthesize(text, tone=tone)
+                wav = future.result()
+                if wav:
+                    if not self.disable_local_player:
+                        self.player.enqueue(wav, text=sentence)
+                    bus.publish(EventType.TTS_READY, {"text": sentence, "bytes": len(wav)}, source="turn_runtime")
+                    if self.on_tts_wav:
+                        self.on_tts_wav(wav, sentence)
             except Exception as exc:
-                bus.publish(EventType.LOG, {"message": f"TTS failed: {exc}", "text": text[:80]}, source="turn_runtime")
-                continue
-            if not wav:
-                continue
-            bus.publish(EventType.TTS_READY, {"text": text, "tone": tone, "bytes": len(wav)}, source="turn_runtime")
-            self.player.enqueue(wav, text=text)
-            enqueued += 1
-        self.player.end_turn()
-        if enqueued == 0:
-            state_store.update(input_state=InputState.IDLE.name)
+                print(f"[TTS-synth] FAIL: {exc}  |  text='{sentence[:80]}'")
+                bus.publish(EventType.LOG, {"message": f"TTS failed: {exc}"}, source="turn_runtime")
+
+        if not self.disable_local_player:
+            self.player.end_turn()
