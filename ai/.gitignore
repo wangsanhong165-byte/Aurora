@@ -11,3 +11,5 @@ logs/
 temp_audio/
 tts_outputs/
 .vscode/
+
+olv_extracted/
