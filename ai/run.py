@@ -3,7 +3,7 @@
 Usage:
     python run.py              # Continuous VAD mode
     python run.py --no-vad     # Single-turn (fixed duration)
-    python run.py --ui         # TUI control panel
+    python run.py --ui          # TUI control panel
 """
 
 import argparse
@@ -130,7 +130,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-tts", action="store_true")
     p.add_argument("--no-vad", action="store_true", help="Single-turn mode")
     p.add_argument("--tts-engine", choices=["gsvi", "gsvi-v2pro", "pyttsx3"])
-    p.add_argument("--ui", choices=["tui", "web"], default=None, help="Launch UI: tui (terminal) or web (browser)")
+    p.add_argument("--ui", choices=["tui"], default=None, help="Launch TUI control panel")
     p.add_argument("--persona", default=None)
     p.add_argument("--text", action="store_true", help="Text-only chat mode (no audio)")
     p.add_argument("--audio-path", default="")
@@ -205,7 +205,7 @@ def main() -> int:
         try:
             tts_port = os.environ.get("TTS_PORT", "8030")
             r = requests.post(f"http://127.0.0.1:{tts_port}/v1/tts/synthesize",
-                             json={"text": "浣犲ソ", "language": "zh"},
+                             json={"text": "hello", "language": "zh"},
                              timeout=180)
             if r.status_code == 200:
                 print("[warmup] TTS model loaded")
@@ -261,6 +261,8 @@ def main() -> int:
             tools = ToolRegistry()
             runtime = AgentRuntime(character=char, tools=tools)
             adapter = OpenAILLMAdapter()
+            from app.memory import init_memory
+            init_memory(adapter, character_registry=char)
             player = AsyncAudioPlayer()
             player.start()
 
@@ -279,17 +281,7 @@ def main() -> int:
                 turns.shutdown()
 
         else:
-            if args.ui == "web":
-                from app.ui.web_ui import start_server, stop_server
-                server = start_server()
-                try:
-                    from app.agent.loop import AgentLoop
-                    loop = AgentLoop(persona=args.persona, text_mode=args.text)
-                    loop._web_mode = True
-                    loop.start()
-                finally:
-                    stop_server(server)
-            elif args.ui == "tui":
+            if args.ui == "tui":
                 from app.ui import VoiceAgentUI
                 VoiceAgentUI(persona=args.persona, text_mode=args.text).run()
             else:
@@ -314,3 +306,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+

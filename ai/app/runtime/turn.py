@@ -8,10 +8,9 @@ streaming (via Brain.respond_stream) paths.
 from __future__ import annotations
 
 import json
-import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generator
+from typing import Any, Callable
 
 from app.core.event_bus import bus
 from app.core.events import EventType
@@ -20,34 +19,8 @@ from app.models import ASRAdapter, TTSAdapter, HTTPASRAdapter, HTTPTTSAdapter
 from app.runtime.agent_runtime import AgentRuntime
 from app.runtime.pipeline import ChatPipeline
 from app.tts.player import AsyncAudioPlayer
-
-
-# Sentence splitting regex (for TTS text, not raw JSON tokens)
-_STRONG_END = re.compile(r"[\u3002\uFF01\uFF1F\n]")
-_WEAK_END = re.compile(r"[\uFF0C\u3001\uFF1A,:]")
-_MIN_WEAK = 12
-
-
-def _split_text(text: str, min_len: int = 5, max_len: int = 50) -> list[str]:
-    """Split display text into sentences for TTS. Only use on clean text, not JSON."""
-    if not text:
-        return []
-    sentences: list[str] = []
-    buf = ""
-    for ch in text:
-        buf += ch
-        if _STRONG_END.match(ch) and len(buf) >= min_len:
-            sentences.append(buf)
-            buf = ""
-        elif _WEAK_END.match(ch) and len(buf) >= _MIN_WEAK:
-            sentences.append(buf)
-            buf = ""
-        elif len(buf) >= max_len:
-            sentences.append(buf)
-            buf = ""
-    if buf.strip():
-        sentences.append(buf)
-    return sentences
+from app.utils.sentence_splitter import split_sentences
+from app.utils.tts_cleaner import tts_filter
 
 
 @dataclass(slots=True)
@@ -119,138 +92,104 @@ class TurnRuntime:
             state_store.update(input_state=InputState.IDLE.name)
             return TurnResult(ok=False, input_mode="voice", error=f"ASR failed: {exc}")
 
-        text = str(asr_result.get("text", "")).strip()
-        if not text:
+        user_text = asr_result.get("text", "").strip()
+        if not user_text:
             state_store.update(input_state=InputState.IDLE.name)
-            return TurnResult(ok=False, input_mode="voice", error="ASR returned empty text")
-
-        bus.publish(EventType.ASR_FINISHED, {"text": text, "audio_path": audio_path, "language": asr_result.get("language")}, source="turn_runtime")
+            return TurnResult(ok=False, input_mode="voice", error="No speech detected")
 
         if self.llm_adapter:
-            return self._process_streaming(text, mode="voice")
+            return self._process_streaming(user_text, mode="voice")
 
-        result = self.pipeline.process(text)
+        result = self.pipeline.process(user_text)
         reply = str(result.get("final_reply", ""))
         self._synthesize_tts_from_segments(result.get("segments", []))
-        state_store.update(input_state=InputState.SPEAKING.name)
-        return TurnResult(ok=True, input_mode="voice", user_text=text, reply_text=reply, raw=result)
+        return TurnResult(ok=True, input_mode="voice", user_text=user_text, reply_text=reply, raw=result)
 
-    # ---- streaming (shared by text and voice) ---------------------------
-    def _process_streaming(self, text: str, mode: str = "voice") -> TurnResult:
-        """Streaming pipeline: LLM -> accumulate -> parse JSON -> extract text -> TTS.
-        
-        Accepts raw token stream from LLM (which includes JSON syntax),
-        accumulates the full response, parses it, extracts display text,
-        and only then splits into sentences for TTS synthesis.
-        """
-        import time
+    # ---- streaming path --------------------------------------------------
+    def _process_streaming(self, user_text: str, mode: str = "text") -> TurnResult:
+        """Process a turn with streaming with on_segment/on_tts callbacks."""
         from app.brain.service import Brain
+        brain = Brain(character=self.pipeline.runtime.character, tools=self.pipeline.runtime.tools, runtime=self.pipeline.runtime)
+        brain.history = self.pipeline.history
+        screen_context = ""
+        system = self.pipeline.runtime.build_system(screen_context, user_query=user_text)
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
+        if brain.history:
+            messages.extend(brain.history)
+        messages.append({"role": "user", "content": user_text})
 
-        state_store.update(input_state=InputState.SPEAKING.name)
+        stream_gen = self.llm_adapter.generate_stream(messages, temperature=0.3)
+        collected: list[str] = []
+        buffer = ""
+        from app.utils.sentence_splitter import split_streaming
 
-        brain = Brain(character=self.pipeline.brain.character, tools=self.pipeline.brain.tools, runtime=self.pipeline.runtime)
-        brain.history = list(self.pipeline.history)
+        for token in stream_gen:
+            collected.append(token)
+            buffer += token
+            sentences, buffer = split_streaming(buffer, method="pysbd")
+            for sentence in sentences:
+                cleaned = tts_filter(sentence)
+                if cleaned:
+                    self._on_segment("neutral", cleaned, "")
+                    if self._tts_and_play(cleaned):
+                        if self.on_tts_wav:
+                            pass
+        # Flush leftover
+        if buffer.strip():
+            cleaned = tts_filter(buffer.strip())
+            if cleaned:
+                self._on_segment("neutral", cleaned, "")
 
-        # Accumulate raw token stream
-        raw_chunks: list[str] = []
+        final_reply = "".join(collected)
+        brain._record_turn(user_text, final_reply)
+        return TurnResult(ok=True, input_mode=mode, user_text=user_text, reply_text=final_reply)
+
+    def _tts_and_play(self, text: str) -> bool:
+        """Synthesize and enqueue one sentence. Returns True if successful."""
         try:
-            gen = brain.respond_stream(llm_adapter=self.llm_adapter, user_text=text)
-            for chunk in gen:
-                if chunk:
-                    raw_chunks.append(chunk)
+            wav = self.tts.synthesize(text)
+            if wav:
+                if not self.disable_local_player:
+                    self.player.enqueue(wav, text=text)
+                if self.on_tts_wav:
+                    self.on_tts_wav(wav, text)
+                return True
         except Exception as exc:
-            bus.publish(EventType.LOG, {"message": f"Streaming error: {exc}"}, source="turn_runtime")
+            print(f"[TTS] FAIL: {exc}  |  text='{text[:80]}'")
+        return False
 
-        full_response = "".join(raw_chunks).strip()
-
-        # Debug: log raw LLM response
-        if len(full_response) < 10:
-            print(f"[LLM-raw] EMPTY or near-empty, len={len(full_response)}")
-        else:
-            print(f"[LLM-raw] len={len(full_response)} first=120:{full_response[:120]}")
-
-        # Parse JSON reply and extract display text
-        reply_text, segments = self._extract_reply_text(full_response)
-
-        # Display segments
-        for seg in segments:
-            tone = seg.get("tone", "neutral")
-            zh = seg.get("zh", "")
-            en = seg.get("en", "") or seg.get("ja", "")
-            display = zh or en
-            if display and self.on_segment:
-                self.on_segment(tone, zh, en)
-            bus.publish(EventType.ASSISTANT_SEGMENT, {"tone": tone, "zh": zh, "en": en}, source="turn_runtime")
-
-        self._synthesize_tts_from_segments(segments)
-
-        reply_dict = {"reply_text": reply_text, "intent": "unknown", "actions": [], "memory": {}, "raw": {}}
-        from app.memory.store import memory_store
-        memory_store.enqueue_turn(text, reply_dict)
-        # Persist history back to pipeline for next turn continuity
-        self.pipeline.history = brain.history[:]
-
-        bus.publish(EventType.ASSISTANT_REPLY, {"text": reply_text}, source="turn_runtime")
-        bus.publish(EventType.TURN_COMPLETED, {"reply": reply_text, "stats": {"streaming": True, "mode": mode, "segment_count": len(segments)}}, source="turn_runtime")
-
-        return TurnResult(ok=True, input_mode=mode, user_text=text, reply_text=reply_text)
-
-    # ---- reply extraction ------------------------------------------------
+    # ---- LLM output parsing ----------------------------------------------
     @staticmethod
-    def _extract_reply_text(raw_response: str) -> tuple[str, list[dict]]:
-        """Parse LLM JSON response and extract display text + segments.
+    def _extract_tts_text(data: dict | str) -> tuple[str, list[dict]]:
+        """Extract (tts_text, segments) from LLM response.
         
-        Returns (display_text, segments_list).
+        Handles both parsed dict and raw JSON string.
+        Returns (cleaned_display_text, segments_list).
         """
+        raw_response = ""
         segments: list[dict] = []
-        display = raw_response
+        display = ""
 
-        # Try to parse as JSON 鈥?with multiple fallback strategies
-        data = None
-        try:
-            data = json.loads(raw_response)
-        except (json.JSONDecodeError, Exception):
-            pass
+        if isinstance(data, str):
+            raw_response = data
+            data = _try_parse_json(data)
+        elif isinstance(data, dict):
+            raw_response = json.dumps(data, ensure_ascii=False)
 
-        if data is None:
-            # Fallback 1: extract JSON between { }
-            start = raw_response.find("{")
-            end = raw_response.rfind("}") + 1
-            if start >= 0 and end > start:
-                try:
-                    data = json.loads(raw_response[start:end])
-                except (json.JSONDecodeError, Exception):
-                    pass
-
-        if data is None and "segments" in raw_response:
-            # Fallback 2: LLM forgot outer braces 鈥?wrap and retry
-            try:
-                data = json.loads("{" + raw_response + "}")
-            except (json.JSONDecodeError, Exception):
-                pass
-
-        if data is None:
-            print(f"[TTS-extract] all parse strategies failed, raw (first 120): {raw_response[:120]}")
-            return display, segments
-
-        # Extract segments
         if isinstance(data, dict):
             segs = data.get("segments", [])
             if isinstance(segs, list):
                 segments = segs
-            # Prefer final_reply, fall back to concatenating segment text
             final = data.get("final_reply", "")
             if final and isinstance(final, str) and final.strip():
                 display = final.strip()
             elif segments:
-                # Concatenate zh or en from segments
                 parts = []
                 for s in segments:
                     if isinstance(s, dict):
                         parts.append(s.get("zh", "") or s.get("en", "") or s.get("ja", ""))
                 display = "".join(parts).strip() or display
 
-        # Debug: warn if display is still the raw JSON response
         if display == raw_response and raw_response.startswith("{"):
             print(f"[TTS-extract] WARNING display==raw_response, len={len(raw_response)}")
         else:
@@ -275,13 +214,12 @@ class TurnRuntime:
 
     def _synthesize_tts_from_segments(self, segments: list[dict]) -> None:
         """Synthesize TTS from parsed LLM segments, enqueue to player, broadcast to Web UI.
-
-        Shared by streaming and non-streaming paths. Extracts native-language text
-        from segments, splits into sentences, synthesizes in thread pool,
-        enqueues for playback, and broadcasts audio URLs to web UI.
+        
+        Uses pysbd for sentence splitting and tts_filter for text cleaning.
+        Sends sentences to TTS engine in thread pool, enqueues for playback,
+        and notifies the bridge for Web UI.
         """
         if not segments:
-            # If the non-streaming path produced no segments, skip
             return
 
         # Determine native language from character card
@@ -297,22 +235,31 @@ class TurnRuntime:
             native_text = seg.get(native_lang, "") or seg.get("en", "") or seg.get("ja", "")
             if native_text:
                 native_parts.append(native_text)
-        tts_text = " ".join(native_parts).strip()
 
-        if not tts_text:
+        raw_text = " ".join(native_parts).strip()
+
+        if not raw_text:
             print(f"[TTS-lang] no native text found, lang={native_lang}")
             return
 
-        tts_sentences = _split_text(tts_text, min_len=5, max_len=50)
-        print(f"[TTS-lang] native={native_lang}  tts_text_len={len(tts_text)}  sentences={len(tts_sentences)}")
+        # Clean text for TTS
+        cleaned = tts_filter(raw_text)
+        if not cleaned:
+            print(f"[TTS-clean] all text filtered away, skipping")
+            return
 
-        # Guard: if it appears to be raw JSON, skip
+        # Split into sentences using pysbd
+        tts_sentences = split_sentences(cleaned, method="pysbd")
+        print(f"[TTS] lang={native_lang}  raw_len={len(raw_text)}  cleaned_len={len(cleaned)}  sentences={len(tts_sentences)}")
+
+        # Guard: skip if it looks like raw JSON
         if tts_sentences and tts_sentences[0].startswith("{"):
-            print(f"[TTS-guard] SKIP: tts_text appears to be raw JSON, len={len(tts_text)}")
+            print(f"[TTS-guard] SKIP: tts_text appears to be raw JSON, len={len(cleaned)}")
             return
 
         if not self.disable_local_player:
             self.player.begin_turn()
+
         tts_futures: list[tuple[str, Any]] = []
         for sentence in tts_sentences:
             sentence = sentence.strip()
@@ -336,3 +283,22 @@ class TurnRuntime:
 
         if not self.disable_local_player:
             self.player.end_turn()
+
+
+def _try_parse_json(content: str) -> dict | str:
+    """Try to parse JSON from content, return dict on success or original string."""
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+    if "```json" in content:
+        try:
+            return json.loads(content.split("```json")[1].split("```")[0])
+        except (json.JSONDecodeError, IndexError):
+            pass
+    if "{" in content and "}" in content:
+        try:
+            return json.loads(content[content.find("{"):content.rfind("}") + 1])
+        except json.JSONDecodeError:
+            pass
+    return content

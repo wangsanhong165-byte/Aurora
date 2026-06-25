@@ -1,20 +1,24 @@
-"""GSVI v2Pro engine -- GPT-SoVITS v2Pro nvidia50 HTTP API.
+﻿"""GSVI v2Pro engine — GPT-SoVITS v2Pro nvidia50 HTTP API.
 
 Endpoint: POST /tts
 Returns raw WAV bytes.
 
-Before each synthesis, calls /set_gpt_weights and /set_sovits_weights (GET)
-to switch to the persona-specific model if configured.
+Loads persona-specific model weights on first use and caches them
+to avoid redundant API calls on every sentence.
+Auto-detects text language for text_lang parameter.
 """
 
 from __future__ import annotations
 
 import os
-import json
+import time as _time
 from pathlib import Path
 from typing import Any
 
 import requests
+
+from app.modules.tts.base import BaseTTS
+from app.modules.tts.factory import TTSFactory
 
 # ---- Language mapping for v2Pro API ----
 _TEXT_LANG_MAP: dict[str, str] = {
@@ -24,48 +28,56 @@ _TEXT_LANG_MAP: dict[str, str] = {
     "ja": "ja", "jp": "ja", "japanese": "ja",
     "ko": "ko", "kr": "ko", "korean": "ko",
     "yue": "yue", "cantonese": "yue",
-    # Chinese names (used by legacy code in run.py persona loading)
-    "\u4e2d\u6587": "zh", "\u82f1\u6587": "en", "\u65e5\u6587": "ja", "\u65e5\u8bed": "ja",
-    "\u97e9\u6587": "ko", "\u97e9\u8bed": "ko", "\u7ca4\u8bed": "yue",
+    "\u4e2d\u6587": "zh", "\u82f1\u6587": "en",
+    "\u65e5\u6587": "ja", "\u65e5\u8bed": "ja",
+    "\u97e9\u6587": "ko", "\u97e9\u8bed": "ko",
+    "\u7ca4\u8bed": "yue",
 }
 
-# ---- Base dirs ----
 _AI_DIR = Path(__file__).resolve().parents[4]  # c++/ai/
 _GSVI_DIR = _AI_DIR / "models" / "tts" / "GPT-SoVITS-v2pro-20250604-nvidia50"
 
+# ---- weight cache (class-level, shared across instances) ----
+_last_gpt_weights: str = ""
+_last_sovits_weights: str = ""
+
 
 def _infer_text_lang(text: str) -> str:
-    """Quick heuristic: if text contains CJK characters, default to zh."""
+    """Auto-detect text language for GSVI text_lang parameter."""
     for ch in text:
-        if '\u4e00' <= ch <= '\u9fff' or '\u3040' <= ch <= '\u30ff':
+        if "\u4e00" <= ch <= "\u9fff" or "\u3040" <= ch <= "\u30ff":
             return "zh"
-    return "en"
+        if "\uac00" <= ch <= "\ud7af":
+            return "ko"
+    # Check for common CJK characters
+    # Default to zh if mixed, en otherwise
+    return "zh" if any("\u4e00" <= c <= "\u9fff" for c in text) else "en"
 
 
 def _map_lang(raw: str, mapping: dict[str, str]) -> str:
     return mapping.get(raw.strip().lower(), raw.strip().lower())
 
 
-def _gsvi_url() -> str:
-    return os.environ.get("GSVI_URL", "http://127.0.0.1:8050").rstrip("/")
+def _set_model_weights(base: str, gpt_path: str, sovits_path: str) -> None:
+    """Set model weights, cached: skips if same weights already loaded."""
+    global _last_gpt_weights, _last_sovits_weights
 
-
-def _set_model_weights(gpt_path: str, sovits_path: str) -> None:
-    """Switch GSVI v2Pro to persona-specific model weights via GET endpoints."""
-    base = _gsvi_url()
-    if gpt_path:
+    if gpt_path and gpt_path != _last_gpt_weights:
         try:
             r = requests.get(f"{base}/set_gpt_weights", params={"weights_path": gpt_path}, timeout=10)
             if r.status_code == 200:
+                _last_gpt_weights = gpt_path
                 print(f"[GSVI-v2pro] set_gpt_weights OK: {gpt_path}")
             else:
                 print(f"[GSVI-v2pro] set_gpt_weights FAIL {r.status_code}: {r.text[:200]}")
         except Exception as exc:
             print(f"[GSVI-v2pro] set_gpt_weights error: {exc}")
-    if sovits_path:
+
+    if sovits_path and sovits_path != _last_sovits_weights:
         try:
             r = requests.get(f"{base}/set_sovits_weights", params={"weights_path": sovits_path}, timeout=10)
             if r.status_code == 200:
+                _last_sovits_weights = sovits_path
                 print(f"[GSVI-v2pro] set_sovits_weights OK: {sovits_path}")
             else:
                 print(f"[GSVI-v2pro] set_sovits_weights FAIL {r.status_code}: {r.text[:200]}")
@@ -74,92 +86,110 @@ def _set_model_weights(gpt_path: str, sovits_path: str) -> None:
 
 
 def _resolve_ref_audio(ref_audio_path: str) -> str:
-    """Resolve ref_audio_path: if relative, try GSVI dir first, then AI dir.
-    Returns absolute path or original if resolution fails."""
     if not ref_audio_path:
         return ""
     p = Path(ref_audio_path)
     if p.is_absolute():
         return str(p)
-    # Try relative to GSVI directory
     candidate = _GSVI_DIR / p
     if candidate.exists():
         return str(candidate)
-    # Try relative to AI dir
     candidate = _AI_DIR / p
     if candidate.exists():
         return str(candidate)
-    # Fall back to original (may still work if GSVI can resolve it)
     return ref_audio_path
 
 
-def synthesize(text: str, **kwargs: Any) -> bytes:
-    """Call v2Pro /tts endpoint and return WAV bytes.
+@TTSFactory.register
+class GSVIV2TTS(BaseTTS):
+    engine_name = "gsvi-v2pro"
 
-    kwargs may include:
-        ref_audio_path: str   -- reference audio for voice cloning
-        prompt_text: str      -- transcript of reference audio
-        prompt_lang: str      -- language of reference audio
-        text_lang: str        -- language of input text
-        speed_factor: float   -- playback speed
-        gpt_weights: str      -- T2S model path (relative to GSVI dir)
-        sovits_weights: str   -- VITS model path (relative to GSVI dir)
-    """
-    base = _gsvi_url()
-    text_lang_raw = kwargs.get("text_lang") or os.environ.get("GSVI_TEXT_LANG") or _infer_text_lang(text)
-    prompt_lang_raw = kwargs.get("prompt_lang") or os.environ.get("GSVI_PROMPT_LANG") or "zh"
-    ref_audio_path = kwargs.get("ref_audio_path") or os.environ.get("GSVI_REF_AUDIO") or ""
-    prompt_text = kwargs.get("prompt_text") or os.environ.get("GSVI_PROMPT_TEXT") or ""
-    speed = float(kwargs.get("speed_factor") or os.environ.get("GSVI_SPEED", "1.0"))
-    gpt_weights = kwargs.get("gpt_weights") or os.environ.get("GSVI_GPT_WEIGHTS", "")
-    sovits_weights = kwargs.get("sovits_weights") or os.environ.get("GSVI_SOVITS_WEIGHTS", "")
+    def __init__(self, config: Any = None, **kwargs: Any) -> None:
+        super().__init__()
+        self._url = os.environ.get("GSVI_URL", "http://127.0.0.1:8050").rstrip("/")
+        self._ref_audio = os.environ.get("GSVI_REF_AUDIO", "")
+        self._text_lang = os.environ.get("GSVI_TEXT_LANG", "auto")
+        self._prompt_lang = os.environ.get("GSVI_PROMPT_LANG", "en")
+        self._speed = float(os.environ.get("GSVI_SPEED", "1.0"))
+        self._timeout = float(os.environ.get("GSVI_TIMEOUT", "300"))
+        self._gpt_weights = os.environ.get("GSVI_GPT_WEIGHTS", "")
+        self._sovits_weights = os.environ.get("GSVI_SOVITS_WEIGHTS", "")
+        if config is not None:
+            from app.config_manager import GSVIV2Config
+            if isinstance(config, GSVIV2Config):
+                if config.url:
+                    self._url = config.url.rstrip("/")
+                if config.ref_audio:
+                    self._ref_audio = config.ref_audio
+                if config.text_lang:
+                    self._text_lang = config.text_lang
+                if config.prompt_lang:
+                    self._prompt_lang = config.prompt_lang
+                if config.speed:
+                    self._speed = config.speed
+                if config.timeout:
+                    self._timeout = config.timeout
+                if config.gpt_weights:
+                    self._gpt_weights = config.gpt_weights
+                if config.sovits_weights:
+                    self._sovits_weights = config.sovits_weights
 
-    # Resolve ref_audio to absolute path
-    ref_audio_path = _resolve_ref_audio(ref_audio_path)
+    def synthesize(self, text: str, **options: Any) -> bytes:
+        """Call v2Pro /tts endpoint, read params from instance config + kwargs override."""
+        url = self._url
+        text_lang_raw = options.get("text_lang") or self._text_lang
+        prompt_lang_raw = options.get("prompt_lang") or self._prompt_lang
+        ref_audio_path = options.get("ref_audio_path") or self._ref_audio
+        prompt_text = options.get("prompt_text") or ""
+        speed = float(options.get("speed_factor") or self._speed)
+        gpt_weights = options.get("gpt_weights") or self._gpt_weights
+        sovits_weights = options.get("sovits_weights") or self._sovits_weights
 
-    # Switch to persona-specific model weights if available
-    if gpt_weights or sovits_weights:
-        _set_model_weights(gpt_weights, sovits_weights)
+        ref_audio_path = _resolve_ref_audio(ref_audio_path)
 
-    payload: dict[str, Any] = {
-        "text": text,
-        "text_lang": _map_lang(text_lang_raw, _TEXT_LANG_MAP),
-        "prompt_lang": _map_lang(prompt_lang_raw, _TEXT_LANG_MAP),
-        "ref_audio_path": ref_audio_path,
-        "speed_factor": speed,
-        "streaming_mode": False,
-    }
-    if prompt_text:
-        payload["prompt_text"] = prompt_text
+        # Auto-detect text language if set to "auto"
+        if text_lang_raw.strip().lower() in ("auto", ""):
+            detected_lang = _infer_text_lang(text)
+        else:
+            detected_lang = _map_lang(text_lang_raw, _TEXT_LANG_MAP)
 
-    import time as _time
-    _t0 = _time.time()
-    full_url = f"{base}/tts"
-    text_preview = text[:80].replace(chr(10), " ")
-    print(f"[GSVI-v2pro] POST {full_url} text_lang={payload.get('text_lang')} prompt_lang={payload.get('prompt_lang')} speed={payload.get('speed_factor')}")
-    print(f"[GSVI-v2pro] text='{text_preview}'")
+        # Set model weights (cached — skips if already loaded)
+        if gpt_weights or sovits_weights:
+            _set_model_weights(url, gpt_weights, sovits_weights)
 
-    try:
-        r = requests.post(
-            full_url,
-            json=payload,
-            timeout=float(os.environ.get("GSVI_TIMEOUT", "300")),
-        )
-    except Exception as exc:
-        print(f"[GSVI-v2pro] request error: {exc}")
-        raise
+        payload: dict[str, Any] = {
+            "text": text,
+            "text_lang": detected_lang,
+            "prompt_lang": _map_lang(prompt_lang_raw, _TEXT_LANG_MAP),
+            "ref_audio_path": ref_audio_path,
+            "speed_factor": speed,
+            "streaming_mode": False,
+        }
+        if prompt_text:
+            payload["prompt_text"] = prompt_text
 
-    _elapsed = _time.time() - _t0
-    if r.status_code == 200:
-        print(f"[GSVI-v2pro] response 200 {len(r.content)} bytes in {_elapsed:.1f}s")
-        return r.content
-    else:
-        # Log error details
+        _t0 = _time.time()
+        full_url = f"{url}/tts"
+        text_preview = text[:80].replace(chr(10), " ")
+        print(f"[GSVI-v2pro] POST {full_url} text_lang={payload['text_lang']} prompt_lang={payload['prompt_lang']} speed={payload['speed_factor']}")
+        print(f'[GSVI-v2pro] text="{text_preview}"')
+
         try:
-            err_detail = r.json()
-        except Exception:
-            err_detail = r.text[:500]
-        print(f"[GSVI-v2pro] response {r.status_code} in {_elapsed:.1f}s")
-        print(f"[GSVI-v2pro] error detail: {err_detail}")
-        r.raise_for_status()
-        return r.content  # unreachable
+            r = requests.post(full_url, json=payload, timeout=self._timeout)
+        except Exception as exc:
+            print(f"[GSVI-v2pro] request error: {exc}")
+            raise
+
+        _elapsed = _time.time() - _t0
+        if r.status_code == 200:
+            print(f"[GSVI-v2pro] response 200 {len(r.content)} bytes in {_elapsed:.1f}s")
+            return r.content
+        else:
+            try:
+                err_detail = r.json()
+            except Exception:
+                err_detail = r.text[:500]
+            print(f"[GSVI-v2pro] response {r.status_code} in {_elapsed:.1f}s")
+            print(f"[GSVI-v2pro] error detail: {err_detail}")
+            r.raise_for_status()
+            return r.content  # unreachable but keeps type checker happy

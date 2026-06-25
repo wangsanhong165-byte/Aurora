@@ -10,3 +10,7 @@ pyttsx3
 qwen-asr
 webrtcvad
 numpy
+pydub
+
+pysbd
+langdetect

@@ -55,6 +55,7 @@ UVICORN_LOG_CONFIG = {
 
 DEFAULT_TTS_ENGINE = os.environ.get("TTS_ENGINE", "gsvi-v2pro").lower()
 DEFAULT_TTS_OUTPUT_DIR = BASE_DIR / "tts_outputs"
+DEFAULT_ASR_ENGINE = os.environ.get("ASR_ENGINE", "qwen3-asr").lower()
 
 
 def load_env_file(path: Path = DEFAULT_ENV_PATH) -> None:

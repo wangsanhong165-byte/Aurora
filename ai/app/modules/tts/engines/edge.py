@@ -1,12 +1,14 @@
-﻿"""Edge TTS engine — free Microsoft neural voices, no GPU needed."""
+"""Edge TTS engine — free Microsoft neural voices, no GPU needed."""
 import asyncio
 import io
 import os
-import tempfile
-from pathlib import Path
+from typing import Any
 
-import soundfile as sf
 import numpy as np
+import soundfile as sf
+
+from app.modules.tts.base import BaseTTS
+from app.modules.tts.factory import TTSFactory
 
 
 async def _synthesize_edge(text: str, voice: str) -> bytes:
@@ -30,10 +32,21 @@ async def _synthesize_edge(text: str, voice: str) -> bytes:
     return wav.getvalue()
 
 
-def synthesize(text: str) -> bytes:
-    """Sync wrapper — called by TTS router."""
-    voice = os.environ.get("TTS_EDGE_VOICE", "zh-CN-XiaoxiaoNeural")
-    text = text.strip()
-    if not text:
-        return b""
-    return asyncio.run(_synthesize_edge(text, voice))
+
+@TTSFactory.register
+class EdgeTTS(BaseTTS):
+    engine_name = "edge-tts"
+
+    def __init__(self, config: Any = None, **kwargs: Any) -> None:
+        super().__init__()
+        self._voice = os.environ.get("TTS_EDGE_VOICE", "zh-CN-XiaoxiaoNeural")
+        if config is not None:
+            from app.config_manager import EdgeTTSConfig
+            if isinstance(config, EdgeTTSConfig) and config.voice:
+                self._voice = config.voice
+
+    def synthesize(self, text: str, **options: Any) -> bytes:
+        text = text.strip()
+        if not text:
+            return b""
+        return asyncio.run(_synthesize_edge(text, self._voice))

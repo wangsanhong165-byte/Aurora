@@ -1,144 +1,314 @@
-"""Simple memory store - conversation log + important facts.
+﻿"""Memory store — SQLite + FTS5 backend.
 
-Replaces the old 9-file pipeline with a straightforward dual-layer design:
+Replaces JSONL with structured storage.
 
-Layer 1 - Conversation log (memory.jsonl):
-    Append-only log of every turn. Used for recent context in prompts.
+Facts table: id, fact, tags (JSON), time, source, importance, created_at
+Logs table:  id, role, content, intent, created_at
+Both backed by FTS5 virtual tables for full-text search.
 
-Layer 2 - Important facts (facts.jsonl):
-    Key facts about the user and relationship, added sparingly.
-    Retrieved via simple keyword matching at query time.
+Search strategy (two-tier, same as openhanako v2):
+  1. Tag exact match via json_each (OR logic, sorted by match count)
+  2. FTS5 full-text fallback (with CJK bigram)
+  3. LIKE fallback if FTS5 fails
 """
 
 from __future__ import annotations
 
 import json
-import random
+import sqlite3
+import threading
 import re
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+")
+_FTS_LIMIT = 20
+
+
+def _cjk_ngrams(text: str, sizes=(2, 3)) -> list[str]:
+    """Generate CJK bigrams/trigrams for FTS5 tokenization."""
+    tokens = []
+    for match in _CJK_RE.finditer(text):
+        chars = list(match.group(0))
+        for size in sizes:
+            if len(chars) < size:
+                continue
+            for i in range(len(chars) - size + 1):
+                tokens.append("".join(chars[i:i + size]))
+    return tokens
+
+
+def _build_fts_query(text: str) -> str:
+    """Build FTS5 query: lexical tokens + CJK ngrams joined by OR."""
+    normalized = text.strip().lower()
+    if not normalized:
+        return ""
+    lexical = normalized.split()
+    grams = _cjk_ngrams(normalized)
+    all_tokens = list(dict.fromkeys(lexical + grams))
+    return " OR ".join(f'"{w}"' for w in all_tokens if w)
 
 
 class MemoryStore:
-    """Simple dual-layer memory store."""
+    """SQLite+FTS5 memory store. Drop-in replacement for JSONL-based store."""
 
-    def __init__(self, base_dir=None, max_log_turns=500, max_facts=200):
+    def __init__(self, base_dir: Optional[Path] = None):
         base = base_dir or Path(__file__).resolve().parents[2]
-        self._log_path = base / "memory" / "memory.jsonl"
-        self._facts_path = base / "memory" / "facts.jsonl"
-        self._log_path.parent.mkdir(parents=True, exist_ok=True)
-        self._max_log_turns = max_log_turns
-        self._max_facts = max_facts
-        self._llm_adapter = None
+        base.mkdir(parents=True, exist_ok=True)
+        self._db_path = str(base / "memory" / "memory.db")
+        self._local = threading.local()
+        self._init_db()
 
-    def set_llm_adapter(self, adapter):
-        self._llm_adapter = adapter
+    # ── connection management ──────────────────────────────────────────
 
-    def log_turn(self, user_text, reply):
-        from datetime import datetime, timezone
+    def _get_conn(self) -> sqlite3.Connection:
+        if not hasattr(self._local, "conn") or self._local.conn is None:
+            conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute("PRAGMA cache_size = -16000")
+            conn.execute("PRAGMA temp_store = MEMORY")
+            conn.execute("PRAGMA mmap_size = 30000000")
+            self._local.conn = conn
+        return self._local.conn
+
+    def _init_db(self):
+        conn = self._get_conn()
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS facts (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                fact       TEXT NOT NULL,
+                tags       TEXT NOT NULL DEFAULT '[]',
+                time       TEXT,
+                source     TEXT DEFAULT '',
+                importance REAL DEFAULT 0.5,
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_facts_time ON facts(time);
+            CREATE INDEX IF NOT EXISTS idx_facts_importance ON facts(importance);
+
+            CREATE TABLE IF NOT EXISTS logs (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                role       TEXT NOT NULL,
+                content    TEXT NOT NULL,
+                intent     TEXT DEFAULT '',
+                character_id TEXT DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_logs_created ON logs(created_at);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
+                fact, tags,
+                content=facts, content_rowid=id,
+                tokenize='unicode61'
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS logs_fts USING fts5(
+                content,
+                content=logs, content_rowid=id,
+                tokenize='unicode61'
+            );
+        """)
+        conn.executescript("""
+            CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON facts BEGIN
+                INSERT INTO facts_fts(rowid, fact, tags) VALUES (new.id, new.fact, new.tags);
+            END;
+            CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON facts BEGIN
+                INSERT INTO facts_fts(facts_fts, rowid, fact, tags) VALUES ('delete', old.id, old.fact, old.tags);
+            END;
+            CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON facts BEGIN
+                INSERT INTO facts_fts(facts_fts, rowid, fact, tags) VALUES ('delete', old.id, old.fact, old.tags);
+                INSERT INTO facts_fts(rowid, fact, tags) VALUES (new.id, new.fact, new.tags);
+            END;
+            CREATE TRIGGER IF NOT EXISTS logs_ai AFTER INSERT ON logs BEGIN
+                INSERT INTO logs_fts(rowid, content) VALUES (new.id, new.content);
+            END;
+            CREATE TRIGGER IF NOT EXISTS logs_ad AFTER DELETE ON logs BEGIN
+                INSERT INTO logs_fts(logs_fts, rowid, content) VALUES ('delete', old.id, old.content);
+            END;
+        """)
+        conn.commit()
+
+    # ── conversation log ───────────────────────────────────────────────
+
+    def log_turn(self, user_text: str, reply: dict, character_id: str = "") -> None:
         now = datetime.now(timezone.utc).isoformat()
-        record = {
-            "created_at": now,
-            "user": user_text,
-            "assistant": reply.get("reply_text", ""),
-            "intent": reply.get("intent", "unknown"),
-        }
-        with self._log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        self._trim_log_if_needed()
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT INTO logs(role, content, intent, character_id, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("user", user_text[:1000], reply.get("intent", "unknown"), character_id, now),
+        )
+        reply_text = reply.get("reply_text", "")[:2000]
+        conn.execute(
+            "INSERT INTO logs(role, content, intent, character_id, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("assistant", reply_text, "reply", character_id, now),
+        )
+        conn.commit()
 
-    def enqueue_turn(self, user_text, reply):
+    def enqueue_turn(self, user_text: str, reply: dict) -> None:
         self.log_turn(user_text, reply)
 
-    def recent_turns(self, n=10):
-        if not self._log_path.exists(): return []
-        rows = []
-        with self._log_path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line: continue
-                try: rows.append(json.loads(line))
-                except: continue
-        return rows[-n:]
+    def recent_turns(self, n: int = 10) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT role, content, intent, created_at FROM logs ORDER BY id DESC LIMIT ?",
+            (n * 2,),
+        ).fetchall()
+        turns = []
+        for r in reversed(rows):
+            turns.append({
+                "role": r["role"],
+                "content": r["content"],
+                "intent": r["intent"],
+                "created_at": r["created_at"],
+            })
+        return turns
 
-    def _trim_log_if_needed(self):
-        rows = self.recent_turns(0)
-        if len(rows) <= self._max_log_turns: return
-        keep = rows[-self._max_log_turns:]
-        with self._log_path.open("w", encoding="utf-8") as f:
-            for row in keep:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    def search_logs(self, query: str, limit: int = 5) -> list[dict]:
+        fts_query = _build_fts_query(query)
+        if not fts_query:
+            return []
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT l.role, l.content, l.intent, l.created_at "
+                "FROM logs_fts f JOIN logs l ON f.rowid = l.id "
+                "WHERE logs_fts MATCH ? ORDER BY rank LIMIT ?",
+                (fts_query, limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [dict(r) for r in rows]
 
-    def add_fact(self, content, importance=0.5, source=""):
-        if not content or len(content) < 3: return
-        from datetime import datetime, timezone
-        fact = {"content": content, "importance": importance, "source": source,
-                "created_at": datetime.now(timezone.utc).isoformat()}
-        existing = self._load_facts()
-        if self._is_duplicate(content, existing): return
-        existing.append(fact)
-        self._save_facts(existing)
+    # ── facts ──────────────────────────────────────────────────────────
 
-    def search_facts(self, query, k=5):
-        facts = self._load_facts()
-        if not facts or not query: return []
-        query_tokens = set(_tokenize(query))
-        if not query_tokens: return []
-        scored = []
-        for fact in facts:
-            content = str(fact.get("content", ""))
-            fact_tokens = set(_tokenize(content))
-            if not fact_tokens: continue
-            inter = len(query_tokens & fact_tokens)
-            union_ = len(query_tokens | fact_tokens)
-            score = inter / union_ if union_ else 0
-            score *= (0.5 + float(fact.get("importance", 0.5)))
-            scored.append((score, fact))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        return [f for s, f in scored[:k] if s > 0.02]
+    def add_fact(
+        self,
+        content: str,
+        tags: Optional[list[str]] = None,
+        importance: float = 0.5,
+        source: str = "",
+        time: Optional[str] = None,
+    ) -> bool:
+        if not content or len(content.strip()) < 3:
+            return False
+        tags = tags or []
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self._get_conn()
+        existing = self._find_overlapping(content, tags)
+        if existing:
+            return False
+        conn.execute(
+            "INSERT INTO facts(fact, tags, time, source, importance, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (content.strip(), json.dumps(tags, ensure_ascii=False), time, source, importance, now),
+        )
+        conn.commit()
+        return True
 
-    def sample_facts(self, n=3):
-        facts = self._load_facts()
-        if not facts: return []
-        if len(facts) <= n: return facts
-        weights = [float(f.get("importance", 0.3)) + 0.1 for f in facts]
-        sampled = random.choices(facts, weights=weights, k=min(n * 2, len(facts)))
-        seen = set()
-        result = []
-        for f in sampled:
-            c = f.get("content", "")
-            if c and c not in seen: seen.add(c); result.append(f)
-            if len(result) >= n: break
-        return result
+    def _find_overlapping(self, content: str, tags: list[str]) -> bool:
+        if not tags:
+            return False
+        conn = self._get_conn()
+        placeholders = ",".join("?" for _ in tags)
+        row = conn.execute(
+            f"SELECT COUNT(DISTINCT je.value) as overlap FROM facts f, json_each(f.tags) je "
+            f"WHERE je.value IN ({placeholders}) ORDER BY overlap DESC LIMIT 1",
+            tags,
+        ).fetchone()
+        return row is not None and row["overlap"] > 0
 
-    def _load_facts(self):
-        if not self._facts_path.exists(): return []
-        facts = []
-        with self._facts_path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line: continue
-                try: facts.append(json.loads(line))
-                except: continue
-        return facts
+    def search_facts(
+        self,
+        query: str = "",
+        tags: Optional[list[str]] = None,
+        k: int = 5,
+    ) -> list[dict]:
+        results = []
+        seen_ids = set()
+        conn = self._get_conn()
 
-    def _save_facts(self, facts):
-        if len(facts) > self._max_facts:
-            facts.sort(key=lambda f: float(f.get("importance", 0)), reverse=True)
-            facts = facts[:self._max_facts]
-        with self._facts_path.open("w", encoding="utf-8") as f:
-            for fact in facts: f.write(json.dumps(fact, ensure_ascii=False) + "\n")
+        # Strategy 1: tag matching
+        if tags:
+            placeholders = ",".join(f"@t{i}" for i in range(len(tags)))
+            params = {f"t{i}": t for i, t in enumerate(tags)}
+            params["limit"] = _FTS_LIMIT
+            rows = conn.execute(
+                f"SELECT f.*, COUNT(DISTINCT je.value) as match_count "
+                f"FROM facts f, json_each(f.tags) je "
+                f"WHERE je.value IN ({placeholders}) "
+                f"GROUP BY f.id ORDER BY match_count DESC, f.importance DESC LIMIT @limit",
+                params,
+            ).fetchall()
+            for r in rows:
+                seen_ids.add(r["id"])
+                results.append(self._row_to_fact(r))
 
-    @staticmethod
-    def _is_duplicate(content, existing):
-        tokens = set(content)
-        for fact in existing:
-            ft = set(str(fact.get("content", "")))
-            if not tokens or not ft: continue
-            inter = len(tokens & ft)
-            union_ = len(tokens | ft)
-            if union_ and inter / union_ > 0.55: return True
-        return False
+        # Strategy 2: FTS5 fallback
+        if len(results) < 3 and query:
+            fts_query = _build_fts_query(query)
+            if fts_query:
+                try:
+                    rows = conn.execute(
+                        "SELECT f.* FROM facts_fts fts JOIN facts f ON fts.rowid = f.id "
+                        "WHERE facts_fts MATCH ? ORDER BY rank LIMIT ?",
+                        (fts_query, _FTS_LIMIT),
+                    ).fetchall()
+                    for r in rows:
+                        if r["id"] in seen_ids:
+                            continue
+                        seen_ids.add(r["id"])
+                        results.append(self._row_to_fact(r))
+                except sqlite3.OperationalError:
+                    pass
+
+        # Strategy 3: LIKE fallback
+        if len(results) < 3 and query:
+            rows = conn.execute(
+                "SELECT * FROM facts WHERE fact LIKE ? ORDER BY importance DESC LIMIT ?",
+                (f"%{query}%", _FTS_LIMIT),
+            ).fetchall()
+            for r in rows:
+                if r["id"] in seen_ids:
+                    continue
+                results.append(self._row_to_fact(r))
+
+        return results[:k]
+
+    def get_all_facts(self) -> list[dict]:
+        conn = self._get_conn()
+        rows = conn.execute("SELECT * FROM facts ORDER BY importance DESC, created_at DESC").fetchall()
+        return [self._row_to_fact(r) for r in rows]
+
+    def delete_fact(self, fact_id: int) -> bool:
+        conn = self._get_conn()
+        return conn.execute("DELETE FROM facts WHERE id = ?", (fact_id,)).rowcount > 0
+
+    @property
+    def fact_count(self) -> int:
+        conn = self._get_conn()
+        return conn.execute("SELECT COUNT(*) as c FROM facts").fetchone()["c"]
+
+    def _row_to_fact(self, r) -> dict:
+        tags_raw = r["tags"]
+        if isinstance(tags_raw, str):
+            try:
+                tags = json.loads(tags_raw)
+            except (json.JSONDecodeError, TypeError):
+                tags = []
+        else:
+            tags = tags_raw or []
+        return {
+            "id": r["id"],
+            "fact": r["fact"],
+            "tags": tags,
+            "time": r["time"] if r["time"] else None,
+            "source": r["source"] if r["source"] else "",
+            "importance": float(r["importance"]) if r["importance"] else 0.5,
+            "created_at": r["created_at"] if r["created_at"] else "",
+        }
+
+    # ── prompt context (legacy compat, will be replaced by compiler) ────
 
     def build_prompt_context(self, query="", max_recent_turns=5, max_facts=3):
         sections = []
@@ -146,63 +316,39 @@ class MemoryStore:
         if turns:
             lines = ["\n[最近对话]"]
             for t in turns:
-                u = str(t.get("user", "")).strip()
-                a = str(t.get("assistant", "")).strip()
-                if u: lines.append("用户: " + u[:200])
-                if a: lines.append("Monika: " + a[:200])
+                content = str(t.get("content", "")).strip()
+                role = t.get("role", "user")
+                if content:
+                    lines.append(f"{'用户' if role == 'user' else 'Monika'}: {content[:200]}")
             sections.append("\n".join(lines))
-        seen = set()
-        fact_lines = []
-        if query:
-            for f in self.search_facts(query, k=max_facts):
-                c = str(f.get("content", ""))
-                if c and c not in seen: seen.add(c); fact_lines.append("  " + c)
-        if len(fact_lines) < max_facts:
-            for f in self.sample_facts(max_facts):
-                c = str(f.get("content", ""))
-                if c and c not in seen: seen.add(c); fact_lines.append("  " + c)
-        if fact_lines:
-            sections.append("\n[记忆]\n" + "\n".join(fact_lines[:max_facts]))
+
+        facts = self.search_facts(query=query, k=max_facts)
+        if facts:
+            lines = ["\n[记忆]"]
+            for f in facts:
+                lines.append("  " + str(f.get("fact", "")))
+            sections.append("\n".join(lines))
+
         return "\n".join(sections)
 
     def rebuild_index(self):
-        return len(self._load_facts())
+        conn = self._get_conn()
+        conn.executescript("""
+            INSERT INTO facts_fts(facts_fts) VALUES ('rebuild');
+            INSERT INTO logs_fts(logs_fts) VALUES ('rebuild');
+        """)
+        return self.fact_count
 
-    def start(self): pass
-    def stop(self, wait=False): pass
+    def start(self):
+        pass
 
-    def summarize_session(self, llm_adapter=None):
-        adapter = llm_adapter or self._llm_adapter
-        if not adapter: return
-        turns = self.recent_turns(30)
-        if not turns or len(turns) < 3: return
-        lines = []
-        for t in turns[-20:]:
-            u = str(t.get("user", "")).strip()
-            a = str(t.get("assistant", "")).strip()
-            if u: lines.append("User: " + u)
-            if a: lines.append("Monika: " + a)
-        conv = "\n".join(lines)
-        if len(conv) < 20: return
-        prompt = ("Summarise this conversation session into 1-2 sentences.\n"
-                  "Focus on: what was discussed, any decisions made, user mood or state.\n"
-                  "Write in Chinese, from Monika first-person perspective.\n"
-                  "Conversation:\n" + conv + "\n\nEpisode summary:")
-        try:
-            result = adapter.generate({"messages": [{"role": "user", "content": prompt}], "temperature": 0.3}, timeout=10)
-            summary = str(result.get("content", "")).strip()
-            if summary and len(summary) > 5: self.add_fact(summary, importance=0.8, source="session_summary")
-        except: pass
-
-
-def _tokenize(text):
-    tokens = []
-    for ch in text:
-        if "\u4e00" <= ch <= "\u9fff" or "\u3040" <= ch <= "\u30ff":
-            tokens.append(ch)
-    words = __import__("re").findall(r"[a-zA-Z0-9]+", text.lower())
-    tokens.extend(w for w in words if len(w) >= 2)
-    return tokens
+    def stop(self, wait=False):
+        if hasattr(self._local, "conn") and self._local.conn:
+            self._local.conn.close()
+            self._local.conn = None
 
 
 memory_store = MemoryStore()
+
+
+

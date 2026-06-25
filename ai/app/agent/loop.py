@@ -60,6 +60,8 @@ class AgentLoop:
         from app.models import OpenAILLMAdapter
         from app.memory.store import memory_store
         from app.initiative import InitiativeChecker, initiative_queue
+        from app.memory import set_compiler_llm
+        from app.memory.extractor import run_rolling_summary
         from app.screen import ScreenWatcher
 
         api_key = os.environ.get("DEEPSEEK_API_KEY", "")
@@ -82,7 +84,7 @@ class AgentLoop:
             self.turns.disable_local_player = True
 
         # --- Memory: rebuild index on startup ---
-        memory_store.set_llm_adapter(adapter)
+        set_compiler_llm(adapter)
         print(f"[AgentLoop] Memory store ready ({memory_store.rebuild_index()} facts)")
 
 
@@ -135,7 +137,7 @@ class AgentLoop:
             self._initiative.stop()
             # Save session episode before stopping memory
             if self._llm_adapter:
-                memory_store.summarize_session(self._llm_adapter)
+                run_rolling_summary(self._llm_adapter)
             # Save project state (last active time, session count)
             try:
                 from app.project.store import ProjectStore

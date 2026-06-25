@@ -1,10 +1,14 @@
 """GSVI (GPT-SoVITS) engine — legacy HTTP API."""
+
 from __future__ import annotations
 
 import os
 from typing import Any
 
 import requests
+
+from app.modules.tts.base import BaseTTS
+from app.modules.tts.factory import TTSFactory
 
 _EMOTION_MAP = {
     "default": "默认", "happy": "开心", "sad": "悲伤",
@@ -51,3 +55,11 @@ def synthesize(text: str) -> bytes:
     r = requests.post(f"{gsvi_url}/v1/audio/speech", json=payload, timeout=180)
     r.raise_for_status()
     return r.content
+
+
+@TTSFactory.register
+class GSVITTS(BaseTTS):
+    engine_name = "gsvi"
+
+    def synthesize(self, text: str, **options: Any) -> bytes:
+        return synthesize(text)
