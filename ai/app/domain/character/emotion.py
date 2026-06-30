@@ -16,8 +16,18 @@ class EmotionState:
     """Tracks the character's current emotional state."""
 
     VALID_EMOTIONS = {
+        # Universal basics
         "neutral", "happy", "sad", "angry", "surprised",
         "worried", "shy", "gentle", "serious", "jealous",
+        # Monika tone words
+        "playful", "explaining", "smile", "cheerful",
+        "cold", "stern", "emphasizing", "happy_closed",
+        "laughing", "awkward_smile", "awkward", "nervous",
+        "shocked", "sigh", "giving_up", "warm_smile",
+        "friendly", "curious", "cold_stare", "meek",
+        "soft_smile", "blank", "thinking", "lightly_surprised",
+        "confused", "blissful", "joyful", "awkward_grin",
+        "embarrassed", "startled", "panicked",
     }
 
     def __init__(self, initial: str = "neutral"):

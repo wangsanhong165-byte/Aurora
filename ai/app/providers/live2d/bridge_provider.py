@@ -74,7 +74,7 @@ class BridgeLive2DProvider(Live2DInterface):
 
     # ── Live2DInterface ────────────────────────────────────────────────
 
-    async def set_expression(self, emotion: str) -> None:
+    async def set_expression(self, emotion: str, intensity: float = 0.5) -> None:
         """Relay an emotion expression to the bridge via HTTP POST.
 
         Production logic extracted from AgentLoop._send_live2d_expression():
@@ -86,17 +86,17 @@ class BridgeLive2DProvider(Live2DInterface):
         try:
             await asyncio.to_thread(
                 self._post_expression,
-                emotion,
+                emotion, intensity,
             )
         except Exception:
             logger.debug("set_expression(%s) failed (bridge may not be running)", emotion)
 
-    def _post_expression(self, emotion: str) -> None:
+    def _post_expression(self, emotion: str, intensity: float = 0.5) -> None:
         """Synchronous HTTP POST to bridge — runs in thread pool."""
         import requests
         requests.post(
             f"{self._bridge_url}/live2d/expression",
-            json={"expression": emotion},
+            json={"expression": emotion, "intensity": intensity},
             timeout=1.0,
         )
 

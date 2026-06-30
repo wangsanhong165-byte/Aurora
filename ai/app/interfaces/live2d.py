@@ -5,7 +5,7 @@ class Live2DInterface(ABC):
     """Interface for Live2D character rendering."""
 
     @abstractmethod
-    async def set_expression(self, emotion: str) -> None:
+    async def set_expression(self, emotion: str, intensity: float = 0.5) -> None:
         ...
 
     @abstractmethod
@@ -20,7 +20,7 @@ class Live2DInterface(ABC):
 class MockLive2D(Live2DInterface):
     """No-op implementation for testing."""
 
-    async def set_expression(self, emotion):
+    async def set_expression(self, emotion, intensity=0.5):
         pass
 
     async def set_gesture(self, gesture):

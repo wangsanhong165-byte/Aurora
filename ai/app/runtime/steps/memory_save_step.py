@@ -1,5 +1,7 @@
 """MemorySaveStep — persist conversation turns to memory after reply."""
 
+import logging
+
 from app.runtime.pipeline import Step
 from app.runtime.context import Context
 from app.interfaces.memory import MemoryInterface
@@ -36,4 +38,7 @@ class MemorySaveStep(Step):
         # Optionally trigger consolidation every 5 turns
         turn_count = ctx.state.get("turn_count", 0)
         if turn_count > 0 and turn_count % 5 == 0:
-            await self.memory.consolidate()
+            try:
+                await self.memory.consolidate()
+            except Exception:
+                logging.getLogger("memory_step").exception("Memory consolidation failed")

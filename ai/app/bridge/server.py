@@ -276,6 +276,12 @@ _ws_clients: set[WebSocket] = set()
 class ExpressionCommand(BaseModel):
     """Request body for POST /live2d/expression"""
     expression: str
+    intensity: float = 0.5
+
+
+class GestureCommand(BaseModel):
+    """Request body for POST /live2d/gesture"""
+    gesture: str
 
 
 @app.websocket("/ws")
@@ -313,7 +319,11 @@ async def live2d_expression(cmd: ExpressionCommand):
     # Translate through emotion_map; fall back to raw if not found
     expression_name = emotion_map.get(cmd.expression, cmd.expression)
 
-    payload = json.dumps({"type": "expression", "name": expression_name}, ensure_ascii=False)
+    payload = json.dumps({
+        "type": "expression",
+        "name": expression_name,
+        "intensity": cmd.intensity,
+    }, ensure_ascii=False)
     dead: list[WebSocket] = []
     for ws in _ws_clients:
         try:
@@ -323,6 +333,22 @@ async def live2d_expression(cmd: ExpressionCommand):
     for ws in dead:
         _ws_clients.discard(ws)
     logger.info("Expression '%s' → '%s' sent to %d client(s)", cmd.expression, expression_name, len(_ws_clients))
+    return {"ok": True, "sent": len(_ws_clients)}
+
+
+@app.post("/live2d/gesture")
+async def live2d_gesture(cmd: GestureCommand):
+    """Relay Live2D gesture command to all connected WebSocket clients."""
+    payload = json.dumps({"type": "gesture", "name": cmd.gesture}, ensure_ascii=False)
+    dead: list[WebSocket] = []
+    for ws in _ws_clients:
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _ws_clients.discard(ws)
+    logger.info("Gesture '%s' sent to %d client(s)", cmd.gesture, len(_ws_clients))
     return {"ok": True, "sent": len(_ws_clients)}
 
 
@@ -453,10 +479,11 @@ def _get_mic_buffer(client_id: str) -> dict:
 # ── Initialization ──────────────────────────────────────────────────────
 
 async def _send_init_conf(websocket: WebSocket) -> None:
-    """Send initial configuration to the frontend, including emotion map."""
+    """Send initial configuration to the frontend, including emotion and gesture maps."""
     cfg = _load_live2d_config()
     model_cfg = cfg.get(_live2d_model, {})
     emotion_map = model_cfg.get("emotion_map", {})
+    gestures = model_cfg.get("gestures", [])
     await _ws_send(websocket, {
         "type": "set-model-and-conf",
         "conf_name": "default",
@@ -466,6 +493,7 @@ async def _send_init_conf(websocket: WebSocket) -> None:
             "name": _live2d_model,
             "url": f"/live2d-models/{_live2d_model}/{_live2d_model}.model3.json",
             "emotionMap": emotion_map,
+            "gestures": gestures,
         },
     })
 

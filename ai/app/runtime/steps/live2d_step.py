@@ -11,7 +11,8 @@ class Live2DStep(Step):
 
     async def run(self, ctx: Context) -> None:
         emotion = ctx.emotion or "neutral"
-        await self.live2d.set_expression(emotion)
+        intensity = ctx.emotion_intensity
+        await self.live2d.set_expression(emotion, intensity)
 
         # Extract gesture from the last segment's gesture field
         if ctx.segments:

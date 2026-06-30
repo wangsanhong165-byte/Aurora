@@ -84,6 +84,7 @@ class EmotionStep(Step):
         if character is not None:
             try:
                 character.emotion.set(emotion)
+                character.mood.shift_from_emotion(emotion)
             except Exception:
                 pass
             ctx.emotion = character.emotion.current

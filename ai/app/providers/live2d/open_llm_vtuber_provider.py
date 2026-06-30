@@ -122,17 +122,18 @@ class OpenLLMVTuberProvider(Live2DInterface):
 
     # ── Live2DInterface ───────────────────────────────────────────────────
 
-    async def set_expression(self, emotion: str) -> None:
+    async def set_expression(self, emotion: str, intensity: float = 0.5) -> None:
         """Send an expression update to Open-LLM-VTuber.
 
         Maps our emotion name (e.g. "happy") to the VTuber's expected
         expression name via the emotion map. Skips if emotion is neutral
-        to avoid unnecessary requests.
+        to avoid unnecessary requests. Intensity is passed when the
+        VTuber API supports it.
         """
         if not emotion:
             return
         mapped = self._emotion_map.get(emotion, emotion)
-        await self._post("/set_expression", {"expression": mapped})
+        await self._post("/set_expression", {"expression": mapped, "intensity": intensity})
 
     async def set_gesture(self, gesture: str) -> None:
         """Send a gesture command to Open-LLM-VTuber."""
