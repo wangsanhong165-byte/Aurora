@@ -1,1 +1,1 @@
-﻿"""TTS package — services and player."""
+"""TTS package — services and player."""

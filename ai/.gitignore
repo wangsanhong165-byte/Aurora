@@ -1,5 +1,10 @@
 ﻿recordings/
 memory.short.jsonl
+
+# Large model/character files (exceed GitHub 100MB limit)
+config/characters/Monika.char
+config/characters/*/model/*.ckpt
+config/characters/*/model/*.pth
 __pycache__/
 .idea/
 *.pyc
@@ -12,4 +17,11 @@ temp_audio/
 tts_outputs/
 .vscode/
 
+# Environment files with secrets
+.env
+config/.env
+
 olv_extracted/
+
+# Frontend build artifact (built from frontend-src/)
+frontend/

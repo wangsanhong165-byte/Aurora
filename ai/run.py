@@ -129,12 +129,122 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--language", default=None)
     p.add_argument("--no-tts", action="store_true")
     p.add_argument("--no-vad", action="store_true", help="Single-turn mode")
-    p.add_argument("--tts-engine", choices=["gsvi", "gsvi-v2pro", "pyttsx3"])
-    p.add_argument("--ui", choices=["tui"], default=None, help="Launch TUI control panel")
     p.add_argument("--persona", default=None)
     p.add_argument("--text", action="store_true", help="Text-only chat mode (no audio)")
     p.add_argument("--audio-path", default="")
+    p.add_argument("--runtime", action="store_true",
+                   help=argparse.SUPPRESS)  # deprecated — Runtime is now the default
     return p.parse_args()
+
+
+def _runtime_main(args: argparse.Namespace) -> int:
+    """Run using v2 CompanionRuntime instead of legacy Brain pipeline."""
+    import asyncio
+
+    import numpy as np
+    import soundfile as sf
+
+    from app.input.manager import InputManager
+    from app.runtime.event import Event, EventType
+    from app.runtime.runtime import CompanionRuntime
+
+    rt = CompanionRuntime()
+
+    def _sync_dispatch(event: Event):
+        """Synchronous wrapper around rt.dispatch()."""
+        return asyncio.run(rt.dispatch(event))
+
+    try:
+        if args.text:
+            # ── Text REPL ────────────────────────────────────────────
+            print("\n[Runtime] Text mode — type 'exit' to quit\n")
+            while True:
+                try:
+                    user_text = input("> ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    break
+                if not user_text:
+                    continue
+                if user_text.lower() in ("exit", "quit", "/exit", "/quit"):
+                    break
+
+                event = Event(EventType.TEXT_RECEIVED, {"text": user_text}, source="cli")
+                ctx = _sync_dispatch(event)
+
+                if ctx.error:
+                    print(f"[Error] {ctx.error}")
+                elif ctx.reply_text:
+                    print(f"\n{ctx.reply_text}\n")
+            return 0
+
+        if args.no_vad:
+            # ── Single-turn audio ────────────────────────────────────
+            import sounddevice as sd
+            from pathlib import Path
+
+            path = Path(args.audio_path) if args.audio_path else \
+                Path(__file__).resolve().parent / "data" / "recordings" / "single.wav"
+
+            if not args.audio_path:
+                print(f"Recording {args.seconds}s...")
+                audio = sd.rec(int(args.seconds * args.sample_rate),
+                               samplerate=args.sample_rate, channels=1, dtype="float32")
+                sd.wait()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                sf.write(str(path), audio, args.sample_rate)
+
+            audio_data, sr = sf.read(str(path), dtype="float32")
+            audio_bytes = audio_data.tobytes()
+
+            event = Event(
+                EventType.SPEECH_RECEIVED,
+                {"audio": audio_bytes, "sample_rate": sr},
+                source="cli",
+            )
+            ctx = _sync_dispatch(event)
+
+            if ctx.error:
+                print(f"[Error] {ctx.error}")
+            else:
+                print(f"User: {ctx.user_text}")
+                print(f"Assistant: {ctx.reply_text}")
+            return 0
+
+        # ── Continuous VAD mode ────────────────────────────────────
+        manager = InputManager()
+        manager.start()
+        print("\n[Runtime] Continuous mode — listening... (Ctrl+C to stop)\n")
+
+        try:
+            while True:
+                result = manager.poll()
+                if result["type"] == "stop":
+                    break
+                if result["type"] == "speech":
+                    audio_path = result["audio_path"]
+                    audio_data, sr = sf.read(audio_path, dtype="float32")
+                    audio_bytes = audio_data.tobytes()
+
+                    event = Event(
+                        EventType.SPEECH_RECEIVED,
+                        {"audio": audio_bytes, "sample_rate": sr},
+                        source="cli",
+                    )
+                    ctx = _sync_dispatch(event)
+
+                    if ctx.error:
+                        print(f"[Error] {ctx.error}")
+                    elif ctx.reply_text:
+                        print(f"\nAssistant: {ctx.reply_text}\n")
+        except KeyboardInterrupt:
+            print()
+        finally:
+            manager.stop()
+
+        return 0
+    finally:
+        rt.shutdown()
 
 
 def main() -> int:
@@ -149,7 +259,7 @@ def main() -> int:
     if args.persona:
         try:
             persona_id = args.persona
-            char_path = BASE_DIR / "characters" / persona_id / "character.json"
+            char_path = BASE_DIR / "config" / "characters" / persona_id / "character.json"
             with open(char_path, "r", encoding="utf-8") as f:
                 char_card = json.load(f)
             persona_text = char_card.get("character_setting") or char_card.get("system_prompt", "")
@@ -165,12 +275,12 @@ def main() -> int:
                 if isinstance(ref_audio, dict):
                     first_key = next(iter(ref_audio))
                     ref_audio = ref_audio[first_key]
-                os.environ["GSVI_REF_AUDIO"] = str(BASE_DIR / "characters" / persona_id / ref_audio)
+                os.environ["GSVI_REF_AUDIO"] = str(BASE_DIR / "config" / "characters" / persona_id / ref_audio)
             if tts_cfg.get("prompt_lang"):
                 os.environ["GSVI_PROMPT_LANG"] = tts_cfg["prompt_lang"]
             if tts_cfg.get("prompt_text"):
                 os.environ["GSVI_PROMPT_TEXT"] = tts_cfg["prompt_text"]
-            os.environ.setdefault("GSVI_EMOTION", "榛樿")
+            os.environ.setdefault("GSVI_EMOTION", "默认")
             # ---- Pass custom model weight paths (relative to GSVI dir) ----
             custom_model = tts_cfg.get("custom_model", {})
             if custom_model.get("t2s"):
@@ -190,7 +300,7 @@ def main() -> int:
 
     # Setup logging
     from datetime import datetime
-    log_dir = BASE_DIR / "logs" / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_dir = BASE_DIR / "data" / "logs" / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     log_dir.mkdir(parents=True, exist_ok=True)
     print(f"\n[log] {log_dir}")
 
@@ -234,62 +344,8 @@ def main() -> int:
         finally:
             warmup_path.unlink(missing_ok=True)
 
-        # ---- Single-turn mode (Brain-based, no Orchestrator) ----
-        if args.no_vad:
-            import sounddevice as sd
-            from app.models import OpenAILLMAdapter
-            from app.character.registry import CharacterRegistry
-            from app.tools.registry import ToolRegistry
-            from app.runtime.agent_runtime import AgentRuntime
-            from app.runtime.turn import TurnRuntime
-            from app.tts.player import AsyncAudioPlayer
-
-            path = Path(args.audio_path) if args.audio_path else BASE_DIR / "recordings" / "single.wav"
-
-            if not args.audio_path:
-                print(f"Recording {args.seconds}s...")
-                audio = sd.rec(int(args.seconds * args.sample_rate),
-                               samplerate=args.sample_rate, channels=1, dtype="float32")
-                sd.wait()
-                path.parent.mkdir(parents=True, exist_ok=True)
-                sf.write(str(path), audio, args.sample_rate)
-
-            # Brain-based single turn
-            char = CharacterRegistry()
-            if args.persona:
-                char.activate(args.persona)
-            tools = ToolRegistry()
-            runtime = AgentRuntime(character=char, tools=tools)
-            adapter = OpenAILLMAdapter()
-            from app.memory import init_memory
-            init_memory(adapter, character_registry=char)
-            player = AsyncAudioPlayer()
-            player.start()
-
-            turns = TurnRuntime(runtime, llm_adapter=adapter, player=player)
-            turns.start()
-
-            try:
-                result = turns.process_audio(str(path), args.language)
-                if result.ok:
-                    print(f"User: {result.user_text}")
-                    print(f"Assistant: {result.reply_text}")
-                else:
-                    print(f"Error: {result.error}")
-                turns.wait_output_done(timeout=30.0)
-            finally:
-                turns.shutdown()
-
-        else:
-            if args.ui == "tui":
-                from app.ui import VoiceAgentUI
-                VoiceAgentUI(persona=args.persona, text_mode=args.text).run()
-            else:
-                from app.agent.loop import AgentLoop
-                loop = AgentLoop(persona=args.persona, text_mode=args.text)
-                loop.start()
-
-        return 0
+        # ---- CompanionRuntime (v2 Pipeline) ----
+        return _runtime_main(args)
     finally:
         print("Shutting down...")
         for p in procs:

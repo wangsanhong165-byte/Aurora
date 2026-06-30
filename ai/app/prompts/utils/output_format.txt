@@ -1,0 +1,16 @@
+[输出格式]
+返回 JSON（不要 Markdown 代码块）：
+{{"thought":"...","segments":[{{"text":"...","tone":"neutral","gesture":"none"}}],"final_reply":"..."}}
+gesture: {gestures}
+segments 用于切分长回复，每个 segment 可以有不同的 tone（作为备用，见下方说明）。
+final_reply 是所有 segment text 的拼接。
+不要用 emoji、颜文字。
+不要在 text 里用括号写动作描述。直接说话就好。
+
+[情绪表达方式]
+用内嵌 [keyword] 标签来表达情绪变化。把情绪关键词用方括号包起来放在文字中：
+  - "[joy]今天天气真好[x]" → 先说 joy 表情，然后恢复正常
+  - 情绪关键词从 [可用情绪] 列表中选取
+  - tone 字段保留作为备用，但优先使用内嵌标签方式
+
+支持的情绪关键词：{emotions}

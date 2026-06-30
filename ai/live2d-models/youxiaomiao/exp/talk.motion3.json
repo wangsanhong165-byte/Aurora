@@ -1,9 +1,0 @@
-{
-  "Version": 3,
-  "Meta": {"Duration": 2.0, "Fps": 60.0, "Loop": true, "AreBeziersRestricted": true, "CurveCount": 3, "TotalSegmentCount": 10, "TotalPointCount": 12, "UserDataCount": 0, "TotalUserDataSize": 0},
-  "Curves": [
-    {"Target": "Parameter", "Id": "ParamAngleY", "Segments": [0,0,0, 0.5,3,0, 1.0,0,0, 1.5,-2,0, 2.0,0]},
-    {"Target": "Parameter", "Id": "ParamAngleX", "Segments": [0,0,0, 0.5,1.5,0, 1.0,0,0, 1.5,-1.5,0, 2.0,0]},
-    {"Target": "Parameter", "Id": "ParamAngleZ", "Segments": [0,0,0, 1.0,1,0, 2.0,0]}
-  ]
-}

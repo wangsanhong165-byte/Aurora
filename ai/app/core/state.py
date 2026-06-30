@@ -1,4 +1,4 @@
-﻿"""Global state machine states and runtime state store.
+"""Global state machine states and runtime state store.
 
 Simplified: removed MentalState's curiosity/attachment dimensions,
 removed batch accumulation. Just a simple mood tracker.
@@ -6,10 +6,11 @@ removed batch accumulation. Just a simple mood tracker.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from enum import Enum, auto
-from threading import RLock
 from typing import Any
+
+from app.core.state_store import state_store  # noqa: F401 — shared singleton
 
 
 class InputState(Enum):
@@ -22,6 +23,7 @@ class InputState(Enum):
 
 @dataclass(slots=True)
 class RuntimeState:
+    """Schema for legacy state keys. Not used for storage — kept for type hints."""
     activity: str = "idle"
     attention: str = "available"
     emotion: str = "neutral"
@@ -83,25 +85,4 @@ class MoodTracker:
 mood_tracker = MoodTracker()
 
 
-class StateStore:
-    """Thread-safe storage for the current runtime state."""
-
-    def __init__(self) -> None:
-        self._state = RuntimeState()
-        self._lock = RLock()
-
-    def snapshot(self) -> dict[str, Any]:
-        with self._lock:
-            return asdict(self._state)
-
-    def update(self, **changes: Any) -> dict[str, Any]:
-        with self._lock:
-            for key, value in changes.items():
-                if hasattr(self._state, key):
-                    setattr(self._state, key, value)
-                else:
-                    self._state.metadata[key] = value
-            return asdict(self._state)
-
-
-state_store = StateStore()
+# StateStore is now shared via app.runtime.state_store — import above.

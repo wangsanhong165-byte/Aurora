@@ -1,4 +1,4 @@
-﻿"""Audio stream capture — wraps sounddevice InputStream."""
+"""Audio stream capture — wraps sounddevice InputStream."""
 
 from pathlib import Path
 import numpy as np

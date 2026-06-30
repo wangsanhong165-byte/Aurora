@@ -1,4 +1,4 @@
-﻿"""CharacterPackLoader ? import .char ZIP files into characters/<id>/."""
+"""CharacterPackLoader ? import .char ZIP files into characters/<id>/."""
 from __future__ import annotations
 
 import json
@@ -22,7 +22,7 @@ class CharacterPackLoader:
 
     def __init__(self, base_dir: Path | None = None) -> None:
         self._base = base_dir or Path(__file__).resolve().parents[2]
-        self._chars_dir = self._base / "characters"
+        self._chars_dir = self._base / "config" / "characters"
 
     # ---- import from .char ZIP ------------------------------------------
     def import_char(self, zip_path: str | Path) -> str:
@@ -127,7 +127,7 @@ class CharacterPackLoader:
         rules = {
             "tone_words": list(sprites.keys()) if sprites else ["neutral"],
             "max_segments_per_reply": 5,
-            "avoid": ["????", "????", "Markdown"],
+            "avoid": ["避免不必要的动作描述", "避免角色崩坏", "Markdown"],
         }
 
         return {
@@ -148,18 +148,18 @@ class CharacterPackLoader:
         text: str, sprites: list[dict]
     ) -> dict[str, dict]:
         tone_map = {
-            "骞抽潤": "neutral",
-            "瀹崇緸": "shy",
+            "平静": "neutral",
+            "害羞": "shy",
             "开心": "happy",
-            "鍚冮唻": "jealous",
+            "吃醋": "jealous",
             "看着你": "looking",
-            "瀹崇緸鐨勮": "shy_talk",
-            "闇囨儕": "surprised",
-            "鐢熸皵": "angry",
-            "鎷呭績": "worried",
-            "涓ヨ們": "serious",
-            "娓╂煍": "gentle",
-            "闅捐繃": "sad",
+            "害羞的说": "shy_talk",
+            "震惊": "surprised",
+            "生气": "angry",
+            "担心": "worried",
+            "严肃": "serious",
+            "温柔": "gentle",
+            "难过": "sad",
         }
         result: dict[str, dict] = {}
         lines = text.strip().split("\n")

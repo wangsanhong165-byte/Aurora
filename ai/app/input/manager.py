@@ -1,4 +1,4 @@
-﻿"""Input state machine — continuous listening with VAD-based recording."""
+"""Input state machine — continuous listening with VAD-based recording."""
 
 import queue
 import time
@@ -28,7 +28,7 @@ class InputManager:
 
         self.silence_timeout = silence_timeout
         self.max_duration = max_duration
-        self.output_dir = output_dir or Path("recordings")
+        self.output_dir = output_dir or Path("data/recordings")
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self._state = InputState.IDLE

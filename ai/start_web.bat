@@ -6,6 +6,14 @@ for /f "tokens=5" %%a in ('netstat -ano ^| find ":9528" ^| find "LISTENING"') do
     echo Killing old bridge process PID=%%a
     taskkill /F /PID %%a >nul 2>&1
 )
+
+:: Kill stale python processes that may be holding service ports
+for %%p in (8000 8020 8030 8040 8050) do (
+    for /f "tokens=5" %%a in ('netstat -ano ^| find ":%%p" ^| find "LISTENING"') do (
+        echo Killing old service on port %%p PID=%%a
+        taskkill /F /PID %%a >nul 2>&1
+    )
+)
 timeout /t 1 /nobreak >nul
 
 echo Starting Monika Live2D...

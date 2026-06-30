@@ -1,0 +1,4 @@
+{identity}
+
+[行为规则]
+{ishiki}

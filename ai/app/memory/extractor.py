@@ -1,4 +1,4 @@
-﻿"""Memory extractor — rolling summary + fact extraction.
+"""Memory extractor — rolling summary + fact extraction.
 
 Background pipeline. Character-agnostic: accepts character_name parameter
 so the same pipeline works for any persona.
@@ -21,18 +21,13 @@ _TURNS_PER_SUMMARY = 10
 def _call_llm(system: str, user: str, llm_adapter: Any, timeout: int = 15) -> str:
     if not llm_adapter:
         return ""
-    try:
-        result = llm_adapter.generate({
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 1024,
-        }, timeout=timeout)
-        return str(result.get("content", "")).strip()
-    except Exception:
-        return ""
+    return llm_adapter.generate_text(
+        system=system,
+        user=user,
+        temperature=0.3,
+        max_tokens=1024,
+        timeout=timeout,
+    )
 
 
 def run_rolling_summary(llm_adapter: Any, character_name: str = "") -> str:

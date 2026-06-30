@@ -1,0 +1,79 @@
+{
+  "Design_genius_White": {
+    "prompt_emotions": [
+      "neutral",
+      "angry",
+      "sad",
+      "happy",
+      "love",
+      "shy",
+      "embarrassed",
+      "confused",
+      "surprised",
+      "blank",
+      "pout"
+    ],
+    "emotion_map": {
+      "neutral": "neutral",
+      "angry": "生气",
+      "sad": "流泪关",
+      "happy": "开心",
+      "love": "爱心",
+      "shy": "脸红",
+      "embarrassed": "脸红",
+      "confused": "圈圈",
+      "surprised": "圈圈",
+      "blank": "白眼",
+      "pout": "嘟嘴"
+    },
+    "gestures": [
+      "wave",
+      "tilt",
+      "nod",
+      "shrug"
+    ]
+  },
+  "youxiaomiao": {
+    "prompt_emotions": [
+      "angry",
+      "sad",
+      "happy",
+      "surprised",
+      "shy",
+      "confused",
+      "love",
+      "cry",
+      "dizzy"
+    ],
+    "emotion_map": {
+      "angry": "anger",
+      "sad": "sadness",
+      "happy": "joy",
+      "surprised": "surprise",
+      "shy": "blush",
+      "confused": "dizzy",
+      "love": "starry_eyes",
+      "cry": "cry",
+      "dizzy": "dizzy"
+    },
+    "gestures": [
+      "wave",
+      "tilt",
+      "nod",
+      "shrug"
+    ]
+  },
+  "ariu": {
+    "prompt_emotions": [
+      "angry",
+      "love",
+      "surprised"
+    ],
+    "emotion_map": {
+      "angry": "黑化",
+      "love": "爱心眼",
+      "surprised": "圈圈眼"
+    },
+    "gestures": []
+  }
+}

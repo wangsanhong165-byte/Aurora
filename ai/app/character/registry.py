@@ -1,4 +1,4 @@
-﻿"""CharacterRegistry  scan characters/*/character.json, load and validate character cards."""
+"""CharacterRegistry  scan characters/*/character.json, load and validate character cards."""
 import json
 import os
 from pathlib import Path
@@ -12,7 +12,7 @@ class CharacterRegistry:
 
     def __init__(self, base_dir: Path | None = None) -> None:
         self._base = base_dir or Path(__file__).resolve().parents[2]
-        self._chars_dir = self._base / "characters"
+        self._chars_dir = self._base / "config" / "characters"
         self._index_path = self._chars_dir / "index.yaml"
         self._characters: dict[str, dict[str, Any]] = {}
         self._active_id: str = ""

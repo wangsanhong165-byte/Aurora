@@ -10,7 +10,10 @@ load_env_file(DEFAULT_ENV_PATH)
 import argparse
 from run import start_services, wait_services
 def main():
-    args = argparse.Namespace(env_file=str(BASE_DIR / ".env"))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-browser", action="store_true", help="Don't open browser on start")
+    parsed, _ = parser.parse_known_args()
+    args = argparse.Namespace(env_file=str(BASE_DIR / "config" / ".env"))
     import tempfile
     log_dir = Path(tempfile.gettempdir()) / "monika-logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -42,9 +45,10 @@ def main():
         # Start bridge
         bridge_port = os.environ.get("BRIDGE_PORT", "9528")
         print(f"\\nStarting Live2D Bridge on http://127.0.0.1:{bridge_port} ...")
-        bridge_proc = subprocess.Popen([sys.executable, "-m", "bridge.server"], cwd=BASE_DIR)
-        import webbrowser
-        webbrowser.open(f"http://127.0.0.1:{bridge_port}")
+        bridge_proc = subprocess.Popen([sys.executable, "-m", "app.bridge.server"], cwd=BASE_DIR)
+        if not parsed.no_browser:
+            import webbrowser
+            webbrowser.open(f"http://127.0.0.1:{bridge_port}")
         print(f"\\n=== Monika Live2D ready! http://127.0.0.1:{bridge_port} ===")
         print("    Press Ctrl+C to stop\\n")
         shutdown_event = threading.Event()

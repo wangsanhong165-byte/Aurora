@@ -1,4 +1,4 @@
-﻿"""Memory module — character-agnostic store + per-character compiled memory.
+"""Memory module — character-agnostic store + per-character compiled memory.
 
 Shared facts (user profile) persist across character changes.
 Compiled memory (today/week/longterm/facts.md) is per-character.

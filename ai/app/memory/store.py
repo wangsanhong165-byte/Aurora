@@ -1,4 +1,4 @@
-﻿"""Memory store — SQLite + FTS5 backend.
+"""Memory store — SQLite + FTS5 backend.
 
 Replaces JSONL with structured storage.
 
@@ -56,7 +56,7 @@ class MemoryStore:
     def __init__(self, base_dir: Optional[Path] = None):
         base = base_dir or Path(__file__).resolve().parents[2]
         base.mkdir(parents=True, exist_ok=True)
-        self._db_path = str(base / "memory" / "memory.db")
+        self._db_path = str(base / "data" / "memory" / "memory.db")
         self._local = threading.local()
         self._init_db()
 
@@ -338,6 +338,22 @@ class MemoryStore:
             INSERT INTO logs_fts(logs_fts) VALUES ('rebuild');
         """)
         return self.fact_count
+
+    def delete_logs_before(self, cutoff: str) -> int:
+        """Delete log entries older than cutoff (ISO datetime string). Returns count."""
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM logs WHERE created_at < ?", (cutoff,))
+        deleted = cur.rowcount
+        conn.commit()
+        return deleted
+
+    def delete_facts_before(self, cutoff: str) -> int:
+        """Delete facts older than cutoff (ISO datetime string). Returns count."""
+        conn = self._get_conn()
+        cur = conn.execute("DELETE FROM facts WHERE created_at < ?", (cutoff,))
+        deleted = cur.rowcount
+        conn.commit()
+        return deleted
 
     def start(self):
         pass

@@ -1,4 +1,4 @@
-﻿"""TTS text preprocessor — filter LLM output before sending to TTS engine.
+"""TTS text preprocessor — filter LLM output before sending to TTS engine.
 
 Adapted from Open-LLM-VTuber 1.2.1 utils/tts_preprocessor.py.
 Changes: replaced loguru with standard logging, removed translator dependency.

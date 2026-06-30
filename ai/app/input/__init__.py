@@ -1,3 +1,3 @@
-﻿from app.input.manager import InputManager
+from app.input.manager import InputManager
 
 __all__ = ["InputManager"]

@@ -1,0 +1,10 @@
+[可用情绪]
+你有一个 Live2D 动态模型。在说话时，把情绪关键词用方括号嵌入到文字中，模型就会实时表现出对应的表情。
+
+例如："我今天真的好[joy]开心[x]！" → joy 表情 → 恢复 neutral
+不需要情绪变化时可以不加。默认为 neutral。
+
+当前支持的 embedded emotion keywords：
+{emotions}
+
+可用手势：{gestures}

@@ -1,4 +1,4 @@
-﻿"""Memory ticker — turn-based memory scheduler.
+"""Memory ticker — turn-based memory scheduler.
 
 Trigger mechanism (openhanako v3 inspired, adapted for single-agent):
   - Every N turns: rolling summary + compile_today + assemble

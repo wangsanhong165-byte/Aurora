@@ -4,10 +4,10 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 MODELS_DIR = BASE_DIR / "models"
-DEFAULT_AUDIO_PATH = BASE_DIR / "recordings" / "last_recording.wav"
-DEFAULT_MEMORY_PATH = BASE_DIR / "memory" / "memory.jsonl"
+DEFAULT_AUDIO_PATH = BASE_DIR / "data" / "recordings" / "last_recording.wav"
+DEFAULT_MEMORY_PATH = BASE_DIR / "data" / "memory" / "memory.jsonl"
 DEFAULT_MODEL_DIR = MODELS_DIR / "asr" / "Qwen3-ASR-1.7B"
-DEFAULT_ENV_PATH = BASE_DIR / ".env"
+DEFAULT_ENV_PATH = BASE_DIR / "config" / ".env"
 
 RECORDER_URL = os.environ.get("RECORDER_URL", "http://127.0.0.1:8010")
 ASR_URL = os.environ.get("ASR_URL", "http://127.0.0.1:8000")
@@ -54,7 +54,7 @@ UVICORN_LOG_CONFIG = {
 }
 
 DEFAULT_TTS_ENGINE = os.environ.get("TTS_ENGINE", "gsvi-v2pro").lower()
-DEFAULT_TTS_OUTPUT_DIR = BASE_DIR / "tts_outputs"
+DEFAULT_TTS_OUTPUT_DIR = BASE_DIR / "data" / "tts_outputs"
 DEFAULT_ASR_ENGINE = os.environ.get("ASR_ENGINE", "qwen3-asr").lower()
 
 

@@ -1,4 +1,4 @@
-﻿"""Memory compiler — four-section compilation pipeline.
+"""Memory compiler — four-section compilation pipeline.
 
 Sections (same as openhanako v3):
   - today:    current day summary (3-5 coarse events, ≤300 chars)
@@ -44,7 +44,7 @@ def _get_base() -> Path:
 
 def _char_dir(char_id: str) -> Path:
     """Per-character compiled directory."""
-    d = _get_base() / "memory" / "compiled" / (char_id or "default")
+    d = _get_base() / "data" / "memory" / "compiled" / (char_id or "default")
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -109,18 +109,13 @@ def _call_llm(system: str, user: str, timeout: int = 15) -> str:
     global _llm_adapter_global
     if not _llm_adapter_global:
         return ""
-    try:
-        result = _llm_adapter_global.generate({
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "temperature": 0.3,
-            "max_tokens": 1024,
-        }, timeout=timeout)
-        return str(result.get("content", "")).strip()
-    except Exception:
-        return ""
+    return _llm_adapter_global.generate_text(
+        system=system,
+        user=user,
+        temperature=0.3,
+        max_tokens=1024,
+        timeout=timeout,
+    )
 
 
 def set_llm_adapter(adapter: Any):

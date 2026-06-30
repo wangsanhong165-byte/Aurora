@@ -1,4 +1,4 @@
-﻿"""LLM prompt templates for memory extraction and compilation.
+"""LLM prompt templates for memory extraction and compilation.
 
 All prompts accept character_name so they adapt to any persona.
 Prompts are in Chinese, written from the AI character's first-person perspective.

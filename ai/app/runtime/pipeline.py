@@ -1,42 +1,31 @@
-﻿"""ChatPipeline: text input -> Brain -> output segments -> UI + TTS."""
+"""ChatPipeline (legacy v1) — dead code, kept for reference.
+
+The v2 Pipeline (below) replaces this. The only consumer was
+app.legacy.runtime.turn (dead code, deleted in Phase 1).
+"""
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, TYPE_CHECKING
+from abc import ABC, abstractmethod
+from typing import Any, Callable
 
 from app.core.event_bus import bus
 from app.core.events import EventType
-
-if TYPE_CHECKING:
-    from app.brain.service import Brain
-    from app.runtime.agent_runtime import AgentRuntime
+from app.runtime.context import Context  # v2 Context
 
 
 class ChatPipeline:
-    """Orchestrates one turn: input -> Brain -> output segments.
-
-    Hooks:
-    - on_segment(tone, zh_text, ja_text): called per segment for UI/portrait update
-    - on_tts(text, tone): called to enqueue TTS synthesis
-    - on_tool_call(name, args): called when a tool is invoked (optional monitor)
-    - on_complete(segments, stats): called when turn is done
-
-    Usage:
-        adapter = OpenAILLMAdapter()
-        pipeline = ChatPipeline(runtime, llm_adapter=adapter)
-        pipeline.on_segment = lambda tone, zh, ja: print(f"[{tone}] {zh}")
-        result = pipeline.process("你好")
-    """
+    """Dead code — legacy v1 pipeline. Kept for reference only."""
 
     def __init__(
         self,
-        runtime: "AgentRuntime",
+        runtime: Any,
         llm_client: Any = None,
         model: str = "",
-        llm_adapter: Any = None,          # preferred: LLMAdapter
+        llm_adapter: Any = None,
         temperature: float = 0.3,
     ) -> None:
-        from app.brain.service import Brain  # lazy to avoid circular import
+        # Brain import omitted — shim module deleted in Phase 1
 
         self.runtime = runtime
         self.client = llm_client
@@ -123,3 +112,33 @@ class ChatPipeline:
     def clear_history(self) -> None:
         self.brain.clear_history()
         self.history = self.brain.history
+
+
+# ── v2 Pipeline infrastructure ──────────────────────────────────────────────
+
+class Step(ABC):
+    """A single processing step in the v2 Pipeline."""
+
+    @abstractmethod
+    async def run(self, ctx: Context) -> None:
+        ...
+
+
+class Pipeline:
+    """Ordered chain of Steps. Each step receives the Context and may
+    mutate it. Runs until all steps complete or a step sets ctx.error.
+    """
+
+    def __init__(self):
+        self._steps: list[Step] = []
+
+    def add(self, step: Step) -> "Pipeline":
+        self._steps.append(step)
+        return self
+
+    async def run(self, ctx: Context) -> Context:
+        for step in self._steps:
+            await step.run(ctx)
+            if ctx.error:
+                break
+        return ctx

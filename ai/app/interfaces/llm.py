@@ -1,0 +1,122 @@
+"""LLM Interface — canonical response model and provider abstraction.
+
+Every LLM provider returns LLMResponse, regardless of SDK or API.
+No JSON strings escape the provider layer.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, AsyncIterator
+
+
+@dataclass
+class ToolCall:
+    """A single tool invocation requested by the LLM."""
+
+    name: str
+    args: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class LLMResponse:
+    """Canonical LLM response — every provider returns exactly this.
+
+    Fields:
+        reply:       Plain text reply (extracted from final_reply or content).
+        segments:    Per-sentence segment dicts, each with text/tone/gesture.
+        tool_calls:  Tool invocations requested by the LLM.
+        messages:    Full conversation history including assistant tool_calls
+                     messages (used by DecisionStep's tool-calling loop).
+        error:       Provider-level error string (empty on success).
+    """
+
+    reply: str = ""
+    segments: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    error: str = ""
+
+
+class LLMInterface(ABC):
+    """Interface for Large Language Model providers."""
+
+    @abstractmethod
+    async def generate(
+        self,
+        messages: list[dict[str, Any]],
+        **kwargs,
+    ) -> LLMResponse:
+        """Call LLM and return a canonical LLMResponse.
+
+        Args:
+            messages: Conversation history (system + user + assistant).
+            **kwargs: Provider-specific options (tools, temperature, etc.).
+
+        Returns:
+            LLMResponse with reply, segments, tool_calls, and messages.
+        """
+        ...
+
+    @abstractmethod
+    async def generate_stream(
+        self,
+        messages: list[dict[str, Any]],
+        **kwargs,
+    ) -> AsyncIterator[str]:
+        """Stream tokens from the LLM.
+
+        Yields token strings. Used for real-time display.
+        The non-streaming generate() remains the canonical interface
+        for the runtime pipeline.
+        """
+        ...
+
+
+class MockLLM(LLMInterface):
+    """Fixed LLMResponse for testing."""
+
+    async def generate(
+        self,
+        messages: list[dict[str, Any]],
+        **kwargs,
+    ) -> LLMResponse:
+        return LLMResponse(reply="Hello!", segments=[])
+
+    async def generate_stream(
+        self,
+        messages: list[dict[str, Any]],
+        **kwargs,
+    ) -> AsyncIterator[str]:
+        yield '{"final_reply": "Hello!", "segments": []}'
+
+
+class ReplayLLM(LLMInterface):
+    """Replay recorded LLMResponses for bug reproduction."""
+
+    def __init__(self, fixture_path: str):
+        self.fixture_path = fixture_path
+        self._recorded: list[LLMResponse] = []
+        self._index = 0
+
+    async def generate(
+        self,
+        messages: list[dict[str, Any]],
+        **kwargs,
+    ) -> LLMResponse:
+        if self._index < len(self._recorded):
+            response = self._recorded[self._index]
+            self._index += 1
+            return response
+        return LLMResponse()
+
+    async def generate_stream(
+        self,
+        messages: list[dict[str, Any]],
+        **kwargs,
+    ) -> AsyncIterator[str]:
+        if self._index < len(self._recorded):
+            response = self._recorded[self._index]
+            self._index += 1
+            yield str(response)

@@ -1,4 +1,4 @@
-﻿"""Interrupt detection — detects barge-in attempts during TTS playback."""
+"""Interrupt detection — detects barge-in attempts during TTS playback."""
 
 import queue
 

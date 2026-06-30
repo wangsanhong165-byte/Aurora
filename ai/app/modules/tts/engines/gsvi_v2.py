@@ -1,4 +1,4 @@
-﻿"""GSVI v2Pro engine — GPT-SoVITS v2Pro nvidia50 HTTP API.
+"""GSVI v2Pro engine — GPT-SoVITS v2Pro nvidia50 HTTP API.
 
 Endpoint: POST /tts
 Returns raw WAV bytes.

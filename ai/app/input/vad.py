@@ -1,4 +1,4 @@
-﻿"""Voice Activity Detection using webrtcvad — extracted from recorder API."""
+"""Voice Activity Detection using webrtcvad — extracted from recorder API."""
 
 import numpy as np
 import webrtcvad
