@@ -712,3 +712,10 @@ def test_initial_idle_starts_authored_native_idle_and_looping_motion_stays_alive
     assert "this.motionArbiter.play('idle', 'system'" in controllers
     assert "loop: Boolean(json.Meta?.Loop)" in player
     assert "this.elapsed %= motion.duration" in player
+
+
+def test_authored_native_idle_resumes_after_temporary_motion_finishes():
+    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+
+    assert "resume authored idle after transient motion" in controllers
+    assert "if (this.currentActivity === 'idle' && !this.motionArbiter.isPlaying())" in controllers

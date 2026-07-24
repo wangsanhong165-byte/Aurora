@@ -901,6 +901,10 @@ export class CharacterController {
         createdAt: performance.now(),
       })
     }
+    // Always resume authored idle after transient motion while the character remains idle.
+    if (this.currentActivity === 'idle' && !this.motionArbiter.isPlaying()) {
+      this.startNativeIdleIfAvailable()
+    }
 
     const now = performance.now()
     if (now - this.lastDebugEmitAt >= 250) {
