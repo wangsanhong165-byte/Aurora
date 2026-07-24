@@ -1,5 +1,6 @@
 """Regression guards for the Live2D single-writer architecture."""
 
+import json
 from pathlib import Path
 
 
@@ -719,3 +720,14 @@ def test_authored_native_idle_resumes_after_temporary_motion_finishes():
 
     assert "resume authored idle after transient motion" in controllers
     assert "if (this.currentActivity === 'idle' && !this.motionArbiter.isPlaying())" in controllers
+
+
+def test_model_specific_idle_mouth_baseline_only_applies_outside_speech():
+    profile = (ROOT / "frontend/src/character/AvatarCapabilityProfile.ts").read_text(encoding="utf-8")
+    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+    mao = json.loads((ROOT / "config/avatar_profiles/mao_zh-Hans.json").read_text(encoding="utf-8"))
+
+    assert "idleMouthOpen" in profile
+    assert "idle_mouth_baseline" in controllers
+    assert "this.currentActivity !== 'speaking'" in controllers
+    assert mao["idleMouthOpen"] > 0

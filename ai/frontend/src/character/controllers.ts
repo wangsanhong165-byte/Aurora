@@ -905,6 +905,27 @@ export class CharacterController {
     if (this.currentActivity === 'idle' && !this.motionArbiter.isPlaying()) {
       this.startNativeIdleIfAvailable()
     }
+    if (
+      this.currentActivity !== 'speaking'
+      && this.motionArbiter.currentMotion?.toLowerCase() === 'native:idle'
+      && (this._profile?.idleMouthOpen ?? 0) > 0
+    ) {
+      const idleMouth = this.parameterResolver.values({
+        'mouth.open': this._profile!.idleMouthOpen!,
+      })
+      for (const [parameterId, value] of Object.entries(idleMouth)) {
+        this.mixer.submit({
+          id: `idle_mouth_baseline:${parameterId}`,
+          parameterId,
+          source: 'idle_mouth_baseline',
+          channel: 'lip_sync',
+          value,
+          mode: 'add',
+          priority: 18,
+          createdAt: performance.now(),
+        })
+      }
+    }
 
     const now = performance.now()
     if (now - this.lastDebugEmitAt >= 250) {

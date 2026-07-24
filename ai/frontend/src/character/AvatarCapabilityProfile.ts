@@ -58,6 +58,8 @@ export interface AvatarCapabilityProfile {
   bodyMotionGain?: number
   performanceMode?: PerformanceMode
   privateEmotionMap?: AvatarPrivateEmotionMap
+  /** Small per-model silent opening used only while authored native idle is active. */
+  idleMouthOpen?: number
 }
 
 export function supportsExpression(profile: AvatarCapabilityProfile | undefined, name: string): boolean {
