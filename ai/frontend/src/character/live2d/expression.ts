@@ -1,0 +1,243 @@
+// Expression presets — maps Runtime emotion names to Cubism parameter targets
+// Supports both model-specific .exp3.json presets and hardcoded fallback presets.
+
+import { PARAM_IDS as P } from './core'
+
+export interface ExpressionPreset {
+  /** Target parameter values */
+  params: Array<{
+    id: string
+    value: number
+    blend?: 'add' | 'multiply' | 'overwrite'
+  }>
+  /** Part opacities to set */
+  parts?: Array<{ id: string; opacity: number }>
+}
+
+// Common Cubism parameter ranges:
+//   ParamMouthOpenY: 0 (closed) ~ 1 (open)
+//   ParamEyeLOpen/R: 0 (closed) ~ 1 (open)
+//   ParamBrowLY/R: -1 (down) ~ 0 (neutral) ~ 1 (up)
+//   ParamAngleX: -30 (left) ~ 30 (right)
+//   ParamAngleY: -30 (down) ~ 30 (up)
+//   ParamAngleZ: -30 (left tilt) ~ 30 (right tilt)
+//   ParamBodyAngleX: -30 ~ 30
+//   ParamCheek: 0 ~ 1
+
+// ── Built-in semantic presets (fallback when no model-specific expressions) ──
+
+const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
+  neutral: {
+    params: [
+      { id: P.BROW_L_Y, value: 0 },
+      { id: P.BROW_R_Y, value: 0 },
+      { id: P.EYE_L_OPEN, value: 1 },
+      { id: P.EYE_R_OPEN, value: 1 },
+      { id: P.MOUTH_OPEN_Y, value: 0 },
+      { id: P.ANGLE_X, value: 0 },
+      { id: P.ANGLE_Y, value: 0 },
+    ],
+  },
+
+  happy: {
+    params: [
+      { id: P.BROW_L_Y, value: 0.5 },
+      { id: P.BROW_R_Y, value: 0.5 },
+      { id: P.EYE_L_OPEN, value: 0.8 },
+      { id: P.EYE_R_OPEN, value: 0.8 },
+      { id: P.EYE_L_SMILE, value: 0.5 },
+      { id: P.EYE_R_SMILE, value: 0.5 },
+      { id: P.MOUTH_OPEN_Y, value: 0.2 },
+      { id: P.CHEEK, value: 0.3 },
+    ],
+  },
+
+  sad: {
+    params: [
+      { id: P.BROW_L_Y, value: -0.3 },
+      { id: P.BROW_R_Y, value: -0.3 },
+      { id: P.EYE_L_OPEN, value: 0.7 },
+      { id: P.EYE_R_OPEN, value: 0.7 },
+      { id: P.MOUTH_OPEN_Y, value: 0.1 },
+      { id: P.ANGLE_Y, value: -5 },
+    ],
+  },
+
+  angry: {
+    params: [
+      { id: P.BROW_L_Y, value: -0.5 },
+      { id: P.BROW_R_Y, value: -0.5 },
+      { id: P.BROW_L_X, value: -0.3 },
+      { id: P.BROW_R_X, value: 0.3 },
+      { id: P.EYE_L_OPEN, value: 0.9 },
+      { id: P.EYE_R_OPEN, value: 0.9 },
+      { id: P.MOUTH_OPEN_Y, value: 0.3 },
+      { id: P.ANGLE_X, value: -3 },
+    ],
+  },
+
+  surprised: {
+    params: [
+      { id: P.BROW_L_Y, value: 0.8 },
+      { id: P.BROW_R_Y, value: 0.8 },
+      { id: P.EYE_L_OPEN, value: 1.2 },
+      { id: P.EYE_R_OPEN, value: 1.2 },
+      { id: P.MOUTH_OPEN_Y, value: 0.5 },
+      { id: P.ANGLE_Y, value: 3 },
+    ],
+  },
+
+  shy: {
+    params: [
+      { id: P.BROW_L_Y, value: 0.2 },
+      { id: P.BROW_R_Y, value: 0.2 },
+      { id: P.EYE_L_OPEN, value: 0.6 },
+      { id: P.EYE_R_OPEN, value: 0.6 },
+      { id: P.MOUTH_OPEN_Y, value: 0.05 },
+      { id: P.CHEEK, value: 0.6 },
+      { id: P.ANGLE_X, value: -5 },
+      { id: P.ANGLE_Y, value: -5 },
+    ],
+  },
+
+  thinking: {
+    params: [
+      { id: P.BROW_L_Y, value: 0.1 },
+      { id: P.BROW_R_Y, value: 0.3 },
+      { id: P.EYE_L_OPEN, value: 0.6 },
+      { id: P.EYE_R_OPEN, value: 0.6 },
+      { id: P.ANGLE_X, value: 5 },
+      { id: P.ANGLE_Y, value: -3 },
+    ],
+  },
+
+  curious: {
+    params: [
+      { id: P.BROW_L_Y, value: 0.3 },
+      { id: P.BROW_R_Y, value: 0.3 },
+      { id: P.EYE_L_OPEN, value: 1.0 },
+      { id: P.EYE_R_OPEN, value: 1.0 },
+      { id: P.ANGLE_X, value: 3 },
+    ],
+  },
+
+  confused: {
+    params: [
+      { id: P.BROW_L_Y, value: -0.2 },
+      { id: P.BROW_R_Y, value: 0.3 },
+      { id: P.EYE_L_OPEN, value: 0.7 },
+      { id: P.EYE_R_OPEN, value: 0.7 },
+      { id: P.ANGLE_X, value: -8 },
+      { id: P.ANGLE_Z, value: -5 },
+    ],
+  },
+
+  smile: {
+    params: [
+      { id: P.BROW_L_Y, value: 0.3 },
+      { id: P.BROW_R_Y, value: 0.3 },
+      { id: P.EYE_L_SMILE, value: 0.7 },
+      { id: P.EYE_R_SMILE, value: 0.7 },
+      { id: P.EYE_L_OPEN, value: 0.7 },
+      { id: P.EYE_R_OPEN, value: 0.7 },
+      { id: P.MOUTH_OPEN_Y, value: 0.15 },
+      { id: P.CHEEK, value: 0.2 },
+    ],
+  },
+
+  excited: {
+    params: [
+      { id: P.BROW_L_Y, value: 0.6 },
+      { id: P.BROW_R_Y, value: 0.6 },
+      { id: P.EYE_L_OPEN, value: 1.1 },
+      { id: P.EYE_R_OPEN, value: 1.1 },
+      { id: P.MOUTH_OPEN_Y, value: 0.4 },
+      { id: P.ANGLE_Y, value: 5 },
+      { id: P.BODY_Y, value: 3 },
+    ],
+  },
+
+  tired: {
+    params: [
+      { id: P.BROW_L_Y, value: -0.1 },
+      { id: P.BROW_R_Y, value: -0.1 },
+      { id: P.EYE_L_OPEN, value: 0.4 },
+      { id: P.EYE_R_OPEN, value: 0.4 },
+      { id: P.MOUTH_OPEN_Y, value: 0.05 },
+      { id: P.ANGLE_Y, value: -5 },
+      { id: P.BODY_Y, value: -5 },
+    ],
+  },
+
+  sleepy: {
+    params: [
+      { id: P.BROW_L_Y, value: -0.1 },
+      { id: P.BROW_R_Y, value: -0.1 },
+      { id: P.EYE_L_OPEN, value: 0.2 },
+      { id: P.EYE_R_OPEN, value: 0.2 },
+      { id: P.MOUTH_OPEN_Y, value: 0 },
+      { id: P.ANGLE_X, value: -5 },
+      { id: P.ANGLE_Y, value: -8 },
+    ],
+  },
+
+  playful: {
+    params: [
+      { id: P.BROW_L_Y, value: 0.4 },
+      { id: P.BROW_R_Y, value: 0.6 },
+      { id: P.EYE_L_OPEN, value: 0.8 },
+      { id: P.EYE_R_OPEN, value: 0.9 },
+      { id: P.EYE_L_SMILE, value: 0.3 },
+      { id: P.EYE_R_SMILE, value: 0.4 },
+      { id: P.MOUTH_OPEN_Y, value: 0.3 },
+      { id: P.ANGLE_X, value: 5 },
+    ],
+  },
+}
+
+// ── Runtime presets (combined from hardcoded + model-specific) ──
+
+export const EXPRESSION_PRESETS: Record<string, ExpressionPreset> = { ...HARDCODED_PRESETS }
+
+/** Register model-specific expression presets loaded from .exp3.json files */
+export function registerModelPresets(presets: Record<string, ExpressionPreset>): void {
+  for (const [name, preset] of Object.entries(presets)) {
+    EXPRESSION_PRESETS[name] = preset
+  }
+}
+
+/** Reset to only hardcoded presets (called on model change) */
+export function resetPresets(): void {
+  for (const key of Object.keys(EXPRESSION_PRESETS)) {
+    delete EXPRESSION_PRESETS[key]
+  }
+  for (const [key, val] of Object.entries(HARDCODED_PRESETS)) {
+    EXPRESSION_PRESETS[key] = val
+  }
+}
+
+/** Get expression preset by name, falling back to neutral */
+export function getExpression(name: string): ExpressionPreset {
+  return EXPRESSION_PRESETS[name.toLowerCase()] ?? EXPRESSION_PRESETS.neutral
+}
+
+/**
+ * Resolve model-specific expression: first check model presets, then fall back
+ * to hardcoded semantic presets. Returns the expression name to actually apply.
+ */
+export function resolveExpression(
+  expressionName: string,
+  modelPresetNames: string[] = [],
+): string {
+  // 1. Direct hit on a model-specific expression
+  if (modelPresetNames.length > 0 && modelPresetNames.includes(expressionName)) {
+    return expressionName
+  }
+  // 2. Try semantic preset (hardcoded)
+  const lower = expressionName.toLowerCase()
+  if (HARDCODED_PRESETS[lower]) {
+    return lower
+  }
+  // 3. Try neutral
+  return 'neutral'
+}

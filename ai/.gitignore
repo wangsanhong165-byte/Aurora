@@ -9,7 +9,7 @@ __pycache__/
 .idea/
 *.pyc
 
-models/
+/models/
 *.safetensors
 *.safetensors.index.json
 logs/
@@ -24,5 +24,9 @@ config/.env
 
 olv_extracted/
 
-# Frontend build artifact (built from frontend-src/)
-frontend/
+# Frontend generated files (source and runtime assets are tracked)
+frontend/node_modules/
+frontend/dist/
+frontend/.pytest_cache/
+frontend/*.log
+frontend/*.pid
