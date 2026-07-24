@@ -110,14 +110,15 @@ class MemoryInterface(ABC):
 
 ```python
 class Live2DInterface(ABC):
-    async def set_expression(self, emotion: str) -> None: ...
+    async def set_expression(self, emotion: str, intensity: float = 0.5) -> None: ...
     async def set_gesture(self, gesture: str) -> None: ...
     async def speak(self, audio: bytes, expression: str) -> None: ...
 ```
 
 **Stability notes**:
 - Three methods covering visual expression, gesture, and audio playback
-- `expression` parameter is a string emotion name (from `EmotionState.VALID_EMOTIONS`)
+- `emotion` parameter is a string emotion name (from `EmotionState.VALID_EMOTIONS`)
+- `intensity` is 0.0–1.0, controls expression strength (passed to bridge but frontend currently ignores it)
 - `audio` is raw WAV bytes (from TTS provider)
 - **Provider implementations**: `BridgeLive2DProvider` (default, bridge relay), `OpenLLMVTuberProvider` (alternative, HTTP API), `MockLive2D` (test)
 - BridgeLive2DProvider also has `start()`/`shutdown()` lifecycle for audio player thread

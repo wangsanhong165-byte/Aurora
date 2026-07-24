@@ -17,6 +17,7 @@ from typing import Any
 
 import requests
 
+from app.config_manager.service_config import service_config
 from app.modules.tts.base import BaseTTS
 from app.modules.tts.factory import TTSFactory
 
@@ -106,7 +107,7 @@ class GSVIV2TTS(BaseTTS):
 
     def __init__(self, config: Any = None, **kwargs: Any) -> None:
         super().__init__()
-        self._url = os.environ.get("GSVI_URL", "http://127.0.0.1:8050").rstrip("/")
+        self._url = os.environ.get("GSVI_URL", service_config.url("gsvi")).rstrip("/")
         self._ref_audio = os.environ.get("GSVI_REF_AUDIO", "")
         self._text_lang = os.environ.get("GSVI_TEXT_LANG", "auto")
         self._prompt_lang = os.environ.get("GSVI_PROMPT_LANG", "en")

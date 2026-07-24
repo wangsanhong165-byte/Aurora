@@ -7,7 +7,6 @@ import os
 import struct
 import time
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,21 +23,24 @@ _char_name: str = "Monika"
 _live2d_config: dict[str, Any] | None = None
 _live2d_model: str = "Design_genius_White"
 
+# Avatar config (loaded from config/avatar.yaml)
+_avatar_config: dict[str, Any] | None = None
+_avatar_controller: Any = None
+_avatar_profiles: dict[str, Any] | None = None
+
 # UI mode tracking
 _ui_mode: str = "window"  # "window" or "pet"
 
-# Conversation history for LLM context
-_conversation_history: list[dict[str, str]] = []
-MAX_HISTORY = 5  # keep last 5 exchanges (user + assistant = 1 exchange)
+# Runtime manager (lazy init)
+_manager: Any = None
 
-# Pinned memories
-_PINNED_PATH: Path | None = None
-_PINNED_CACHE: str = ""
-
-# History management
-_HISTORIES_DIR: Path | None = None
-_CURRENT_HISTORY_UID: str = ""
-_HISTORY_INDEX_CACHE: dict[str, dict] = {}
+def _get_manager():
+    """Get RuntimeManager singleton."""
+    global _manager
+    if _manager is None:
+        from app.runtime.management import get_manager
+        _manager = get_manager()
+    return _manager
 
 
 def _load_live2d_config() -> dict[str, Any]:
@@ -72,6 +74,109 @@ def _load_live2d_config() -> dict[str, Any]:
     return _live2d_config or {}
 
 
+def _load_avatar_profiles() -> dict[str, Any]:
+    global _avatar_profiles
+    if _avatar_profiles is not None:
+        return _avatar_profiles
+    profiles_dir = BASE_DIR / "config" / "avatar_profiles"
+    _avatar_profiles = {}
+    if profiles_dir.exists():
+        for path in profiles_dir.glob("*.json"):
+            try:
+                profile = json.loads(path.read_text("utf-8"))
+                profile.setdefault("sequences", ["greet"])
+                if profile.get("model"):
+                    _avatar_profiles[profile["model"]] = profile
+            except Exception as exc:
+                logger.warning("[Live2D] Invalid avatar profile %s: %s", path.name, exc)
+    return _avatar_profiles
+
+
+def _load_motion_presets() -> dict[str, Any]:
+    presets: dict[str, Any] = {}
+    for path in (BASE_DIR / "config" / "motions").glob("*.json"):
+        try:
+            preset = json.loads(path.read_text("utf-8"))
+            presets[preset["name"].lower()] = preset
+        except Exception as exc:
+            logger.warning("[Live2D] Invalid motion preset %s: %s", path.name, exc)
+    return presets
+
+
+def _build_model_info() -> dict[str, Any]:
+    cfg = _load_live2d_config()
+    model_cfg = cfg.get(_live2d_model, {})
+    return {
+        "name": _live2d_model,
+        "url": f"/live2d-models/{_live2d_model}/{_live2d_model}.model3.json",
+        "emotionMap": model_cfg.get("emotion_map", {}),
+        "gestures": model_cfg.get("gestures", []),
+        "accessories": model_cfg.get("accessories", {}),
+        "behaviorConfig": {
+            name: {
+                "emotionMap": value.get("emotion_map", {}),
+                "behaviorMap": value.get("behavior_map", {}),
+                "personality": value.get("personality", {}),
+            }
+            for name, value in cfg.items()
+        },
+        "avatarProfiles": _load_avatar_profiles(),
+        "motionPresets": _load_motion_presets(),
+        "avatar": _load_avatar_config(),
+    }
+
+
+def _load_avatar_config() -> dict[str, Any]:
+    """Load avatar configuration from config/avatar.yaml."""
+    global _avatar_config
+    if _avatar_config is not None:
+        return _avatar_config
+
+    config_path = BASE_DIR / "config" / "avatar.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+            raw = yaml.safe_load(config_path.read_text("utf-8"))
+            _avatar_config = raw or {}
+            logger.info("[Avatar] Config loaded: %d models", len(_avatar_config))
+        except ImportError:
+            logger.warning("[Avatar] PyYAML not installed, trying JSON fallback")
+            try:
+                import json
+                # Try avatar.json as fallback
+                json_path = BASE_DIR / "config" / "avatar.json"
+                if json_path.exists():
+                    _avatar_config = json.loads(json_path.read_text("utf-8"))
+                    logger.info("[Avatar] Config loaded from JSON: %d models", len(_avatar_config or {}))
+                else:
+                    _avatar_config = {}
+                    logger.warning("[Avatar] No avatar config found")
+            except Exception as exc:
+                _avatar_config = {}
+                logger.error("[Avatar] Config load failed: %s", exc)
+        except Exception as exc:
+            _avatar_config = {}
+            logger.error("[Avatar] Config load failed: %s", exc)
+    else:
+        _avatar_config = {}
+        logger.warning("[Avatar] config/avatar.yaml not found")
+    return _avatar_config or {}
+
+
+def _get_avatar_controller() -> Any:
+    """Get or create the singleton AvatarController."""
+    global _avatar_controller
+    if _avatar_controller is None:
+        from app.avatar.controller import AvatarController
+        _avatar_controller = AvatarController()
+        cfg = _load_avatar_config()
+        _avatar_controller.configure(_live2d_model, cfg)
+        # Restore persisted state
+        _avatar_controller.restore_state()
+        logger.info("[Avatar] Controller initialized for model=%s", _live2d_model)
+    return _avatar_controller
+
+
 def _ensure_env():
     """Ensure .env is loaded exactly once."""
     if os.environ.get("_BRIDGE_ENV_LOADED"):
@@ -103,23 +208,13 @@ def _load_character():
 # ═══════════════════════════════════════════════
 
 def _init_pinned() -> None:
-    """Ensure pinned.md exists for the active character."""
-    global _PINNED_PATH, _PINNED_CACHE
-    cid = _char_card.get("id", "monika") if _char_card else "monika"
-    path = BASE_DIR / "config" / "characters" / cid / "pinned.md"
-    _PINNED_PATH = path
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("", encoding="utf-8")
-    _PINNED_CACHE = path.read_text("utf-8").strip()
+    """Ensure pinned.md exists for the active character. Delegates to RuntimeManager."""
+    _get_manager().ensure_pinned()
 
 
 def _load_pinned_memories() -> str:
-    """Return pinned memories content, refreshing cache if needed."""
-    global _PINNED_CACHE
-    if _PINNED_PATH and _PINNED_PATH.exists():
-        _PINNED_CACHE = _PINNED_PATH.read_text("utf-8").strip()
-    return _PINNED_CACHE
+    """Return pinned memories content. Delegates to RuntimeManager."""
+    return _get_manager().get_pinned()
 
 
 # ═══════════════════════════════════════════════
@@ -127,83 +222,19 @@ def _load_pinned_memories() -> str:
 # ═══════════════════════════════════════════════
 
 def _init_histories() -> None:
-    """Ensure histories directory and index exist."""
-    global _HISTORIES_DIR, _HISTORY_INDEX_CACHE
-    _HISTORIES_DIR = BASE_DIR / "data" / "memory" / "histories"
-    _HISTORIES_DIR.mkdir(parents=True, exist_ok=True)
-    index_path = _HISTORIES_DIR / "index.json"
-    if index_path.exists():
-        try:
-            _HISTORY_INDEX_CACHE = json.loads(index_path.read_text("utf-8"))
-        except Exception:
-            _HISTORY_INDEX_CACHE = {}
-    else:
-        _HISTORY_INDEX_CACHE = {}
-        index_path.write_text("{}", encoding="utf-8")
-
-
-def _save_history_index() -> None:
-    """Persist history index to disk."""
-    if _HISTORIES_DIR:
-        (_HISTORIES_DIR / "index.json").write_text(
-            json.dumps(_HISTORY_INDEX_CACHE, ensure_ascii=False), encoding="utf-8"
-        )
+    """Ensure histories directory and index exist. Delegates to RuntimeManager."""
+    _get_manager()._ensure_dirs()
 
 
 def _get_history_list() -> list[dict]:
-    """Return history list sorted by timestamp desc, for frontend."""
-    result = []
-    for uid, info in _HISTORY_INDEX_CACHE.items():
-        latest = info.get("latest_message")
-        result.append({
-            "uid": uid,
-            "latest_message": latest,
-            "timestamp": info.get("timestamp", ""),
-        })
-    result.sort(key=lambda x: x["timestamp"], reverse=True)
-    return result
+    """Return history list sorted by timestamp desc. Delegates to RuntimeManager."""
+    return _get_manager().get_history_list()
 
 
 def _load_history_messages(uid: str) -> list[dict]:
-    """Load messages for a given history uid."""
-    if not _HISTORIES_DIR:
-        return []
-    path = _HISTORIES_DIR / f"{uid}.json"
-    if not path.exists():
-        return []
-    try:
-        return json.loads(path.read_text("utf-8"))
-    except Exception:
-        return []
-
-
-def _save_to_current_history(user_text: str, assistant_text: str) -> None:
-    """Save an exchange to the current history."""
-    global _CURRENT_HISTORY_UID
-    if not _HISTORIES_DIR:
-        return
-    # Auto-create history if none exists
-    if not _CURRENT_HISTORY_UID:
-        _CURRENT_HISTORY_UID = f"hist_{uuid.uuid4().hex[:12]}"
-    uid = _CURRENT_HISTORY_UID
-
-    # Load existing messages
-    messages = _load_history_messages(uid)
-    now = datetime.now(timezone.utc).isoformat()
-    messages.append({"role": "user", "content": user_text, "timestamp": now})
-    messages.append({"role": "assistant", "content": assistant_text, "timestamp": now})
-
-    # Write
-    (_HISTORIES_DIR / f"{uid}.json").write_text(
-        json.dumps(messages, ensure_ascii=False), encoding="utf-8"
-    )
-
-    # Update index
-    _HISTORY_INDEX_CACHE[uid] = {
-        "timestamp": now,
-        "latest_message": {"content": assistant_text[:100], "role": "assistant", "timestamp": now},
-    }
-    _save_history_index()
+    """Load messages for a given history uid. Delegates to RuntimeManager."""
+    result = _get_manager().load_history(uid)
+    return result.get("messages", [])
 
 
 
@@ -273,6 +304,25 @@ def _elapsed_s(t0: float) -> str:
 _ws_clients: set[WebSocket] = set()
 
 
+async def _heartbeat_loop() -> None:
+    """Background task: periodically prune dead WebSocket relay clients."""
+    while True:
+        await asyncio.sleep(30)
+        if not _ws_clients:
+            continue
+        dead: list[WebSocket] = []
+        for ws in list(_ws_clients):
+            try:
+                # Send a lightweight heartbeat — raises if client is gone
+                await ws.send_text(json.dumps({"type": "heartbeat"}))
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            _ws_clients.discard(ws)
+        if dead:
+            logger.info("[WS Heartbeat] Pruned %d dead client(s) (remaining=%d)", len(dead), len(_ws_clients))
+
+
 class ExpressionCommand(BaseModel):
     """Request body for POST /live2d/expression"""
     expression: str
@@ -284,6 +334,32 @@ class GestureCommand(BaseModel):
     gesture: str
 
 
+class AccessoryToggle(BaseModel):
+    """Request body for POST /live2d/accessory"""
+    name: str
+    active: bool = True
+
+
+@app.post("/live2d/accessory")
+async def live2d_accessory(cmd: AccessoryToggle):
+    """Toggle a Live2D accessory on/off. Relays to all WS clients."""
+    payload = json.dumps({
+        "type": "accessory",
+        "name": cmd.name,
+        "active": cmd.active,
+    }, ensure_ascii=False)
+    dead: list[WebSocket] = []
+    for ws in _ws_clients:
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _ws_clients.discard(ws)
+    logger.info("Accessory '%s' %s relayed to %d client(s)", cmd.name, "ON" if cmd.active else "OFF", len(_ws_clients))
+    return {"ok": True}
+
+
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
     """WebSocket for Live2D control and real-time events."""
@@ -292,9 +368,16 @@ async def ws_endpoint(websocket: WebSocket):
     logger.info("WS client connected: %s (total=%d)", websocket.client, len(_ws_clients))
     try:
         while True:
-            data = await websocket.receive_text()
-            if data == "ping":
-                await websocket.send_text("pong")
+            try:
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=60)
+                if data == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+            except asyncio.TimeoutError:
+                # No message for 60s — probe the connection
+                try:
+                    await websocket.send_text("ping")
+                except Exception:
+                    break
     except WebSocketDisconnect:
         pass
     except Exception:
@@ -312,16 +395,9 @@ async def live2d_expression(cmd: ExpressionCommand):
     names to frontend expression names. Falls back to the first available
     expression if the emotion is not mapped.
     """
-    cfg = _load_live2d_config()
-    model_cfg = cfg.get(_live2d_model, {})
-    emotion_map = model_cfg.get("emotion_map", {})
-
-    # Translate through emotion_map; fall back to raw if not found
-    expression_name = emotion_map.get(cmd.expression, cmd.expression)
-
     payload = json.dumps({
         "type": "expression",
-        "name": expression_name,
+        "name": cmd.expression,
         "intensity": cmd.intensity,
     }, ensure_ascii=False)
     dead: list[WebSocket] = []
@@ -332,7 +408,7 @@ async def live2d_expression(cmd: ExpressionCommand):
             dead.append(ws)
     for ws in dead:
         _ws_clients.discard(ws)
-    logger.info("Expression '%s' → '%s' sent to %d client(s)", cmd.expression, expression_name, len(_ws_clients))
+    logger.info("Expression '%s' sent to %d client(s)", cmd.expression, len(_ws_clients))
     return {"ok": True, "sent": len(_ws_clients)}
 
 
@@ -360,18 +436,15 @@ class PinnedBody(BaseModel):
 
 @app.get("/api/pinned")
 async def get_pinned():
-    """Return current pinned memories."""
-    content = _load_pinned_memories()
+    """Return current pinned memories. Delegates to RuntimeManager."""
+    content = _get_manager().get_pinned()
     return {"content": content}
 
 
 @app.post("/api/pinned")
 async def set_pinned(body: PinnedBody):
-    """Update pinned memories."""
-    global _PINNED_CACHE
-    _PINNED_CACHE = body.content
-    if _PINNED_PATH:
-        _PINNED_PATH.write_text(body.content, encoding="utf-8")
+    """Update pinned memories. Delegates to RuntimeManager."""
+    _get_manager().set_pinned(body.content)
     logger.info("[Pinned] Updated (%d chars)", len(body.content))
     return {"ok": True}
 
@@ -380,12 +453,15 @@ async def set_pinned(body: PinnedBody):
 
 @app.get("/api/histories")
 async def api_histories():
-    return {"histories": _get_history_list()}
+    """Return history list. Delegates to RuntimeManager."""
+    return {"histories": _get_manager().get_history_list()}
 
 
 @app.get("/api/histories/{uid}")
 async def api_history_detail(uid: str):
-    return {"messages": _load_history_messages(uid)}
+    """Return history messages. Delegates to RuntimeManager."""
+    result = _get_manager().load_history(uid)
+    return {"messages": result.get("messages", [])}
 
 
 # ── Model Switcher Injection ────────────────────────────────────────────
@@ -405,6 +481,8 @@ def _get_model_switcher_script():
 async def _startup():
     """Initialize background services on server start."""
     logger.info("Server starting")
+    # Start background heartbeat to prune dead WS relay clients
+    asyncio.create_task(_heartbeat_loop())
 
 
 @app.get("/health")
@@ -431,6 +509,55 @@ async def list_models():
     return {"models": models}
 
 
+# ── V2 Protocol WebSocket ─────────────────────────────────────────────
+
+def _make_live2d_mapper():
+    """Create a mapper that translates semantic emotions to model-specific expressions.
+
+    Reads config/live2d_models.json and the active model to resolve:
+      emotion ("happy") → emotion_map → expression ("zs1")
+
+    The mapper is called by RuntimeEventHandler._character_update() when
+    producing CharacterUpdate messages for the V2 frontend.
+    """
+    cfg = _load_live2d_config()
+    model_cfg = cfg.get(_live2d_model, {})
+    emotion_map = model_cfg.get("emotion_map", {})
+
+    def mapper(intent: dict) -> dict:
+        emotion = intent.get("emotion", "neutral")
+        model_expr = emotion_map.get(emotion, "")
+        return {
+            "model_id": _live2d_model,
+            "expression": model_expr or emotion,
+            "motion": intent.get("gesture", ""),
+        }
+
+    return mapper
+
+
+@app.websocket("/v2/ws")
+async def v2_websocket_endpoint(websocket: WebSocket):
+    """V2 Runtime Protocol WebSocket.
+
+    Uses the new transport layer with formal protocol types.
+    Coexists with legacy /client-ws and /ws endpoints.
+    """
+    from app.transport.websocket.handler import RuntimeEventHandler
+    from app.transport.session import WebSocketSession
+
+    avatar_ctrl = _get_avatar_controller()
+    handler = RuntimeEventHandler(
+        live2d_mapper=_make_live2d_mapper(),
+        avatar_controller=avatar_ctrl,
+    )
+    session = WebSocketSession(websocket, handler.handle)
+    handler.send_message = session.send  # enable assistant_chunk streaming
+    handler.enable_proactive_push()       # receive proactive LLM responses
+    await session.run()
+    handler.disable_proactive_push()      # cleanup on disconnect
+
+
 # ── Set Model Endpoint ─────────────────────────────────────────────────
 
 @app.post("/api/set-model")
@@ -453,6 +580,51 @@ async def set_mode(data: dict):
     if mode in ("window", "pet"):
         _ui_mode = mode
         logger.info("[Mode] UI mode set to: %s", mode)
+    return {"status": "ok"}
+
+
+# ── Settings persistence ─────────────────────────────────────────────────
+
+SETTINGS_FILE = BASE_DIR / "data" / "settings.json"
+
+
+def _load_settings() -> dict:
+    """Load persisted settings from disk, returning defaults if missing."""
+    if SETTINGS_FILE.exists():
+        try:
+            return json.loads(SETTINGS_FILE.read_text("utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_settings(settings: dict) -> None:
+    """Atomically save settings to disk."""
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = SETTINGS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(settings, indent=2, ensure_ascii=False), "utf-8")
+    tmp.replace(SETTINGS_FILE)
+
+
+@app.get("/api/model-info")
+async def get_model_info():
+    """Return the same Live2D runtime configuration injected into production HTML."""
+    return _build_model_info()
+
+
+@app.get("/api/settings")
+async def get_settings():
+    """Return current persisted settings."""
+    return {"settings": _load_settings()}
+
+
+@app.post("/api/settings")
+async def save_settings(data: dict):
+    """Persist frontend settings."""
+    settings = data.get("settings", {})
+    if isinstance(settings, dict):
+        _save_settings(settings)
+        logger.info("[Settings] Saved %d keys", len(settings))
     return {"status": "ok"}
 
 
@@ -484,6 +656,18 @@ async def _send_init_conf(websocket: WebSocket) -> None:
     model_cfg = cfg.get(_live2d_model, {})
     emotion_map = model_cfg.get("emotion_map", {})
     gestures = model_cfg.get("gestures", [])
+    accessories = model_cfg.get("accessories", {})
+    behavior_config = {
+        name: {
+            "emotionMap": value.get("emotion_map", {}),
+            "behaviorMap": value.get("behavior_map", {}),
+            "personality": value.get("personality", {}),
+        }
+        for name, value in cfg.items()
+    }
+    avatar_cfg = _load_avatar_config()
+    avatar_profiles = _load_avatar_profiles()
+    motion_presets = _load_motion_presets()
     await _ws_send(websocket, {
         "type": "set-model-and-conf",
         "conf_name": "default",
@@ -494,6 +678,11 @@ async def _send_init_conf(websocket: WebSocket) -> None:
             "url": f"/live2d-models/{_live2d_model}/{_live2d_model}.model3.json",
             "emotionMap": emotion_map,
             "gestures": gestures,
+            "accessories": accessories,
+            "behaviorConfig": behavior_config,
+            "avatarProfiles": avatar_profiles,
+            "motionPresets": motion_presets,
+            "avatar": avatar_cfg,  # full per-model config
         },
     })
 
@@ -508,7 +697,7 @@ async def runtime_websocket_endpoint(websocket: WebSocket):
     Handles the same message types but uses the v2 Pipeline internally.
     """
     from app.bridge.runtime_handler import RuntimeWebSocketHandler
-    handler = RuntimeWebSocketHandler()
+    handler = RuntimeWebSocketHandler(avatar_controller=_get_avatar_controller())
 
     await websocket.accept()
     await _send_init_conf(websocket)
@@ -519,7 +708,15 @@ async def runtime_websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            raw = await websocket.receive_text()
+            try:
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=300)
+            except asyncio.TimeoutError:
+                # No message for 5 min — probe connection
+                try:
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+                except Exception:
+                    break
+                continue
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
@@ -552,7 +749,7 @@ async def runtime_websocket_endpoint(websocket: WebSocket):
                 await handler.handle_proactive(websocket, idle_time)
 
             elif msg_type == "ping":
-                await websocket.send_text("pong")
+                await websocket.send_text(json.dumps({"type": "pong"}))
 
             # All other message types (fetch-backgrounds, history, etc.)
             # fall through to the legacy handler for now
@@ -580,7 +777,7 @@ async def websocket_endpoint(websocket: WebSocket):
     All other message types (history, backgrounds, config) are handled inline.
     """
     from app.bridge.runtime_handler import RuntimeWebSocketHandler
-    handler = RuntimeWebSocketHandler()
+    handler = RuntimeWebSocketHandler(avatar_controller=_get_avatar_controller())
 
     logger.info("New WebSocket: %s", websocket.client)
     t0 = time.perf_counter()
@@ -592,7 +789,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
     try:
         while True:
-            raw = await websocket.receive_text()
+            try:
+                raw = await asyncio.wait_for(websocket.receive_text(), timeout=300)
+            except asyncio.TimeoutError:
+                # No message for 5 min — probe connection
+                try:
+                    await _ws_send(websocket, {"type": "pong"})
+                except Exception:
+                    break
+                continue
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
@@ -639,42 +844,32 @@ async def websocket_endpoint(websocket: WebSocket):
                 await _ws_send(websocket, {"type": "config-files", "configs": []})
 
             elif msg_type == "fetch-history-list":
-                histories = _get_history_list()
+                histories = _get_manager().get_history_list()
                 await _ws_send(websocket, {"type": "history-list", "histories": histories})
 
             elif msg_type == "fetch-and-set-history":
                 uid = str(msg.get("history_uid", ""))
                 if uid:
-                    global _CURRENT_HISTORY_UID, _conversation_history
-                    _CURRENT_HISTORY_UID = uid
-                    messages = _load_history_messages(uid)
-                    # Restore conversation history from loaded messages
-                    _conversation_history = []
-                    for m in messages:
-                        _conversation_history.append({"role": m["role"], "content": m["content"]})
+                    result = _get_manager().load_history(uid)
+                    messages = result.get("messages", [])
                     await _ws_send(websocket, {"type": "history-data", "messages": messages})
 
             elif msg_type == "create-new-history":
-                uid = f"hist_{uuid.uuid4().hex[:12]}"
-                _CURRENT_HISTORY_UID = uid
-                _conversation_history = []
-                now = datetime.now(timezone.utc).isoformat()
-                _HISTORY_INDEX_CACHE[uid] = {"timestamp": now, "latest_message": None}
-                _save_history_index()
+                result = _get_manager().create_history()
                 await _ws_send(websocket, {
                     "type": "new-history-created",
-                    "history_uid": uid,
+                    "history_uid": result.get("history_uid", ""),
                 })
 
             elif msg_type == "delete-history":
                 uid = str(msg.get("history_uid", ""))
-                if uid and _HISTORIES_DIR:
-                    path = _HISTORIES_DIR / f"{uid}.json"
-                    if path.exists():
-                        path.unlink()
-                    _HISTORY_INDEX_CACHE.pop(uid, None)
-                    _save_history_index()
-                    await _ws_send(websocket, {"type": "history-deleted", "success": True, "history_uid": uid})
+                if uid:
+                    result = _get_manager().delete_history(uid)
+                    await _ws_send(websocket, {
+                        "type": "history-deleted",
+                        "success": result.get("success", False),
+                        "history_uid": uid,
+                    })
                 else:
                     await _ws_send(websocket, {"type": "history-deleted", "success": False, "history_uid": uid})
 
@@ -682,28 +877,16 @@ async def websocket_endpoint(websocket: WebSocket):
                 char_id = str(msg.get("character_id", "")).strip()
                 if char_id:
                     logger.info("[Switch] Switching to character: %s", char_id)
-                    from app.runtime.runtime import runtime
-                    result = runtime.switch_character(char_id)
+                    result = _get_manager().switch_character(char_id)
                     if "error" in result:
                         logger.error("[Switch] Failed: %s", result["error"])
                     else:
-                        global _char_card, _char_name
-                        info = runtime.get_character_info()
-                        _char_card = info.get("card", {})
-                        _char_name = info.get("name", "AI")
+                        global _char_name
+                        _char_name = result.get("character_name", "AI")
                         logger.info("[Switch] Character switched to: %s", _char_name)
 
-                    _conversation_history = []
-                    _CURRENT_HISTORY_UID = ""
-                    # Re-init character-specific state
-                    _init_pinned()
-                    _init_histories()
-                    # Clear prompt template cache
-                    from app.prompts.loader import reload_cache as _reload_prompts
-                    _reload_prompts()
                     # Send new config to frontend
                     await _send_init_conf(websocket)
-                    logger.info("[Switch] Character switched to: %s", _char_name)
                     await _ws_send(websocket, {
                         "type": "character-switched",
                         "character_id": char_id,
@@ -714,9 +897,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
             elif msg_type == "reload-prompts":
                 """Hot-reload prompt template files without restart."""
-                from app.prompts.loader import reload_cache as _reload_prompts
-                _reload_prompts()
-                logger.info("[Prompts] Cache cleared (prompts will reload on next use)")
+                _get_manager().reload_prompts()
                 await _ws_send(websocket, {"type": "prompts-reloaded"})
 
             else:
@@ -733,6 +914,17 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 # ── Static File Serving ─────────────────────────────────────────────────
+
+PUBLIC_DIR = BASE_DIR / "frontend" / "public"
+
+@app.get("/libs/{rest:path}")
+async def serve_libs(rest: str):
+    """Serve frontend library files (Cubism Core JS, etc.)."""
+    target = PUBLIC_DIR / "libs" / rest
+    if target.exists() and target.is_file():
+        return FileResponse(str(target))
+    logger.warning("  -> 404: /libs/%s not found", rest)
+    return Response(status_code=404)
 
 @app.get("/live2d-models/{rest:path}")
 async def serve_live2d(rest: str):
@@ -766,6 +958,46 @@ async def serve_index():
     if index.exists():
         logger.info("  -> found (%d bytes)", index.stat().st_size)
         content = index.read_text(encoding="utf-8")
+
+        # Inject model config into HTML so Live2D renders immediately
+        # without waiting for WebSocket set-model-and-conf
+        cfg = _load_live2d_config()
+        model_cfg = cfg.get(_live2d_model, {})
+        emotion_map = model_cfg.get("emotion_map", {})
+        gestures = model_cfg.get("gestures", [])
+        accessories = model_cfg.get("accessories", {})
+        behavior_config = {
+            name: {
+                "emotionMap": value.get("emotion_map", {}),
+                "behaviorMap": value.get("behavior_map", {}),
+                "personality": value.get("personality", {}),
+            }
+            for name, value in cfg.items()
+        }
+        model_url = f"/live2d-models/{_live2d_model}/{_live2d_model}.model3.json"
+
+        # Inject avatar config for ALL models (not just active) so model
+        # switching picks up the correct component/expression/motion definitions.
+        avatar_cfg = _load_avatar_config()
+        avatar_profiles = _load_avatar_profiles()
+        motion_presets = _load_motion_presets()
+
+        inject = (
+            '<script>window.__INITIAL_MODEL_INFO__ = '
+            + json.dumps({
+                "name": _live2d_model,
+                "url": model_url,
+                "emotionMap": emotion_map,
+                "gestures": gestures,
+                "accessories": accessories,
+                "behaviorConfig": behavior_config,
+                "avatarProfiles": avatar_profiles,
+                "motionPresets": motion_presets,
+                "avatar": avatar_cfg,  # full per-model config
+            }, ensure_ascii=False)
+            + ';</script>'
+        )
+        content = content.replace("</head>", inject + "</head>") if "</head>" in content else content + inject
         return HTMLResponse(content, headers=cache_headers)
     logger.error("  -> NOT FOUND at %s", index)
     return {"error": "frontend not built"}
@@ -825,8 +1057,8 @@ if __name__ == "__main__":
     _load_character()
     _init_pinned()
     _init_histories()
-    logger.info("  Pinned memories: %s", _PINNED_PATH if _PINNED_PATH else "none")
-    logger.info("  Histories: %d entries", len(_HISTORY_INDEX_CACHE))
+    logger.info("  Pinned memories initialized")
+    logger.info("  Histories: %d entries", len(_get_manager().get_history_list()))
     logger.info("=" * 44)
 
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")

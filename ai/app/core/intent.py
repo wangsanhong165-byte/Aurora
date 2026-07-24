@@ -50,10 +50,16 @@ def compute_candidates(
     for c in candidates:
         if has_screen_change and c["type"] in ("curiosity",):
             c["score"] = round(min(c["score"] + 0.06, 0.75), 2)
-        if has_idle_timeout and c["type"] in ("presence_check",):
-            c["score"] = round(min(c["score"] + 0.08, 0.75), 2)
 
-    if not candidates and idle_sec > 360:
+    # ── idle_timeout fires when user idle exceeds threshold (default 300s, UI-configurable) ──
+    if has_idle_timeout:
+        candidates.append({
+            "type": "idle_greeting",
+            "topic": "user_availability",
+            "score": 0.42,  # Above the 0.30 threshold — reliably triggers
+        })
+
+    if not candidates and idle_sec > 120:
         candidates.append({
             "type": "follow_up",
             "topic": "check_in",

@@ -195,11 +195,11 @@ class TestDecisionStep(unittest.TestCase):
         self.assertEqual(ctx.error, "")
 
     def test_pipeline_includes_all_steps(self):
-        """The pipeline should have all 8 registered steps."""
+        """The pipeline should have all 9 registered steps."""
         step_names = [type(s).__name__ for s in self.runtime.pipeline._steps]
         expected = ["ASRStep", "CharacterStep", "MemoryRetrieveStep",
                     "DecisionStep", "EmotionStep", "MemorySaveStep",
-                    "TTSStep", "Live2DStep"]
+                    "TTSStep", "Live2DStep", "HistorySaveStep"]
         self.assertEqual(step_names, expected)
 
 

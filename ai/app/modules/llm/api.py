@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from openai import OpenAI
 
+from app.config_manager.service_config import service_config
 from app.core.config import UVICORN_LOG_CONFIG, DEFAULT_ENV_PATH, load_env_file
 from app.core.schemas import LLMRequest, LLMResponse
 
@@ -209,7 +210,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Cloud LLM adapter API service")
     parser.add_argument("--env-file", default=str(DEFAULT_ENV_PATH))
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8020)
+    parser.add_argument("--port", type=int,
+        default=os.environ.get("LLM_PORT", service_config.port("llm")))
     args = parser.parse_args()
 
     load_env_file(Path(args.env_file))

@@ -6,6 +6,7 @@ from app.runtime.steps.emotion_step import EmotionStep
 from app.runtime.steps.decision_step import DecisionStep, DefaultPlanner, Plan
 from app.runtime.steps.tts_step import TTSStep
 from app.runtime.steps.live2d_step import Live2DStep
+from app.runtime.steps.history_save_step import HistorySaveStep
 
 __all__ = [
     "ASRStep",
@@ -16,4 +17,5 @@ __all__ = [
     "DecisionStep", "DefaultPlanner", "Plan",
     "TTSStep",
     "Live2DStep",
+    "HistorySaveStep",
 ]

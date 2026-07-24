@@ -1,11 +1,13 @@
 import argparse
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
+from app.config_manager.service_config import service_config
 from app.core.config import UVICORN_LOG_CONFIG, DEFAULT_MEMORY_PATH
 from app.core.schemas import MemoryAppendRequest, MemoryRecentRequest, MemoryResponse
 
@@ -74,7 +76,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Short memory API service")
     parser.add_argument("--memory-path", type=Path, default=DEFAULT_MEMORY_PATH)
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8040)
+    parser.add_argument("--port", type=int,
+        default=os.environ.get("MEMORY_PORT", service_config.port("memory")))
     args = parser.parse_args()
     _memory_path = args.memory_path
 

@@ -89,13 +89,13 @@ class TestStartupRegression(unittest.TestCase):
         self.assertIsNotNone(self.runtime.providers.get("llm"))
         self.assertIsNotNone(self.runtime.providers.get("memory"))
 
-    def test_03_runtime_has_8_pipeline_steps(self):
-        """Pipeline contains all 8 expected steps."""
+    def test_03_runtime_has_9_pipeline_steps(self):
+        """Pipeline contains all 9 expected steps."""
         step_names = [type(s).__name__ for s in self.runtime.pipeline._steps]
         expected = [
             "ASRStep", "CharacterStep", "MemoryRetrieveStep",
             "DecisionStep", "EmotionStep", "MemorySaveStep",
-            "TTSStep", "Live2DStep",
+            "TTSStep", "Live2DStep", "HistorySaveStep",
         ]
         self.assertEqual(step_names, expected)
 

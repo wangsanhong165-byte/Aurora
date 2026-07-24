@@ -11,6 +11,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -28,10 +29,14 @@ class RuntimeWebSocketHandler:
 
     Provides the same frontend-facing message format as the legacy bridge
     handlers but uses the v2 Pipeline internally.
+
+    When an avatar_controller is provided, AI emotion/gesture decisions are
+    routed through the permission system before being sent to the frontend.
     """
 
-    def __init__(self, runtime=None):
+    def __init__(self, runtime=None, avatar_controller=None):
         self.runtime = runtime or default_runtime
+        self.avatar = avatar_controller
 
     async def _status_callback(self, websocket: WebSocket, msg: str) -> None:
         """Push a status update to the WebSocket client during pipeline execution."""
@@ -57,6 +62,9 @@ class RuntimeWebSocketHandler:
             await self._send(websocket, {"type": "error", "message": ctx.error})
             await self._send(websocket, {"type": "control", "text": "conversation-chain-end"})
             return
+
+        # Route emotion/gesture through AvatarController permission system
+        await self._route_emotion_through_avatar(websocket, ctx)
 
         reply = ctx.reply_text or ""
         if reply:
@@ -105,6 +113,9 @@ class RuntimeWebSocketHandler:
         if ctx.user_text:
             await self._send(websocket, {"type": "user-input-transcription", "text": ctx.user_text})
 
+        # Route emotion/gesture through AvatarController permission system
+        await self._route_emotion_through_avatar(websocket, ctx)
+
         reply = ctx.reply_text or ""
         if reply:
             await self._send(websocket, {"type": "full-text", "text": reply})
@@ -140,6 +151,9 @@ class RuntimeWebSocketHandler:
         if ctx.error or not ctx.reply_text:
             return
 
+        # Route emotion/gesture through AvatarController permission system
+        await self._route_emotion_through_avatar(websocket, ctx)
+
         await self._send(websocket, {"type": "control", "text": "conversation-chain-start"})
         await self._send(websocket, {"type": "full-text", "text": ctx.reply_text})
         if ctx.audio:
@@ -152,6 +166,48 @@ class RuntimeWebSocketHandler:
                 "actions": {"expressions": [ctx.emotion]},
             })
         await self._send(websocket, {"type": "control", "text": "conversation-chain-end"})
+
+    async def _route_emotion_through_avatar(self, websocket: WebSocket, ctx) -> None:
+        """Route AI emotion/gesture through AvatarController permission system.
+
+        Called after Runtime.dispatch() produces ctx.emotion / ctx.live2d_intent.
+        Sends character_update messages to the frontend for Live2D model control.
+        """
+        if not self.avatar:
+            return
+
+        emotion = ctx.emotion or "neutral"
+        intensity = float(getattr(ctx, "emotion_intensity", 0.5) or 0.5)
+        gesture = ""
+
+        if ctx.segments:
+            last = ctx.segments[-1]
+            if isinstance(last, dict):
+                gesture = last.get("gesture", "")
+        if gesture == "none":
+            gesture = ""
+
+        # Submit AI decisions to AvatarController (non-blocking)
+        from app.avatar.permission import PermissionLevel
+        from app.avatar.protocol import AvatarRequest, serialize_avatar_message
+
+        if emotion and emotion != "neutral":
+            request = AvatarRequest(
+                target="expression", name=emotion, action="enable",
+                source="ai", priority=PermissionLevel.AI, reason="pipeline_output",
+            )
+            responses = await self.avatar.handle_request(request)
+            for r in responses:
+                await self._send(websocket, r)
+
+        if gesture:
+            request = AvatarRequest(
+                target="motion", name=gesture, action="enable",
+                source="ai", priority=PermissionLevel.AI, reason="pipeline_output",
+            )
+            responses = await self.avatar.handle_request(request)
+            for r in responses:
+                await self._send(websocket, r)
 
     @staticmethod
     async def _send(websocket: WebSocket, msg: dict[str, Any]) -> None:

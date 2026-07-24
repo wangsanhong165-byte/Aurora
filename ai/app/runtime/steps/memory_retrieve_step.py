@@ -13,5 +13,11 @@ class MemoryRetrieveStep(Step):
         query = ctx.user_text or ctx.event.payload.get("text", "")
         if not query:
             return
+        # Inject character context for targeted retrieval
+        character = ctx.state.get("character")
+        if character is not None:
+            char_id = getattr(character, "id", "") or ""
+            if char_id and char_id not in query:
+                query = f"[character:{char_id}] {query}"
         memories = await self.memory.retrieve(query)
         ctx.state["memories"] = memories

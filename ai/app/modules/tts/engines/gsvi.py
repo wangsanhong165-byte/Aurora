@@ -7,6 +7,7 @@ from typing import Any
 
 import requests
 
+from app.config_manager.service_config import service_config
 from app.modules.tts.base import BaseTTS
 from app.modules.tts.factory import TTSFactory
 
@@ -39,7 +40,7 @@ def _map(raw: str, mapping: dict[str, str]) -> str:
 
 
 def synthesize(text: str) -> bytes:
-    gsvi_url = os.environ.get("GSVI_URL", "http://127.0.0.1:8050").rstrip("/")
+    gsvi_url = os.environ.get("GSVI_URL", service_config.url("gsvi")).rstrip("/")
     payload = {
         "model": os.environ.get("GSVI_MODEL", "GSVI-v4"),
         "input": text,

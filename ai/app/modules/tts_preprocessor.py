@@ -15,6 +15,8 @@ _RE_BRACKETS = re.compile(r"\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]")
 _RE_PARENS = re.compile(r"[（(][^（）()]*(?:[（(][^（）()]*[）)][^（）()]*)*[）)]")
 _RE_ASTERISKS = re.compile(r"\*[^*]*(?:\*[^*]*\*[^*]*)*\*")
 _RE_ANGLE = re.compile(r"<[^<>]*(?:<[^<>]*>[^<>]*)*>")
+_RE_THINK_BLOCK = re.compile(r"<think(?:ing)?\b[^>]*>.*?</think(?:ing)?\s*>", re.IGNORECASE | re.DOTALL)
+_RE_UNCLOSED_THINK = re.compile(r"<think(?:ing)?\b[^>]*>.*$", re.IGNORECASE | re.DOTALL)
 # Multiple consecutive spaces
 _RE_SPACES = re.compile(r" {2,}")
 
@@ -59,6 +61,33 @@ def clean_for_tts(text: str) -> str:
     result = strip_angle_brackets(result)
     result = _RE_SPACES.sub(" ", result)
     return result.strip()
+
+
+def split_reasoning(text: str) -> tuple[str, str]:
+    """Split model-private ``<think>`` content from the visible reply."""
+    if not text:
+        return "", ""
+    thoughts: list[str] = []
+
+    def collect(match: re.Match[str]) -> str:
+        body = re.sub(r"^<think(?:ing)?\b[^>]*>|</think(?:ing)?\s*>$", "", match.group(0), flags=re.IGNORECASE)
+        if body.strip():
+            thoughts.append(body.strip())
+        return ""
+
+    visible = _RE_THINK_BLOCK.sub(collect, text)
+    open_match = _RE_UNCLOSED_THINK.search(visible)
+    if open_match:
+        body = re.sub(r"^<think(?:ing)?\b[^>]*>", "", open_match.group(0), flags=re.IGNORECASE)
+        if body.strip():
+            thoughts.append(body.strip())
+        visible = visible[:open_match.start()]
+    return _RE_SPACES.sub(" ", visible).strip(), "\n\n".join(thoughts)
+
+
+def clean_for_display(text: str) -> str:
+    """Return only the final reply suitable for normal display and speech."""
+    return split_reasoning(text)[0]
 
 
 def extract_emotion_tags(text: str) -> list[str]:

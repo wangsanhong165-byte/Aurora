@@ -1,0 +1,50 @@
+{
+  "_meta": {
+    "description": "Service configuration — single source of truth for all service ports/hosts/URLs",
+    "priority": "env var > services.json > hard-coded default",
+    "last_updated": "2026-07-18"
+  },
+
+  "asr": {
+    "host": "127.0.0.1",
+    "port": 9101,
+    "health": "/health",
+    "timeout": 60
+  },
+  "llm": {
+    "host": "127.0.0.1",
+    "port": 9102,
+    "health": "/health",
+    "timeout": 30
+  },
+  "tts": {
+    "host": "127.0.0.1",
+    "port": 9103,
+    "health": "/health",
+    "timeout": 120
+  },
+  "memory": {
+    "host": "127.0.0.1",
+    "port": 9104,
+    "health": "/health",
+    "timeout": 15
+  },
+  "gsvi": {
+    "host": "127.0.0.1",
+    "port": 9105,
+    "health": "/ready",
+    "timeout": 180
+  },
+  "bridge": {
+    "host": "127.0.0.1",
+    "port": 9528,
+    "health": null,
+    "timeout": 15
+  },
+  "frontend": {
+    "host": "localhost",
+    "port": 5173,
+    "health": null,
+    "timeout": 15
+  }
+}

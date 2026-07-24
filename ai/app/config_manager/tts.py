@@ -6,6 +6,8 @@ from typing import Optional, Dict, ClassVar, Literal
 from pydantic import Field
 from .i18n import I18nMixin, Description
 
+from app.config_manager.service_config import service_config
+
 
 TTSEngineType = Literal["gsvi-v2pro", "qwen3-tts", "edge-tts", "pyttsx3", "cloud-tts"]
 
@@ -14,7 +16,7 @@ class GSVIV2Config(I18nMixin):
     """GPT-SoVITS v2Pro engine (nvidia50)."""
 
     engine: Literal["gsvi-v2pro"] = "gsvi-v2pro"
-    url: str = Field("http://127.0.0.1:8050", alias="url")
+    url: str = Field(default_factory=lambda: service_config.url("gsvi"), alias="url")
     ref_audio: str = Field("", alias="ref_audio")
     prompt_text: str = Field("", alias="prompt_text")
     text_lang: str = Field("zh", alias="text_lang")

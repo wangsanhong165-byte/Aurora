@@ -14,7 +14,7 @@ _SCREEN_ENABLED = os.environ.get("SCREEN_ENABLED", "1") not in {"0", "false", "n
 
 
 def screen_capture(region: str = "full") -> str:
-    """Capture current screen and return base64 PNG.
+    """Capture current screen and return full-size base64 PNG JSON.
 
     Args:
         region: "full" for entire screen or "active" for active window.
@@ -22,40 +22,34 @@ def screen_capture(region: str = "full") -> str:
     if not _SCREEN_ENABLED:
         return '{"error": "screen capture disabled (set SCREEN_ENABLED=1)"}'
     try:
-        import mss
-        import mss.tools
+        from PIL import ImageGrab
 
-        with mss.mss() as sct:
-            if region == "active":
-                # Get active window position (Windows only)
-                try:
-                    import ctypes
-                    from ctypes import wintypes
-                    user32 = ctypes.windll.user32
-                    hwnd = user32.GetForegroundWindow()
-                    rect = wintypes.RECT()
-                    ctypes.windll.dwmapi.DwmGetWindowAttribute(
-                        hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect)
-                    )
-                    monitor = {
-                        "left": rect.left,
-                        "top": rect.top,
-                        "width": rect.right - rect.left,
-                        "height": rect.bottom - rect.top,
-                    }
-                except Exception:
-                    monitor = sct.monitors[1]
-            else:
-                monitor = sct.monitors[1]
+        if region == "active":
+            try:
+                import ctypes
+                from ctypes import wintypes
+                user32 = ctypes.windll.user32
+                hwnd = user32.GetForegroundWindow()
+                rect = wintypes.RECT()
+                ctypes.windll.dwmapi.DwmGetWindowAttribute(
+                    hwnd, 9, ctypes.byref(rect), ctypes.sizeof(rect)
+                )
+                bbox = (rect.left, rect.top, rect.right, rect.bottom)
+                img = ImageGrab.grab(bbox)
+            except Exception:
+                img = ImageGrab.grab()
+        else:
+            img = ImageGrab.grab()
 
-            img = sct.grab(monitor)
-            png = mss.tools.to_png(img.rgb, img.size)
-            b64 = base64.b64encode(png).decode()
-            return '{"format":"png_base64","width":%d,"height":%d,"data":"%s"}' % (
-                img.width, img.height, b64[:200] + "..."
-            )
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+        w, h = img.size
+        return '{"type":"screenshot","format":"png_base64","width":%d,"height":%d,"data":"%s"}' % (
+            w, h, b64,
+        )
     except ImportError:
-        return '{"error": "mss not installed (pip install mss)"}'
+        return '{"error": "PIL not installed (pip install Pillow)"}'
     except Exception as exc:
         return '{"error": "%s"}' % str(exc)
 

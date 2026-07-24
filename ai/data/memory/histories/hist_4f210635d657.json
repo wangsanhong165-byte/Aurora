@@ -1,0 +1,1 @@
+[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "Hey. You're up late again, huh?"}, {"role": "user", "content": "你知道现在几点了？"}, {"role": "assistant", "content": "Hmm, it's 18:09 UTC right now — Thursday, July 23rd. What timezone are you in? I can check your local time if you tell me."}]

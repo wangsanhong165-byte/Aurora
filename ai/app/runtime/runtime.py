@@ -10,6 +10,8 @@ Usage:
 from __future__ import annotations
 
 import os
+import threading
+from typing import Any, Awaitable, Callable
 
 from app.core.initiative_queue import initiative_queue
 from app.core.intent import compute_candidates, decide_action
@@ -38,6 +40,10 @@ class CompanionRuntime:
         self._character_registry = None
         self._initiative_cooldown: float = 120.0
         self._last_initiative_time: float = 0.0
+        self._pending_initiatives: list[str] = []  # thread-safe: prompts from initiative thread
+        self._initiative_lock = threading.Lock()
+        self._initiative_task: Any = None  # asyncio Task for draining
+        self._proactive_handlers: list[Callable[[Context], Awaitable[None]]] = []
         self._setup_pipeline()
 
     def _setup_pipeline(self):
@@ -105,7 +111,7 @@ class CompanionRuntime:
         """
         from app.runtime.steps import (
             ASRStep, MemoryRetrieveStep, MemorySaveStep, CharacterStep,
-            EmotionStep, DecisionStep, TTSStep, Live2DStep,
+            EmotionStep, DecisionStep, TTSStep, Live2DStep, HistorySaveStep,
         )
 
         return [
@@ -116,7 +122,8 @@ class CompanionRuntime:
             EmotionStep(),
             MemorySaveStep(providers["memory"]),
             TTSStep(providers["tts"]),
-            Live2DStep(providers["live2d"]),
+            Live2DStep(),
+            HistorySaveStep(),
         ]
 
     def switch_character(self, character_id: str) -> dict:
@@ -188,9 +195,10 @@ class CompanionRuntime:
     def _init_initiative_system(self):
         """Initialize InitiativeChecker — background proactive speech monitor.
 
-        Drains the initiative queue periodically and dispatches
-        INITIATIVE_TRIGGERED events through the Runtime pipeline when
-        the agent should proactively speak.
+        The checker runs in a daemon thread and only produces events.
+        Dispatch happens via an asyncio Task on the main event loop,
+        avoiding the thread/event-loop mismatch that broke initiative
+        in earlier versions.
         """
         from app.services.initiative_checker import InitiativeChecker
 
@@ -205,13 +213,70 @@ class CompanionRuntime:
         # Also start the initiative buffer expiry thread
         from app.core.initiative_buffer import initiative_buffer
         initiative_buffer.start_expiry()
+        # Start the asyncio drain loop
+        self._initiative_task = self._start_initiative_drain()
+
+    def register_proactive_handler(
+        self, handler: Callable[[Context], Awaitable[None]]
+    ) -> None:
+        """Register an async handler that receives proactive LLM responses.
+
+        Called when the runtime generates a proactive reply (via InitiativeChecker).
+        Handlers typically send the response to a WebSocket client.
+        """
+        self._proactive_handlers.append(handler)
+
+    def unregister_proactive_handler(
+        self, handler: Callable[[Context], Awaitable[None]]
+    ) -> None:
+        """Remove a previously registered proactive handler."""
+        if handler in self._proactive_handlers:
+            self._proactive_handlers.remove(handler)
+
+    def _start_initiative_drain(self):
+        """Schedule the initiative drain loop on the current event loop.
+
+        Called during __init__ and also lazily retried on first dispatch()
+        in case the event loop wasn't running at import time.
+        """
+        import asyncio
+        try:
+            loop = asyncio.get_running_loop()
+            # Don't create duplicate tasks
+            if self._initiative_task is not None and not self._initiative_task.done():
+                return self._initiative_task
+            task = loop.create_task(self._drain_initiatives())
+            self._initiative_task = task
+            return task
+        except RuntimeError:
+            return None
+
+    async def _drain_initiatives(self):
+        """Periodically drain pending initiative prompts and dispatch them.
+
+        Runs as a background asyncio Task on the main event loop, so
+        dispatch() has a proper event loop context.
+        """
+        import asyncio
+        while True:
+            await asyncio.sleep(0.5)
+            with self._initiative_lock:
+                if not self._pending_initiatives:
+                    continue
+                prompts = self._pending_initiatives[:]
+                self._pending_initiatives.clear()
+            for prompt in prompts:
+                try:
+                    await self._dispatch_initiative(prompt)
+                except Exception:
+                    pass
 
     def _on_initiative(self, events: list) -> None:
-        """Called by InitiativeChecker when agent should proactively speak.
+        """Called by InitiativeChecker (in a daemon thread).
 
-        Uses the intent engine to decide what to say, builds an initiative
-        prompt, and dispatches it as an INITIATIVE_TRIGGERED event through
-        the Runtime pipeline.
+        Computes the initiative prompt and pushes it to a thread-safe
+        list. The actual dispatch happens on the main event loop via
+        _drain_initiatives() — no asyncio.run() in threads.
         """
         import time
 
@@ -240,7 +305,7 @@ class CompanionRuntime:
 
         # Step 3: detect character language for initiative prompt
         char = ctx.get("character") or core_state_store.get("character")
-        char_lang = "zh"  # default for characters whose primary name is Chinese
+        char_lang = "zh"
         if char is not None:
             name_dict = char.persona.name if hasattr(char, "persona") else {}
             if name_dict.get("ja"):
@@ -249,8 +314,20 @@ class CompanionRuntime:
                 char_lang = "en"
             elif name_dict.get("ko"):
                 char_lang = "ko"
-            # Only use non-zh if the character actually has that name configured
-            # (if the only name is zh, stays "zh" by default)
+
+        # Step 3b: get recent conversation summary for context
+        recent_summary = ""
+        if self.conversation is not None:
+            history = self.conversation.get_history(limit=4)
+            turns = []
+            for msg in history:
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if role and content and role != "system":
+                    label = "User" if role == "user" else "You"
+                    turns.append(f"{label}: {content[:200]}")
+            if turns:
+                recent_summary = "\n".join(turns[-4:])
 
         # Step 4: build structured initiative prompt from intent
         prompt = build_initiative_prompt(
@@ -258,19 +335,12 @@ class CompanionRuntime:
             activity=ctx.get("activity", ""),
             app_name=ctx.get("context", ""),
             language=char_lang,
+            recent_conversation=recent_summary,
         )
 
-        # Step 4: dispatch through Runtime pipeline
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(self._dispatch_initiative(prompt))
-            else:
-                loop.run_until_complete(self._dispatch_initiative(prompt))
-        except RuntimeError:
-            # No running loop — create one
-            asyncio.run(self._dispatch_initiative(prompt))
+        # Thread-safe: push to pending list, main-loop coroutine dispatches it
+        with self._initiative_lock:
+            self._pending_initiatives.append(prompt)
 
     async def _dispatch_initiative(self, prompt: str) -> None:
         """Create and dispatch an INITIATIVE_TRIGGERED event."""
@@ -287,6 +357,13 @@ class CompanionRuntime:
         # Track in initiative buffer for closure detection
         from app.core.initiative_buffer import initiative_buffer
         initiative_buffer.push(ctx.reply_text[:80], ctx.reply_text)
+
+        # Push to all registered frontend handlers
+        for handler in self._proactive_handlers:
+            try:
+                await handler(ctx)
+            except Exception:
+                pass
 
     def _init_screen_watcher(self):
         """Initialize ScreenWatcher — background active window monitor.
@@ -325,6 +402,9 @@ class CompanionRuntime:
         if self.initiative_checker is not None:
             self.initiative_checker.stop()
             self.initiative_checker = None
+        if self._initiative_task is not None:
+            self._initiative_task.cancel()
+            self._initiative_task = None
         if self.screen_watcher is not None:
             self.screen_watcher.stop()
             self.screen_watcher = None
@@ -363,12 +443,25 @@ class CompanionRuntime:
 
         Returns the Context after all pipeline steps have run.
         """
+        # Ensure drain loop is running (retry after import-time failure
+        # when no event loop was available).
+        if self._initiative_task is None or self._initiative_task.done():
+            self._start_initiative_drain()
+
         ctx = Context(event=event, status_callback=status_callback)
         ctx.state["event"] = event
 
         # Extract user_text from text events
         if event.type == EventType.TEXT_RECEIVED:
             ctx.user_text = event.payload.get("text", "")
+            # Reset idle timer — user actively interacted
+            if self.initiative_checker is not None:
+                self.initiative_checker.touch()
+
+        # Reset idle timer on speech events too
+        if event.type == EventType.SPEECH_RECEIVED:
+            if self.initiative_checker is not None:
+                self.initiative_checker.touch()
 
         # Initiative events carry a generated prompt as user_text
         if event.type == EventType.INITIATIVE_TRIGGERED:

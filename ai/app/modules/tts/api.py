@@ -12,12 +12,14 @@ Set TTS_ENGINE in .env to switch:
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import Response
 
+from app.config_manager.service_config import service_config
 from app.core.config import UVICORN_LOG_CONFIG, DEFAULT_ENV_PATH, DEFAULT_TTS_ENGINE, load_env_file
 from app.core.schemas import TTSRequest, TTSResponse
 from app.modules.tts.factory import TTSFactory
@@ -33,6 +35,12 @@ from app.modules.tts.engines import (  # noqa: F401
 
 
 app = FastAPI(title="Local TTS API", version="3.1.0")
+
+# Keep the selected engine alive for the lifetime of the service.  In
+# particular, GSVI keeps its selected remote weights warm after startup.
+_engines: dict[str, Any] = {}
+_engine_error = ""
+_engine_warm = False
 
 
 def _resolve_engine(request: TTSRequest | None = None) -> str:
@@ -72,20 +80,68 @@ def _get_tts_config(engine_name: str | None = None) -> Any:
     return _engine_configs.get(key)
 
 
+def _get_engine(engine_name: str | None = None) -> Any:
+    name = engine_name or DEFAULT_TTS_ENGINE
+    if name not in _engines:
+        _engines[name] = TTSFactory.create(name, config=_get_tts_config(name))
+    return _engines[name]
+
+
+@app.on_event("startup")
+async def _preload_default_engine() -> None:
+    """Create the default adapter before the first user request.
+
+    The launcher performs an actual synthesis after GSVI is healthy, which
+    loads the remote model weights onto the GPU.  This hook guarantees that
+    the same adapter instance is reused for that warm-up and later requests.
+    """
+    global _engine_error
+    try:
+        _get_engine(DEFAULT_TTS_ENGINE)
+        print(f"[TTS] Default engine ready: {DEFAULT_TTS_ENGINE}")
+    except Exception as exc:
+        _engine_error = str(exc)
+        print(f"[TTS] Engine preload failed: {exc}")
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
-        "ok": True,
+        "ok": not _engine_error,
         "module": "tts",
         "engine": DEFAULT_TTS_ENGINE,
+        "ready": DEFAULT_TTS_ENGINE in _engines,
+        "warm": _engine_warm,
+        "error": _engine_error or None,
         "available_engines": TTSFactory.list_engines(),
     }
+
+
+@app.post("/warmup")
+def warmup() -> dict[str, Any]:
+    """Run one short synthesis so remote GPU kernels and caches are hot."""
+    global _engine_warm, _engine_error
+    if _engine_warm:
+        return {"ok": True, "ready": True, "warm": True, "cached": True}
+    try:
+        engine = _get_engine(DEFAULT_TTS_ENGINE)
+        audio = engine.synthesize("嗯。")
+        if not audio:
+            raise RuntimeError("warmup synthesis returned no audio")
+        _engine_warm = True
+        _engine_error = ""
+        print(f"[TTS] Warmup complete: {DEFAULT_TTS_ENGINE} ({len(audio)} bytes)")
+        return {"ok": True, "ready": True, "warm": True, "bytes": len(audio)}
+    except Exception as exc:
+        _engine_error = str(exc)
+        print(f"[TTS] Warmup failed: {exc}")
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @app.post("/v1/tts/speak", response_model=TTSResponse)
 def speak_text(request: TTSRequest) -> TTSResponse:
     try:
-        engine = TTSFactory.create(_resolve_engine(request), config=_get_tts_config(_resolve_engine(request)))
+        engine = _get_engine(_resolve_engine(request))
         opts = request.model_dump(exclude={"text", "engine"}, exclude_none=True)
         return engine.speak(request.text, **opts)
     except Exception as exc:
@@ -93,13 +149,13 @@ def speak_text(request: TTSRequest) -> TTSResponse:
 
 
 @app.post("/v1/tts/synthesize")
-async def synthesize_endpoint(req: dict) -> Response:
+def synthesize_endpoint(req: dict = Body(...)) -> Response:
     """Return raw WAV bytes — used by HTTPTTSAdapter.synthesize()."""
     text = req.get("text", "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is empty")
     try:
-        engine = TTSFactory.create(config=_get_tts_config())
+        engine = _get_engine(_resolve_engine())
         opts = {k: v for k, v in req.items() if k != "text"}
         audio = engine.synthesize(text, **opts)
         return Response(content=audio, media_type="audio/wav")
@@ -116,7 +172,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Local TTS API service")
     parser.add_argument("--env-file", default=str(DEFAULT_ENV_PATH))
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8030)
+    parser.add_argument("--port", type=int,
+        default=os.environ.get("TTS_PORT", service_config.port("tts")))
     args = parser.parse_args()
     load_env_file(Path(args.env_file))
     import uvicorn

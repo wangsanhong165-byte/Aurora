@@ -89,6 +89,7 @@ class OpenAILLMProvider(LLMInterface):
         segments: list[dict] = []
         messages: list = result.get("_messages", list(original_messages))
         reply = content
+        reasoning = str(result.get("reasoning", "") or "")
 
         if content and content.strip().startswith("{"):
             try:
@@ -117,6 +118,7 @@ class OpenAILLMProvider(LLMInterface):
 
         return LLMResponse(
             reply=reply,
+            reasoning=reasoning,
             segments=segments,
             tool_calls=tool_calls,
             messages=messages,

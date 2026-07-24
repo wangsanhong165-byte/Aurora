@@ -138,7 +138,11 @@ class Pipeline:
 
     async def run(self, ctx: Context) -> Context:
         for step in self._steps:
-            await step.run(ctx)
+            try:
+                await step.run(ctx)
+            except Exception as e:
+                ctx.error = str(e)
+                break
             if ctx.error:
                 break
         return ctx

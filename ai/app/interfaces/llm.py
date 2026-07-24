@@ -33,6 +33,7 @@ class LLMResponse:
     """
 
     reply: str = ""
+    reasoning: str = ""
     segments: list[dict[str, Any]] = field(default_factory=list)
     tool_calls: list[ToolCall] = field(default_factory=list)
     messages: list[dict[str, Any]] = field(default_factory=list)

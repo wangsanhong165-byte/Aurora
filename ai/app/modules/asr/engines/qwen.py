@@ -53,6 +53,11 @@ class QwenASR(BaseASR):
             if isinstance(config, QwenASRConfig) and config.model_dir:
                 self._model_dir = Path(config.model_dir)
 
+    def preload(self) -> None:
+        """Load model weights onto the selected device without transcribing."""
+        model_dir = self._model_dir or Path(".") / "models" / "asr" / "Qwen3-ASR-1.7B"
+        _load(model_dir)
+
     def transcribe(self, audio_path: str, language: str | None = None) -> dict[str, Any]:
         model_dir = self._model_dir or Path(".") / "models" / "asr" / "Qwen3-ASR-1.7B"
         model = _load(model_dir)

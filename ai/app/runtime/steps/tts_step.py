@@ -1,6 +1,16 @@
+"""TTSStep — synthesize speech from reply text.
+
+Gracefully handles unavailable TTS service — logs and continues
+without crashing the pipeline.
+"""
+
+import logging
+
 from app.runtime.pipeline import Step
 from app.runtime.context import Context
 from app.interfaces.tts import TTSInterface
+
+logger = logging.getLogger("tts_step")
 
 
 def _extract_voice_kwargs(ctx: Context) -> dict:
@@ -44,6 +54,10 @@ class TTSStep(Step):
         if not ctx.reply_text:
             return
         voice_kwargs = _extract_voice_kwargs(ctx)
-        audio = await self.tts.synthesize(ctx.reply_text, **voice_kwargs)
-        if audio:
-            ctx.audio = audio
+        try:
+            audio = await self.tts.synthesize(ctx.reply_text, **voice_kwargs)
+            if audio:
+                ctx.audio = audio
+        except Exception as exc:
+            logger.warning("TTS unavailable (%s), continuing without audio", exc)
+            ctx.audio = b""

@@ -61,7 +61,7 @@
 
 **File**: `app/runtime/context.py`
 **Type**: `@dataclass`
-**Fields**: `event`, `state`, `user_text`, `reply_text`, `segments`, `emotion`, `emotion_intensity`, `audio`, `error`
+**Fields**: `event`, `state`, `user_text`, `reply_text`, `segments`, `emotion`, `emotion_intensity`, `audio`, `error`, `status_message`, `status_callback`
 
 **Stabilization history**:
 - Canonical pipeline data carrier — every Step reads/writes this
@@ -69,6 +69,8 @@
 - `reply_text` is guaranteed to be plain text after Phase 5.5
 - `segments` populated by DecisionStep from LLM response
 - `audio` populated by TTSStep from TTS provider
+- `status_message`: human-readable progress string set during pipeline execution
+- `status_callback`: optional async callable for streaming status updates (e.g., tool call progress)
 
 **Consumers**: All 8 Pipeline Steps, `RuntimeWebSocketHandler`, `CompanionRuntime.dispatch()`
 
@@ -85,7 +87,7 @@
 | Model | File | Purpose |
 |-------|------|---------|
 | `Persona` | `app/domain/character/persona.py` | Character card accessors (name, setting, tone_words, sprites, TTS refs) |
-| `EmotionState` | `app/domain/character/emotion.py` | 10 valid emotions with intensity tracking |
+| `EmotionState` | `app/domain/character/emotion.py` | 31+ valid emotions (10 core + 21 Monika-specific) with intensity tracking |
 | `RelationshipTracker` | `app/domain/character/relationship.py` | Affinity tracking |
 | `MoodTrend` | `app/domain/character/mood.py` | Mood trend analysis |
 | `GoalTracker` | `app/domain/character/goal.py` | Character goals |
@@ -103,7 +105,7 @@
 
 | Method | Purpose |
 |--------|---------|
-| `add_turn(role, content)` | Append a turn (auto-truncates to max_turns) |
+| `add_turn(role, content, **metadata)` | Append a turn with optional metadata (auto-truncates to max_turns) |
 | `get_history(limit)` | Return message dicts for LLM consumption |
 | `clear()` | Reset conversation |
 | `turn_count` | Total turns counter |
@@ -118,16 +120,22 @@
 **File**: `app/domain/character/emotion.py`
 **Type**: class
 
-**Valid emotions** (10 total):
-`neutral`, `happy`, `sad`, `angry`, `surprised`, `worried`, `shy`, `gentle`, `serious`, `jealous`
+**Valid emotions** (31+, expanded from 10 core):
+`neutral`, `happy`, `sad`, `angry`, `surprised`, `worried`, `shy`, `gentle`, `serious`, `jealous`,
+`playful`, `explaining`, `smile`, `cheerful`, `cold`, `stern`, `emphasizing`, `happy_closed`,
+`laughing`, `awkward_smile`, `awkward`, `nervous`, `shocked`, `sigh`, `giving_up`, `warm_smile`,
+`friendly`, `curious`, `cold_stare`, `meek`, `soft_smile`, `blank`, `thinking`, `lightly_surprised`,
+`confused`, `blissful`, `joyful`, `awkward_grin`, `embarrassed`, `startled`, `panicked`
 
 | Method | Purpose |
 |--------|---------|
 | `set(emotion, intensity)` | Change emotion (records transition in history) |
 | `current` | Current emotion name |
 | `intensity` | 0.0–1.0 |
+| `history` | List of emotion transitions (from → to → intensity) |
+| `to_dict()` | Serialize to dict |
 
-**Consumers**: `CharacterStep` (reads initial), `EmotionDecisionStep` (updates via segments), `EmotionStep` (keyword-based fallback)
+**Consumers**: `CharacterStep` (reads initial), `EmotionStep` (keyword-based fallback)
 
 ---
 

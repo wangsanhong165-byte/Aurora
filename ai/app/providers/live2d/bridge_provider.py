@@ -21,6 +21,7 @@ import logging
 import os
 from typing import Any
 
+from app.config_manager.service_config import service_config
 from app.interfaces.live2d import Live2DInterface
 from app.tts.player import AsyncAudioPlayer
 
@@ -28,7 +29,7 @@ logger = logging.getLogger("bridge.live2d_provider")
 
 _BRIDGE_URL: str = os.environ.get(
     "BRIDGE_URL",
-    f"http://127.0.0.1:{os.environ.get('BRIDGE_PORT', '9528')}",
+    service_config.url("bridge"),
 ).rstrip("/")
 
 
@@ -57,6 +58,8 @@ class BridgeLive2DProvider(Live2DInterface):
         self._player = player or AsyncAudioPlayer()
         self._skip_expression = skip_expression
         self._started = False
+        # Auto-start: player must be running before enqueue is called
+        self.start()
 
     # ── lifecycle (mirrors TurnRuntime.start/shutdown) ──────────────────
 

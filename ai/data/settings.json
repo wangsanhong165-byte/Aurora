@@ -1,0 +1,15 @@
+{
+  "alwaysOnTop": false,
+  "voiceInputEnabled": true,
+  "activeCharacterId": "monika",
+  "live2dModel": "ariu",
+  "windowMode": "pet",
+  "proactive": false,
+  "proactiveIdleTime": 30,
+  "live2dBlink": true,
+  "live2dBreathe": true,
+  "live2dLipSync": true,
+  "live2dHeadTracking": true,
+  "live2dExpression": true,
+  "live2dIdle": true
+}

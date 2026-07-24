@@ -18,7 +18,8 @@ from pathlib import Path
 
 from app.interfaces.tool import ToolInterface
 from app.legacy.tools.registry import ToolRegistry
-from app.legacy.tools.builtins.screen import _register_all as _register_builtins
+from app.legacy.tools.builtins.screen import _register_all as _register_screen
+from app.legacy.tools.builtins.current_time import _register_all as _register_time
 
 logger = logging.getLogger("legacy.tool_provider")
 
@@ -43,7 +44,8 @@ class LegacyToolProvider(ToolInterface):
 
     def __init__(self, mcp_config_path: str | None = None) -> None:
         self._registry = ToolRegistry()
-        _register_builtins(self._registry)
+        _register_screen(self._registry)
+        _register_time(self._registry)
 
         self._mcp_executor: object | None = None
         self._mcp_tool_names: set[str] = set()

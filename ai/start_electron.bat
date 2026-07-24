@@ -1,50 +1,49 @@
 @echo off
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
+set "ROOT=%~dp0"
+set "FRONTEND=%ROOT%frontend"
+set "PYTHON=C:\ProgramData\miniconda3\envs\qwen3-asr\python.exe"
+set ELECTRON_RUN_AS_NODE=
 
-:: Check if backend is already running
-netstat -an | find ":9528" | find "LISTENING" >nul 2>&1
-if errorlevel 1 goto start_backend
+echo ============================================
+echo   Monika Companion - Electron Desktop
+echo ============================================
+echo.
 
-echo Backend already running on port 9528, skipping...
-goto start_electron
-
-:start_backend
-:: Kill stale service processes
-for %%p in (8000 8020 8030 8040 8050) do (
-    for /f "tokens=5" %%a in ('netstat -ano ^| find ":%%p" ^| find "LISTENING"') do (
-        echo Killing old service on port %%p PID=%%a
-        taskkill /F /PID %%a >nul 2>&1
-    )
+echo [1/3] Stopping previous session...
+set "ELECTRON_PID_FILE=%ROOT%data\pids\electron.pid"
+if exist "%ELECTRON_PID_FILE%" (
+    set /p OLD_ELECTRON_PID=<"%ELECTRON_PID_FILE%"
+    if defined OLD_ELECTRON_PID taskkill /F /T /PID !OLD_ELECTRON_PID! >nul 2>&1
+    del /q "%ELECTRON_PID_FILE%" >nul 2>&1
+)
+"%PYTHON%" scripts\lifecycle.py stop >nul 2>&1
+for /f "usebackq" %%i in (`"%PYTHON%" scripts\_list_ports.py`) do (
+    for /f "tokens=5" %%a in ('netstat -ano ^| find ":%%i" ^| find "LISTENING" 2^>nul') do taskkill /F /PID %%a >nul 2>&1
 )
 timeout /t 1 /nobreak >nul
+echo     Done.
 
-echo Starting Monika Live2D + Electron Desktop Pet...
+echo [2/3] Building frontend...
+cd /d "%FRONTEND%"
+call node node_modules\vite\bin\vite.js build
+if errorlevel 1 (
+    echo [FAIL] Frontend build failed
+    pause
+    exit /b 1
+)
+echo     OK.
+
+echo [3/3] Launching Electron...
+cd /d "%FRONTEND%"
+set NODE_ENV=production
+node node_modules\electron\cli.js .
+
 echo.
-
-:: Start backend in a new window (minimized)
-start "Monika Backend" /min C:\ProgramData\miniconda3\envs\qwen3-asr\python.exe scripts\start_bridge.py --no-browser
-
-:: Wait for backend to be ready
-echo Waiting for backend on port 9528...
-:waitloop
+echo Companion closed. Cleaning up...
+cd /d "%ROOT%"
+"%PYTHON%" scripts\lifecycle.py stop >nul 2>&1
 timeout /t 1 /nobreak >nul
-netstat -an | find ":9528" | find "LISTENING" >nul 2>&1
-if errorlevel 1 goto waitloop
-
-echo Backend is ready!
-goto start_electron
-
-:start_electron
-echo Starting Electron app...
-echo.
-
-:: Launch Electron dev server
-cd /d "%~dp0frontend\src"
-start "Electron App" npm run dev
-
-echo.
-echo Electron window should open shortly.
-echo Do NOT open http://localhost:5173/ in browser - it's Electron internal only.
-echo.
-echo Close this window to stop.
+echo Done.
 pause

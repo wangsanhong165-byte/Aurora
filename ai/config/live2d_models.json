@@ -11,27 +11,62 @@
       "confused",
       "surprised",
       "blank",
-      "pout"
+      "pout",
+      "cry",
+      "worried",
+      "joyful",
+      "cheerful",
+      "playful",
+      "smile",
+      "laughing"
     ],
     "emotion_map": {
-      "neutral": "neutral",
-      "angry": "生气",
-      "sad": "流泪关",
-      "happy": "开心",
+      "neutral": "zs1",
+      "happy": "zs1",
+      "smile": "zs1",
+      "playful": "zs1",
+      "cheerful": "zs11",
+      "joyful": "zs11",
+      "laughing": "zs11",
       "love": "爱心",
-      "shy": "脸红",
-      "embarrassed": "脸红",
+      "angry": "生气",
+      "blank": "白眼",
       "confused": "圈圈",
       "surprised": "圈圈",
-      "blank": "白眼",
-      "pout": "嘟嘴"
+      "shy": "脸红",
+      "embarrassed": "脸红",
+      "pout": "嘟嘴",
+      "sad": "流泪关",
+      "cry": "哭哭",
+      "worried": "哭哭"
     },
     "gestures": [
       "wave",
       "tilt",
       "nod",
       "shrug"
-    ]
+    ],
+    "behavior_map": {
+      "greet": { "expression": "happy", "motion": "wave" },
+      "agree": { "motion": "nod" },
+      "disagree": { "motion": "tilt" },
+      "think": { "motion": "thinking", "suppressIdle": true },
+      "excited": { "expression": "joyful", "motion": "wave", "motionIntensityScale": 1.15 }
+    },
+    "personality": {
+      "expressionIntensityScale": 0.9,
+      "motionIntensityScale": 0.85,
+      "emotionBehavior": { "joyful": "excited", "cheerful": "excited" }
+    },
+    "accessories": {
+      "护目镜": "8",
+      "发箍": "10",
+      "猫耳朵": "12",
+      "wb": "13",
+      "中指": "14",
+      "中指2": "144",
+      "sy": "sy"
+    }
   },
   "youxiaomiao": {
     "prompt_emotions": [
@@ -75,5 +110,55 @@
       "surprised": "圈圈眼"
     },
     "gestures": []
+  },
+  "mao_zh-Hans": {
+    "prompt_emotions": [
+      "neutral",
+      "happy",
+      "angry",
+      "sad",
+      "surprised",
+      "shy",
+      "confused",
+      "blank",
+      "love",
+      "cry",
+      "worried",
+      "joyful",
+      "playful",
+      "smile",
+      "laughing",
+      "embarrassed",
+      "pout"
+    ],
+    "emotion_map": {
+      "neutral": "exp_01",
+      "smile": "exp_02",
+      "happy": "exp_02",
+      "playful": "exp_02",
+      "cheerful": "exp_02",
+      "blank": "exp_03",
+      "sleepy": "exp_03",
+      "surprised": "exp_04",
+      "joyful": "exp_02",
+      "laughing": "exp_02",
+      "love": "exp_02",
+      "sad": "exp_05",
+      "cry": "exp_05",
+      "crying": "exp_05",
+      "shy": "exp_06",
+      "embarrassed": "exp_06",
+      "blushing": "exp_06",
+      "worried": "exp_07",
+      "confused": "exp_07",
+      "angry": "exp_08",
+      "pout": "exp_08"
+    },
+    "gestures": [
+      "wave",
+      "tilt",
+      "nod",
+      "shrug"
+    ]
   }
 }

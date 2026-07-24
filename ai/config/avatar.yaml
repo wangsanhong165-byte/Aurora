@@ -1,0 +1,444 @@
+# Avatar Configuration — per-model component/expression/motion/parameter definitions
+# Used by AvatarController for unified Live2D character control.
+
+# ── Design_genius_White ─────────────────────────────────────────────────────
+
+Design_genius_White:
+  components:
+    goggles:
+      display_name: "护目镜"
+      expression: "护目镜"
+      param_ids: ["Param41"]
+      default_state: false
+      category: "headwear"
+    headband:
+      display_name: "发箍"
+      expression: "发箍"
+      param_ids: ["Param45"]
+      default_state: true
+      category: "headwear"
+    cat_ears:
+      display_name: "猫耳朵"
+      expression: "猫耳朵"
+      param_ids: ["Param47"]
+      default_state: false
+      category: "headwear"
+    wb:
+      display_name: "wb"
+      expression: "wb"
+      param_ids: ["Param90"]
+      default_state: false
+      category: "accessory"
+    middle_finger:
+      display_name: "中指"
+      expression: "中指"
+      param_ids: ["Param91", "Param92"]
+      default_state: false
+      category: "accessory"
+    middle_finger2:
+      display_name: "中指2"
+      expression: "中指2"
+      param_ids: ["Param92", "Param91"]
+      default_state: false
+      category: "accessory"
+    sy:
+      display_name: "sy"
+      expression: "sy"
+      param_ids: ["Param93"]
+      default_state: false
+      category: "accessory"
+
+  expressions:
+    neutral:
+      preset: "zs1"
+      params: {}
+      default: true
+    happy:
+      preset: "zs1"
+      params: {}
+      default: false
+    cheerful:
+      preset: "zs11"
+      params: {}
+      default: false
+    surprised:
+      preset: "圈圈"
+      params: {}
+      default: false
+    shy:
+      preset: "脸红"
+      params: {}
+      default: false
+    angry:
+      preset: "生气"
+      params: {}
+      default: false
+    sad:
+      preset: "流泪关"
+      params: {}
+      default: false
+    love:
+      preset: "爱心"
+      params: {}
+      default: false
+
+  motions:
+    idle:
+      priority: 10
+      duration_ms: 0
+      loop: true
+      category: "idle"
+      motion_file: "idle.motion3.json"
+    wave:
+      priority: 50
+      duration_ms: 800
+      loop: false
+      category: "gesture"
+    nod:
+      priority: 50
+      duration_ms: 500
+      loop: false
+      category: "gesture"
+    tilt:
+      priority: 50
+      duration_ms: 600
+      loop: false
+      category: "gesture"
+    shrug:
+      priority: 50
+      duration_ms: 700
+      loop: false
+      category: "gesture"
+
+  parameters:
+    lip_sync:
+      owns: ["ParamMouthOpenY"]
+      priority: 60
+    blink:
+      owns: ["ParamEyeLOpen", "ParamEyeROpen"]
+      priority: 40
+    breath:
+      owns: ["ParamBreath", "ParamBodyAngleX", "ParamBodyAngleY"]
+      priority: 20
+    expression:
+      owns: ["ParamBrowLY", "ParamBrowRY", "ParamMouthForm", "ParamCheek", "ParamEyeLSmile", "ParamEyeRSmile"]
+      priority: 30
+
+# ── youxiaomiao ─────────────────────────────────────────────────────────────
+
+youxiaomiao:
+  components:
+    watermark_off:
+      display_name: "去水印"
+      expression: "watermark_off"
+      param_ids: ["Param85"]
+      default_state: false
+      category: "effect"
+    starry_eyes:
+      display_name: "星星眼"
+      expression: "starry_eyes"
+      param_ids: ["Param107"]
+      default_state: false
+      category: "effect"
+    cry_effect:
+      display_name: "哭效果"
+      expression: "cry"
+      param_ids: ["Param113"]
+      default_state: false
+      category: "effect"
+    dizzy_effect:
+      display_name: "眩晕"
+      expression: "dizzy"
+      param_ids: ["Param135"]
+      default_state: false
+      category: "effect"
+
+  expressions:
+    neutral:
+      preset: "neutral"
+      params: {}
+      default: true
+    happy:
+      preset: "joy"
+      params: {}
+      default: false
+    angry:
+      preset: "anger"
+      params: {}
+      default: false
+    sad:
+      preset: "sadness"
+      params: {}
+      default: false
+    surprised:
+      preset: "surprise"
+      params: {}
+      default: false
+    shy:
+      preset: "blush"
+      params: {}
+      default: false
+
+  motions:
+    idle:
+      priority: 10
+      duration_ms: 0
+      loop: true
+      category: "idle"
+    talk:
+      priority: 30
+      duration_ms: 0
+      loop: true
+      category: "idle"
+    tap:
+      priority: 40
+      duration_ms: 500
+      loop: false
+      category: "gesture"
+    wave:
+      priority: 50
+      duration_ms: 800
+      loop: false
+      category: "gesture"
+    tilt:
+      priority: 50
+      duration_ms: 600
+      loop: false
+      category: "gesture"
+    nod:
+      priority: 50
+      duration_ms: 500
+      loop: false
+      category: "gesture"
+    shrug:
+      priority: 50
+      duration_ms: 700
+      loop: false
+      category: "gesture"
+
+  parameters:
+    lip_sync:
+      owns: ["ParamMouthOpenY"]
+      priority: 60
+    blink:
+      owns: ["ParamEyeLOpen", "ParamEyeROpen"]
+      priority: 40
+    breath:
+      owns: ["ParamBreath"]
+      priority: 20
+    expression:
+      owns: ["ParamBrowLY", "ParamBrowRY", "ParamMouthForm", "ParamCheek"]
+      priority: 30
+
+# ── mao_zh-Hans ─────────────────────────────────────────────────────────────
+
+mao_zh-Hans:
+  components:
+    hat:
+      display_name: "帽子"
+      part_ids: ["PartHat"]
+      default_state: true
+      category: "headwear"
+    wand_a:
+      display_name: "手杖A"
+      part_ids: ["PartWandA"]
+      default_state: true
+      category: "accessory"
+    wand_b:
+      display_name: "手杖B"
+      part_ids: ["PartWandB"]
+      default_state: true
+      category: "accessory"
+    face_ink:
+      display_name: "脸墨水"
+      param_ids: ["ParamFaceInkOn"]
+      default_state: false
+      category: "effect"
+    ink_drop:
+      display_name: "墨滴"
+      param_ids: ["ParamInkDropOn"]
+      default_state: false
+      category: "effect"
+    smoke:
+      display_name: "烟雾"
+      param_ids: ["ParamSmokeOn"]
+      default_state: false
+      category: "effect"
+    aura:
+      display_name: "光环"
+      param_ids: ["ParamAuraOn"]
+      default_state: false
+      category: "effect"
+    heart_light:
+      display_name: "光效"
+      param_ids: ["ParamHeartLightOn"]
+      default_state: false
+      category: "effect"
+
+  expressions:
+    neutral:
+      preset: "exp_01"
+      params: {}
+      default: true
+    happy:
+      preset: "exp_02"
+      params: {}
+      default: false
+    surprised:
+      preset: "exp_04"
+      params: {}
+      default: false
+    sad:
+      preset: "exp_05"
+      params: {}
+      default: false
+    shy:
+      preset: "exp_06"
+      params: {}
+      default: false
+    worried:
+      preset: "exp_07"
+      params: {}
+      default: false
+    angry:
+      preset: "exp_08"
+      params: {}
+      default: false
+
+  motions:
+    idle:
+      priority: 10
+      duration_ms: 0
+      loop: true
+      category: "idle"
+      motion_file: "motions/mtn_01.motion3.json"
+    mtn_02:
+      priority: 50
+      duration_ms: 1000
+      loop: false
+      category: "gesture"
+    mtn_03:
+      priority: 50
+      duration_ms: 1000
+      loop: false
+      category: "gesture"
+    mtn_04:
+      priority: 50
+      duration_ms: 1000
+      loop: false
+      category: "gesture"
+    special_01:
+      priority: 60
+      duration_ms: 2000
+      loop: false
+      category: "special"
+    special_02:
+      priority: 60
+      duration_ms: 2000
+      loop: false
+      category: "special"
+    special_03:
+      priority: 60
+      duration_ms: 2000
+      loop: false
+      category: "special"
+
+  parameters:
+    lip_sync:
+      owns: ["ParamMouthOpenY"]
+      priority: 60
+    blink:
+      owns: ["ParamEyeLOpen", "ParamEyeROpen"]
+      priority: 40
+    breath:
+      owns: ["ParamBreath"]
+      priority: 20
+    expression:
+      owns: ["ParamBrowLY", "ParamBrowRY", "ParamMouthForm", "ParamCheek"]
+      priority: 30
+
+# ── ariu ────────────────────────────────────────────────────────────────────
+
+ariu:
+  components:
+    hat:
+      display_name: "戴帽子"
+      expression: "戴帽子"
+      param_ids: ["mz"]
+      default_state: false
+      category: "headwear"
+    skirt:
+      display_name: "裙子"
+      expression: "裙子"
+      param_ids: ["quinzi"]
+      default_state: true
+      category: "clothing"
+    jk_bag:
+      display_name: "jk包"
+      expression: "jk包"
+      param_ids: ["jkbao"]
+      default_state: true
+      category: "accessory"
+    handle:
+      display_name: "手柄"
+      expression: "手柄"
+      param_ids: ["shoubing"]
+      default_state: false
+      category: "accessory"
+    coat:
+      display_name: "脱外套"
+      expression: "脱外套"
+      param_ids: ["waitao"]
+      default_state: false
+      category: "clothing"
+    ponytail_l:
+      display_name: "马尾L隐藏"
+      expression: "马尾L隐藏"
+      param_ids: ["maweil"]
+      default_state: false
+      category: "hairstyle"
+    ponytail_r:
+      display_name: "马尾R隐藏"
+      expression: "马尾R隐藏"
+      param_ids: ["maweir"]
+      default_state: false
+      category: "hairstyle"
+
+  expressions:
+    neutral:
+      preset: "neutral"
+      params: {}
+      default: true
+    love:
+      preset: "爱心眼"
+      params: {}
+      default: false
+    surprised:
+      preset: "圈圈眼"
+      params: {}
+      default: false
+    angry:
+      preset: "黑化"
+      params: {}
+      default: false
+
+  motions:
+    idle:
+      priority: 10
+      duration_ms: 0
+      loop: true
+      category: "idle"
+
+  parameters:
+    lip_sync:
+      owns: ["ParamMouthOpenY"]
+      priority: 60
+    blink:
+      owns: ["ParamEyeLOpen", "ParamEyeROpen"]
+      priority: 40
+    breath:
+      owns: ["ParamBreath"]
+      priority: 20
+    expression:
+      owns: ["ParamBrowLY", "ParamBrowRY", "ParamMouthForm", "ParamCheek"]
+      priority: 30

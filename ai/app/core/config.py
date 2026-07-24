@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+from app.config_manager.service_config import service_config
+
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 MODELS_DIR = BASE_DIR / "models"
@@ -10,10 +12,10 @@ DEFAULT_MODEL_DIR = MODELS_DIR / "asr" / "Qwen3-ASR-1.7B"
 DEFAULT_ENV_PATH = BASE_DIR / "config" / ".env"
 
 RECORDER_URL = os.environ.get("RECORDER_URL", "http://127.0.0.1:8010")
-ASR_URL = os.environ.get("ASR_URL", "http://127.0.0.1:8000")
-LLM_URL = os.environ.get("LLM_URL", "http://127.0.0.1:8020")
-TTS_URL = os.environ.get("TTS_URL", "http://127.0.0.1:8030")
-MEMORY_URL = os.environ.get("MEMORY_URL", "http://127.0.0.1:8040")
+ASR_URL = os.environ.get("ASR_URL", service_config.url("asr"))
+LLM_URL = os.environ.get("LLM_URL", service_config.url("llm"))
+TTS_URL = os.environ.get("TTS_URL", service_config.url("tts"))
+MEMORY_URL = os.environ.get("MEMORY_URL", service_config.url("memory"))
 
 # ---- GSVI v2Pro (nvidia50) ----
 GSVI_DIR = MODELS_DIR / "tts" / "GPT-SoVITS-v2pro-20250604-nvidia50"
@@ -21,7 +23,7 @@ GSVI_PYTHON = GSVI_DIR / "runtime" / "python.exe"
 GSVI_SCRIPT = GSVI_DIR / "api_v2.py"
 GSVI_HEADLESS = BASE_DIR / "scripts" / "run_gsvi_headless.py"
 GSVI_CONFIG_PATH = GSVI_DIR / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
-GSVI_URL = os.environ.get("GSVI_URL", "http://127.0.0.1:8050")
+GSVI_URL = os.environ.get("GSVI_URL", service_config.url("gsvi"))
 
 
 # ---- uvicorn log config (adds timestamps) ----

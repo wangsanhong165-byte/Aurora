@@ -1,17 +1,15 @@
-"""TTS providers — registered on import."""
-import os
+"""TTS providers — registered on import, env read lazily at first use.
 
+Provider constructors read TTS_URL / service_config at init time, so the
+.env file just needs to be loaded by the time the first synthesize() call
+happens — not at module import time.
+"""
 from app.interfaces.tts import TTSInterface, MockTTS
 from app.providers.registry import provider_registry
 
 provider_registry.register(TTSInterface, "mock", MockTTS)
 
-# Register real provider if TTS service URL is configured; "default" always resolves
-tts_url = os.environ.get("TTS_URL") or os.environ.get("TTS_PORT")
-if tts_url:
-    from app.providers.tts.http_adapter import HTTPTTSProvider
+from app.providers.tts.http_adapter import HTTPTTSProvider
 
-    provider_registry.register(TTSInterface, "http", HTTPTTSProvider)
-    provider_registry.register(TTSInterface, "default", HTTPTTSProvider)
-else:
-    provider_registry.register(TTSInterface, "default", MockTTS)
+provider_registry.register(TTSInterface, "http", HTTPTTSProvider)
+provider_registry.register(TTSInterface, "default", HTTPTTSProvider)
