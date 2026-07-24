@@ -25,6 +25,23 @@ export interface AvatarParameterBinding {
   smoothing?: number
 }
 
+export type PerformanceMode = 'legacy' | 'enhanced' | 'calibration'
+
+export interface AvatarPrivateEmotionBinding {
+  target: string
+  emotions?: string[]
+  valence?: number
+  arousal?: number
+  dominance?: number
+  threshold?: number
+  neutral?: number
+  scale?: number
+  min?: number
+  max?: number
+}
+
+export type AvatarPrivateEmotionMap = Record<string, AvatarPrivateEmotionBinding>
+
 export interface AvatarCapabilityProfile {
   model: string
   expressions: string[]
@@ -37,6 +54,10 @@ export interface AvatarCapabilityProfile {
   capabilities?: AvatarPerformanceCapabilities
   motionMap?: Record<string, string>
   expressionMap?: Record<string, string>
+  parameterGain?: number
+  bodyMotionGain?: number
+  performanceMode?: PerformanceMode
+  privateEmotionMap?: AvatarPrivateEmotionMap
 }
 
 export function supportsExpression(profile: AvatarCapabilityProfile | undefined, name: string): boolean {

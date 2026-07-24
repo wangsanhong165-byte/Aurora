@@ -560,6 +560,17 @@ def test_profile_inspector_reports_model_assets_and_binding_coverage():
     assert '"profile:inspect"' in package
 
 
+def test_profile_inspector_suggests_safe_semantic_native_motion_mappings():
+    inspector = (ROOT / "scripts/inspect_live2d_profiles.mjs").read_text(encoding="utf-8")
+
+    assert "nativeMotionCatalog" in inspector
+    assert "mappingSuggestions" in inspector
+    assert "Talk" in inspector
+    assert "speak" in inspector
+    assert "Tap" in inspector
+    assert "react" in inspector
+
+
 def test_profile_coverage_is_visible_in_read_only_diagnostics():
     adapter = (
         ROOT / "frontend/src/character/Live2DModelAdapter.ts"
@@ -606,3 +617,86 @@ def test_character_controller_consumes_unified_interaction_events():
     assert "character:interaction" in controllers
     assert "'character:interaction':" in events
     assert "eventBus.emit('character:interaction'" in view
+
+
+def test_last_mile_motion_style_fields_are_consumed_at_runtime():
+    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+    idle = (ROOT / "frontend/src/character/IdleBehaviorController.ts").read_text(encoding="utf-8")
+    resolver = (ROOT / "frontend/src/character/AvatarParameterResolver.ts").read_text(encoding="utf-8")
+
+    assert "setTiming(this._style.blinkRate, this._style.breathRate" in controllers
+    assert "microMotionGain" in idle
+    assert "gestureFrequency" in idle
+    assert "setOutputGains" in resolver
+    assert "parameterGain" in resolver
+    assert "bodyMotionGain" in resolver
+
+
+def test_vad_motion_layers_and_recovery_feed_the_shared_mixer():
+    micro = ROOT / "frontend/src/character/performance/VADMicroMotionController.ts"
+    gesture = ROOT / "frontend/src/character/performance/VADGestureController.ts"
+    assert micro.exists()
+    assert gesture.exists()
+    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+
+    assert "VADMicroMotionController" in controllers
+    assert "VADGestureController" in controllers
+    assert "vad_micro" in controllers
+    assert "vad_gesture" in controllers
+    assert "mode: 'add'" in controllers
+    assert "cooldown" in gesture.read_text(encoding="utf-8")
+
+
+def test_private_emotion_and_voice_waiting_layers_are_profile_driven():
+    profile = (ROOT / "frontend/src/character/AvatarCapabilityProfile.ts").read_text(encoding="utf-8")
+    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+    private_overlay = ROOT / "frontend/src/character/performance/PrivateEmotionOverlay.ts"
+    waiting = ROOT / "frontend/src/character/performance/VoiceWaitingMotionController.ts"
+
+    assert "privateEmotionMap" in profile
+    assert "performanceMode" in profile
+    assert private_overlay.exists()
+    assert waiting.exists()
+    assert "PrivateEmotionOverlay" in controllers
+    assert "VoiceWaitingMotionController" in controllers
+    assert "private_emotion" in controllers
+    assert "voice_waiting" in controllers
+    overlay = private_overlay.read_text(encoding="utf-8")
+    assert "emotionIntensity" in overlay
+    assert "active ? activation" in overlay
+    assert "this._currentEmotionIntensity = 0" in controllers
+
+
+def test_calibration_modes_and_runtime_controls_are_exposed():
+    events = (ROOT / "frontend/src/core/event-bus.ts").read_text(encoding="utf-8")
+    panel = (ROOT / "frontend/src/ui/DebugPanel.tsx").read_text(encoding="utf-8")
+    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+
+    assert "'character:performance_tuning':" in events
+    assert "legacy" in controllers
+    assert "enhanced" in controllers
+    assert "calibration" in controllers
+    assert "performance_tuning" in panel
+    assert "A/B" in panel
+    assert "character:native_catalog" in panel
+    assert "character:native_preview" in panel
+    assert "Native motions" in panel
+
+
+def test_legacy_mode_restores_original_micro_amplitudes_without_scaling_actions():
+    idle = (ROOT / "frontend/src/character/IdleBehaviorController.ts").read_text(encoding="utf-8")
+    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+
+    assert "setLegacy" in idle
+    for original_amplitude in ("headX: 0.18", "headY: 0.12", "eyeX: 0.18", "eyeY: 0.1"):
+        assert original_amplitude in idle
+    assert "? 0.38" not in controllers
+
+
+def test_logical_output_gain_is_bounded_by_safe_parameter_ranges():
+    resolver = (ROOT / "frontend/src/character/AvatarParameterResolver.ts").read_text(encoding="utf-8")
+
+    assert "clampLogical" in resolver
+    assert "clamp(value, -1, 1)" in resolver
+    assert "clamp(value, -30, 30)" in resolver
+    assert "clamp(value, -15, 15)" in resolver

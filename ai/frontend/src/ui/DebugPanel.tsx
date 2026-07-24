@@ -26,6 +26,10 @@ interface DiagState {
 
 export function DebugPanel() {
   const [visible, setVisible] = useState(false)
+  const [parameterGain, setParameterGain] = useState(1.45)
+  const [bodyMotionGain, setBodyMotionGain] = useState(1.25)
+  const [nativeMotions, setNativeMotions] = useState<string[]>([])
+  const [nativeExpressions, setNativeExpressions] = useState<string[]>([])
   const [state, setState] = useState<DiagState>({
     connected: false,
     wsProtocol: '—',
@@ -96,6 +100,11 @@ export function DebugPanel() {
       setState(s => ({ ...s, intent: JSON.stringify(intent) }))
     }))
 
+    unsubs.push(eventBus.on('character:native_catalog', ({ motions, expressions }) => {
+      setNativeMotions(motions)
+      setNativeExpressions(expressions)
+    }))
+
     // Read model from global
     try {
       const init = (window as any).__INITIAL_MODEL_INFO__
@@ -121,6 +130,10 @@ export function DebugPanel() {
 
   if (!visible) return null
 
+  const setPerformanceMode = (mode: 'legacy' | 'enhanced' | 'calibration') => {
+    eventBus.emit('character:performance_tuning', { mode })
+  }
+
   const rows: [string, string][] = [
     ['WS Connected', state.connected ? '● YES' : '○ NO'],
     ['WS Protocol', state.wsProtocol],
@@ -145,6 +158,52 @@ export function DebugPanel() {
         <div style={styles.header}>
           <span>🔍 Dev Diagnostics</span>
           <span style={styles.hint}>Ctrl+Shift+D to toggle</span>
+        </div>
+        <div style={styles.tuning}>
+          <span>Performance A/B</span>
+          <button onClick={() => setPerformanceMode('legacy')}>Legacy</button>
+          <button onClick={() => setPerformanceMode('enhanced')}>Enhanced</button>
+          <button onClick={() => setPerformanceMode('calibration')}>Calibration</button>
+          <button onClick={() => eventBus.emit('character:interaction', {
+            type: 'touch', region: 'head', intensity: 0.8,
+          })}>Test reaction</button>
+          <label>
+            Param {parameterGain.toFixed(2)}
+            <input type="range" min="0.8" max="2.2" step="0.05" value={parameterGain}
+              onChange={event => {
+                const value = Number(event.target.value)
+                setParameterGain(value)
+                eventBus.emit('character:performance_tuning', { parameterGain: value })
+              }} />
+          </label>
+          <label>
+            Body {bodyMotionGain.toFixed(2)}
+            <input type="range" min="0.6" max="2" step="0.05" value={bodyMotionGain}
+              onChange={event => {
+                const value = Number(event.target.value)
+                setBodyMotionGain(value)
+                eventBus.emit('character:performance_tuning', { bodyMotionGain: value })
+              }} />
+          </label>
+          {(['happy', 'sad', 'angry', 'surprised', 'shy'] as const).map(emotion => (
+            <button key={emotion} onClick={() => eventBus.emit('character:intent', {
+              emotion, behavior: 'react', intensity: 0.85,
+            })}>{emotion}</button>
+          ))}
+        </div>
+        <div style={styles.catalog}>
+          <span>Native motions</span>
+          {nativeMotions.map(name => (
+            <button key={name} onClick={() => eventBus.emit('character:native_preview', {
+              type: 'motion', name,
+            })}>{name}</button>
+          ))}
+          <span>Native expressions</span>
+          {nativeExpressions.map(name => (
+            <button key={name} onClick={() => eventBus.emit('character:native_preview', {
+              type: 'expression', name,
+            })}>{name}</button>
+          ))}
         </div>
         <table style={styles.table}>
           <tbody>
@@ -195,6 +254,22 @@ const styles: Record<string, React.CSSProperties> = {
   hint: {
     color: '#666',
     fontSize: '10px',
+  },
+  tuning: {
+    display: 'flex',
+    gap: 6,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    margin: '8px 0 12px',
+  },
+  catalog: {
+    display: 'flex',
+    gap: 6,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    marginBottom: 12,
+    maxHeight: 110,
+    overflowY: 'auto',
   },
   table: {
     width: '100%',

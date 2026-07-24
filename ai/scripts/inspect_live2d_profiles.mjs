@@ -40,8 +40,21 @@ for (const file of files.filter(name => name.endsWith('.json'))) {
     : []
   const validBindings = bindings.length - missingBindings.length
   const nativeExpressions = (refs.Expressions ?? []).map(item => item.Name)
-  const nativeMotions = Object.entries(refs.Motions ?? {}).flatMap(([group, items]) =>
-    items.map((item, index) => item.Name ?? `${group}:${index}`),
+  const nativeMotionCatalog = Object.entries(refs.Motions ?? {}).flatMap(([group, items]) =>
+    items.map((item, index) => ({
+      group,
+      index,
+      name: item.Name ?? `${group}:${index}`,
+      file: item.File,
+      basename: item.File ? path.basename(item.File).replace(/\.motion3\.json$/i, '') : undefined,
+    })),
+  )
+  const nativeMotions = nativeMotionCatalog.map(item => item.name)
+  const semanticGroups = { Talk: 'speak', Tap: 'react', Idle: 'idle' }
+  const mappingSuggestions = Object.fromEntries(
+    Object.entries(semanticGroups)
+      .filter(([group]) => nativeMotionCatalog.some(item => item.group.toLowerCase() === group.toLowerCase()))
+      .map(([group, semantic]) => [semantic, group]),
   )
 
   reports.push({
@@ -53,6 +66,8 @@ for (const file of files.filter(name => name.endsWith('.json'))) {
     missingBindings,
     nativeExpressions,
     nativeMotions,
+    nativeMotionCatalog,
+    mappingSuggestions,
     assets: {
       DisplayInfo: Boolean(refs.DisplayInfo),
       Expressions: nativeExpressions.length,

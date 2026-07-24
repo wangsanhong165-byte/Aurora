@@ -6,6 +6,9 @@ export interface EventMap {
   'character:emotion': { emotion: string; intensity: number }
   'character:intent': { emotion: string; behavior: string; intensity: number }
   'character:interaction': { type: 'touch' | 'drag' | 'inactivity' | 'time' | 'presence' | 'scene'; phase?: 'start' | 'move' | 'end'; region?: 'head' | 'body' | 'unknown'; value?: string; intensity?: number }
+  'character:performance_tuning': { mode?: 'legacy' | 'enhanced' | 'calibration'; parameterGain?: number; bodyMotionGain?: number }
+  'character:native_catalog': { motions: string[]; expressions: string[] }
+  'character:native_preview': { type: 'motion' | 'expression'; name: string }
   'character:activity': { activity: string }
   'character:performance': { emotion: string; behavior: string; expression: string; motion: string; profile: string; transitionMs: number; holdMs: number; motionProbability: number; modifiers: Record<string, unknown> }
   'character:performance_debug': {
@@ -24,6 +27,7 @@ export interface EventMap {
     lipSync: Record<string, number | boolean>
     pose: Array<{ activeId: string; members: string[] }>
     profileCoverage: { bindingCount: number; resolvedCount: number; coverage: number; missingBindings: Array<{ logical: string; target: string }> }
+    performanceTuning: { mode: 'legacy' | 'enhanced' | 'calibration'; parameterGain: number; bodyMotionGain: number }
     contestedParameters: Record<string, Array<{ source: string; value: number; priority: number }>>
   }
   'audio:play': { audio: string; format: string; volumeArray?: number[] }

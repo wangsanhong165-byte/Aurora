@@ -29,13 +29,14 @@ export class IdleBehaviorController {
   private _bodySway = new BodySwayController(deriveMotionSeed(this._style.seed, 5))
   private _actions = new IdleActionScheduler(
     deriveMotionSeed(this._style.seed, 6),
-    this._style.spontaneity,
+      this._style.spontaneity * this._style.gestureFrequency,
     this._style.idleActionGain,
     this._style.avoidRepeatWindow,
   )
   private _personality: CharacterPerformancePersonality | undefined
   private _capabilities: AvatarPerformanceCapabilities | undefined
   private _vad: VADVector = { valence: 0, arousal: 0, dominance: 0 }
+  private _legacy = false
   private _snapshot: IdleBehaviorSnapshot = {
     headX: 0, headY: 0, headZ: 0, eyeX: 0, eyeY: 0,
     bodyX: 0, bodyY: 0, eyeClose: 0,
@@ -59,7 +60,7 @@ export class IdleBehaviorController {
     this._capabilities = capabilities
     this._actions = new IdleActionScheduler(
       deriveMotionSeed(this._style.seed, 6),
-      this._style.spontaneity,
+      this._style.spontaneity * this._style.gestureFrequency,
       this._style.idleActionGain,
       this._style.avoidRepeatWindow,
     )
@@ -68,6 +69,17 @@ export class IdleBehaviorController {
 
   setVAD(vad: VADVector): void {
     this._vad = { ...vad }
+  }
+
+  setLegacy(enabled: boolean): void {
+    if (this._legacy === enabled) return
+    this._legacy = enabled
+    this._actions = new IdleActionScheduler(
+      deriveMotionSeed(this._style.seed, 6),
+      this._style.spontaneity * (enabled ? 1 : this._style.gestureFrequency),
+      this._style.idleActionGain,
+      this._style.avoidRepeatWindow,
+    )
   }
 
   update(dt: number, allowed: boolean): void {
@@ -86,12 +98,16 @@ export class IdleBehaviorController {
       vad: this._vad,
     })
     const actionState = this._actions.getState()
+    const microGain = this._legacy ? 1 : this._style.microMotionGain
+    const amplitude = this._legacy
+      ? { headX: 0.18, headY: 0.12, headZ: 0.12, eyeX: 0.18, eyeY: 0.1 }
+      : { headX: 0.48, headY: 0.34, headZ: 0.3, eyeX: 0.24, eyeY: 0.14 }
     this._snapshot = {
-      headX: (sway.headX + action.headX + Math.sin(seconds * 0.29 + this._phase) * 0.18) * weight,
-      headY: (sway.headY + action.headY + Math.sin(seconds * 0.21 + 1.2) * 0.12) * weight,
-      headZ: (sway.headZ + action.headZ + Math.sin(seconds * 0.17 + 0.4) * 0.12) * weight,
-      eyeX: (Math.sin(seconds * 0.13 + 2.1) * 0.18 + action.eyeX) * weight,
-      eyeY: (Math.sin(seconds * 0.09 + 0.8) * 0.1 + action.eyeY) * weight,
+      headX: (sway.headX + action.headX + Math.sin(seconds * 0.29 + this._phase) * amplitude.headX * microGain) * weight,
+      headY: (sway.headY + action.headY + Math.sin(seconds * 0.21 + 1.2) * amplitude.headY * microGain) * weight,
+      headZ: (sway.headZ + action.headZ + Math.sin(seconds * 0.17 + 0.4) * amplitude.headZ * microGain) * weight,
+      eyeX: (Math.sin(seconds * 0.13 + 2.1) * amplitude.eyeX * microGain + action.eyeX) * weight,
+      eyeY: (Math.sin(seconds * 0.09 + 0.8) * amplitude.eyeY * microGain + action.eyeY) * weight,
       bodyX: (sway.bodyX + action.bodyX) * weight,
       bodyY: (sway.bodyY + action.bodyY) * weight,
       eyeClose: action.eyeClose * weight,

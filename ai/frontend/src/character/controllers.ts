@@ -17,6 +17,11 @@ import { SpeechPerformanceController } from './performance/SpeechPerformanceCont
 import { resolveMotionStyle } from './performance/MotionStyle'
 import { VADState } from './performance/VADState'
 import { facsFromVAD } from './performance/FACSState'
+import { VADMicroMotionController } from './performance/VADMicroMotionController'
+import { VADGestureController } from './performance/VADGestureController'
+import { PrivateEmotionOverlay } from './performance/PrivateEmotionOverlay'
+import { VoiceWaitingMotionController } from './performance/VoiceWaitingMotionController'
+import type { PerformanceMode } from './AvatarCapabilityProfile'
 import type { NativeMotionPlayer } from './live2d/NativeMotionPlayer'
 import type { Live2DModelAdapter } from './Live2DModelAdapter'
 import { InteractionPerformancePolicy } from './performance/InteractionPerformancePolicy'
@@ -189,13 +194,24 @@ export class IdleController {
   private static readonly BASE_BLINK_INTERVAL = 2.8
   private static readonly BLINK_VARIATION = 0.6
   private static readonly BREATH_FREQ = 1.7
+  private blinkRate = 1
+  private breathRate = 1
+  private breathVariance = 0.42
+
+  setTiming(blinkRate = 1, breathRate = 1, breathVariance = 0.42): void {
+    this.blinkRate = Math.max(0.25, Math.min(2.5, blinkRate))
+    this.breathRate = Math.max(0.5, Math.min(1.8, breathRate))
+    this.breathVariance = Math.max(0, Math.min(1, breathVariance))
+  }
 
   private _breathBodyX = 0
   private _breathBodyY = 0
 
   attach(): void {
     this.time = 0
-    this.nextBlink = IdleController.BASE_BLINK_INTERVAL * (0.5 + Math.random() * IdleController.BLINK_VARIATION)
+    this.nextBlink = IdleController.BASE_BLINK_INTERVAL
+      * (0.72 + Math.random() * IdleController.BLINK_VARIATION * this.breathVariance)
+      / this.blinkRate
   }
 
   detach(): void {
@@ -241,7 +257,7 @@ export class IdleController {
       * (1 - Math.exp(-dt * 3.5))
 
     if (this.breathing || this.breathWeight > 0.01) {
-      const breath = Math.sin(this.time * IdleController.BREATH_FREQ)
+      const breath = Math.sin(this.time * IdleController.BREATH_FREQ * this.breathRate)
       this._breathBodyX = breath * 0.7 * this.breathWeight
       this._breathBodyY = breath * 1.2 * this.breathWeight
       this._blinkBreathValue = 0.5 + breath * 0.18 * this.breathWeight
@@ -266,7 +282,9 @@ export class IdleController {
         if (this._eyeOpenValue >= 1) {
           this.blinkState = 0
           this._eyeOpenValue = 1
-          this.nextBlink = this.time + IdleController.BASE_BLINK_INTERVAL * (0.5 + Math.random() * IdleController.BLINK_VARIATION)
+          this.nextBlink = this.time + IdleController.BASE_BLINK_INTERVAL
+            * (0.72 + Math.random() * IdleController.BLINK_VARIATION * this.breathVariance)
+            / this.blinkRate
         }
       }
     }
@@ -304,6 +322,10 @@ export class CharacterController {
   speechPerformance = new SpeechPerformanceController()
   vad = new VADState()
   interactionPolicy = new InteractionPerformancePolicy()
+  vadMicroMotion = new VADMicroMotionController()
+  vadGesture = new VADGestureController()
+  privateEmotion = new PrivateEmotionOverlay()
+  voiceWaiting = new VoiceWaitingMotionController()
 
   // References set externally by the animation loop
   private adapter: Live2DModelAdapter | null = null
@@ -317,6 +339,14 @@ export class CharacterController {
   private headTrackingEnabled = true
   private _modelName = 'Design_genius_White'
   private _profile: AvatarCapabilityProfile | undefined
+  private _style = resolveMotionStyle()
+  private _performanceMode: PerformanceMode = 'enhanced'
+  private _parameterGain = 1.45
+  private _bodyMotionGain = 1.25
+  private _currentEmotion = 'neutral'
+  private _currentEmotionIntensity = 0
+  private _nativeExpressions: string[] = []
+  private _nativeMotions: string[] = []
   private _performanceResetTimer: ReturnType<typeof setTimeout> | null = null
 
   // Mouse tracking state
@@ -348,7 +378,14 @@ export class CharacterController {
       this._profile?.personality,
       this._profile?.capabilities,
     )
-    this.speechPerformance.configure(resolveMotionStyle(this._profile?.motionStyle))
+    this._style = resolveMotionStyle(this._profile?.motionStyle)
+    this.speechPerformance.configure(this._style)
+    this.idleCtrl.setTiming(this._style.blinkRate, this._style.breathRate, this._style.breathVariance)
+    this._performanceMode = this._profile?.performanceMode ?? 'enhanced'
+    this.idleBehavior.setLegacy(this._performanceMode === 'legacy')
+    this._parameterGain = this._profile?.parameterGain ?? 1.45
+    this._bodyMotionGain = this._profile?.bodyMotionGain ?? 1.25
+    this.applyOutputGains()
     const motionPresets = (window as any).__INITIAL_MODEL_INFO__?.motionPresets
     this.motionArbiter.setPresets(motionPresets)
     this.behaviorResolver.setConfig(config)
@@ -356,10 +393,14 @@ export class CharacterController {
       { ...(config?.emotionMap ?? {}), ...(this._profile?.expressionMap ?? {}) },
       modelExpressionNames,
     )
+    this._nativeExpressions = modelExpressionNames
+    this.emitNativeCatalog()
   }
 
   setNativeMotionPlayer(player: NativeMotionPlayer | null): void {
     this.motionArbiter.setNativeMotionPlayer(player, this._profile?.motionMap)
+    this._nativeMotions = player?.list() ?? []
+    this.emitNativeCatalog()
   }
 
   /** Set the adapter reference and attach sub-controllers. */
@@ -395,6 +436,23 @@ export class CharacterController {
       eventBus.on('character:interaction', (interaction) => {
         const decision = this.interactionPolicy.resolve(interaction)
         if (decision) this.applyIntent(decision.intent)
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('character:performance_tuning', ({ mode, parameterGain, bodyMotionGain }) => {
+        if (mode) this._performanceMode = mode
+        if (parameterGain !== undefined) this._parameterGain = parameterGain
+        if (bodyMotionGain !== undefined) this._bodyMotionGain = bodyMotionGain
+        this.idleBehavior.setLegacy(this._performanceMode === 'legacy')
+        this.applyOutputGains()
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('character:native_preview', ({ type, name }) => {
+        if (type === 'motion') this.motionArbiter.play(name, 'system', 0.8)
+        else this.exprCtrl.apply(name, 0.9, 180)
       }),
     )
 
@@ -474,6 +532,8 @@ export class CharacterController {
 
   /** Execute a semantic presentation plan through existing expression/motion controllers. */
   private applyIntent(intent: import('./CharacterBehaviorResolver').CharacterIntent): void {
+    this._currentEmotion = intent.emotion || 'neutral'
+    this._currentEmotionIntensity = Math.max(0, Math.min(1, intent.intensity ?? 1))
     this.vad.setEmotion(intent.emotion, intent.intensity ?? 1)
     const basePlan = this.behaviorResolver.resolve(intent)
     const policy = this.performancePolicy.evaluate(intent, basePlan, this.behaviorResolver.getConfig(), this._profile)
@@ -493,8 +553,45 @@ export class CharacterController {
       this._performanceResetTimer = setTimeout(() => {
         if (this.currentActivity === 'idle') {
           this.exprCtrl.apply('neutral', 1, Math.max(420, policy.transitionMs))
+          this._currentEmotion = 'neutral'
+          this._currentEmotionIntensity = 0
         }
       }, policy.holdMs)
+    }
+  }
+
+  private applyOutputGains(): void {
+    const modeGain = this._performanceMode === 'legacy' ? 1
+      : this._performanceMode === 'calibration' ? 1.35 : 1
+    this.parameterResolver.setOutputGains(
+      this._performanceMode === 'legacy' ? 1 : this._parameterGain * modeGain,
+      this._performanceMode === 'legacy' ? 1 : this._bodyMotionGain,
+    )
+  }
+
+  private emitNativeCatalog(): void {
+    eventBus.emit('character:native_catalog', {
+      motions: this._nativeMotions,
+      expressions: this._nativeExpressions,
+    })
+  }
+
+  private submitLogicalLayer(
+    source: string,
+    values: Record<string, number>,
+    priority: number,
+  ): void {
+    for (const [parameterId, value] of Object.entries(this.parameterResolver.values(values))) {
+      this.mixer.submit({
+        id: `${source}:${parameterId}`,
+        parameterId,
+        source,
+        channel: parameterId.toLowerCase().includes('body') ? 'body' : 'head',
+        value,
+        mode: 'add',
+        priority,
+        createdAt: performance.now(),
+      })
     }
   }
 
@@ -607,6 +704,51 @@ export class CharacterController {
     this.idleBehavior.setVAD(vadSnapshot.current)
     this.idleBehavior.update(dt, this.currentActivity === 'idle' && !this.motionArbiter.isPlaying())
     const idleSnapshot = this.idleBehavior.getSnapshot()
+    const idleMotionScale = this._performanceMode === 'calibration' ? 1.45 : 1
+    if (this._performanceMode !== 'legacy') {
+      const calibrationGain = this._performanceMode === 'calibration' ? 1.8 : 1
+      this.submitLogicalLayer(
+        'vad_micro',
+        this.vadMicroMotion.update(dt, vadSnapshot.current, this._style.microMotionGain * calibrationGain),
+        13,
+      )
+      this.submitLogicalLayer(
+        'vad_gesture',
+        this.vadGesture.update(
+          dt,
+          vadSnapshot.current,
+          this._style.gestureFrequency * calibrationGain,
+          calibrationGain,
+        ),
+        26,
+      )
+      this.submitLogicalLayer(
+        'voice_waiting',
+        this.voiceWaiting.update(dt, this.currentActivity, calibrationGain),
+        24,
+      )
+    }
+    const privateParams = this.privateEmotion.update(
+      this._performanceMode === 'legacy' ? 'neutral' : this._currentEmotion,
+      this._performanceMode === 'legacy' ? 0 : this._currentEmotionIntensity,
+      this._performanceMode === 'legacy'
+        ? { valence: 0, arousal: 0, dominance: 0 }
+        : vadSnapshot.current,
+      this._profile?.privateEmotionMap,
+    )
+    for (const [parameterId, value] of Object.entries(privateParams)) {
+      if (!this.adapter.hasParameter(parameterId)) continue
+      this.mixer.submit({
+        id: `private_emotion:${parameterId}`,
+        parameterId,
+        source: 'private_emotion',
+        channel: 'expression',
+        value,
+        mode: 'add',
+        priority: 42,
+        createdAt: performance.now(),
+      })
+    }
     this.activityBlend = Math.min(1, (performance.now() - this.activityEnteredAt) / 420)
     const speechTarget = this.currentActivity === 'speaking' ? 1 : 0
     this.speechWeight += (speechTarget - this.speechWeight) * (1 - Math.exp(-dt * 7))
@@ -631,7 +773,7 @@ export class CharacterController {
     // Step 4: Submit per-frame behaviors to mixer
 
     // 4a: Blink (priority 40)
-    this.mixer.setParams('blink', this.idleCtrl.getBlinkParams(idleSnapshot.eyeClose))
+    this.mixer.setParams('blink', this.idleCtrl.getBlinkParams(idleSnapshot.eyeClose * idleMotionScale))
 
     // 4b: Breath (priority 20)
     this.mixer.setParams('breath', this.idleCtrl.getBreathParams())
@@ -697,24 +839,24 @@ export class CharacterController {
       )
 
       this.mixer.setParams('gaze', this.parameterResolver.values({
-        'eye.x': this.mouseX * 0.85 + idleSnapshot.eyeX,
-        'eye.y': cfg.eyeBallYSign * this.mouseY * 0.7 + idleSnapshot.eyeY,
-        'head.x': cfg.angleXSign * hx * 15 + idleSnapshot.headX,
-        'head.y': cfg.angleYSign * hy * 10 + idleSnapshot.headY,
-        'head.z': hx * 4 + idleSnapshot.headZ,
-        'body.x': breathBX + idleSnapshot.bodyX + hx * 4,
-        'body.y': breathBY + idleSnapshot.bodyY + hy * 3,
+        'eye.x': this.mouseX * 0.85 + idleSnapshot.eyeX * idleMotionScale,
+        'eye.y': cfg.eyeBallYSign * this.mouseY * 0.7 + idleSnapshot.eyeY * idleMotionScale,
+        'head.x': cfg.angleXSign * hx * 15 + idleSnapshot.headX * idleMotionScale,
+        'head.y': cfg.angleYSign * hy * 10 + idleSnapshot.headY * idleMotionScale,
+        'head.z': hx * 4 + idleSnapshot.headZ * idleMotionScale,
+        'body.x': breathBX + idleSnapshot.bodyX * idleMotionScale + hx * 4,
+        'body.y': breathBY + idleSnapshot.bodyY * idleMotionScale + hy * 3,
       }))
     } else if (this.currentActivity !== 'speaking') {
       this.idleTime += dt
       this.mixer.setParams('idle_sway', this.parameterResolver.values({
-        'head.x': idleSnapshot.headX,
-        'head.y': idleSnapshot.headY,
-        'head.z': idleSnapshot.headZ,
-        'eye.x': idleSnapshot.eyeX,
-        'eye.y': idleSnapshot.eyeY,
-        'body.x': idleSnapshot.bodyX,
-        'body.y': idleSnapshot.bodyY,
+        'head.x': idleSnapshot.headX * idleMotionScale,
+        'head.y': idleSnapshot.headY * idleMotionScale,
+        'head.z': idleSnapshot.headZ * idleMotionScale,
+        'eye.x': idleSnapshot.eyeX * idleMotionScale,
+        'eye.y': idleSnapshot.eyeY * idleMotionScale,
+        'body.x': idleSnapshot.bodyX * idleMotionScale,
+        'body.y': idleSnapshot.bodyY * idleMotionScale,
       }))
     }
 
@@ -783,6 +925,11 @@ export class CharacterController {
           resolvedCount,
           coverage: bindings.length ? resolvedCount / bindings.length : 1,
           missingBindings,
+        },
+        performanceTuning: {
+          mode: this._performanceMode,
+          parameterGain: this._parameterGain,
+          bodyMotionGain: this._bodyMotionGain,
         },
         contestedParameters,
       })
