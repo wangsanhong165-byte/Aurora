@@ -24,6 +24,7 @@ interface RegisteredMotion {
   duration: number
   fadeIn: number
   fadeOut: number
+  loop: boolean
 }
 
 export class NativeMotionPlayer {
@@ -39,6 +40,7 @@ export class NativeMotionPlayer {
       duration: Math.max(0.001, json.Meta?.Duration ?? inferDuration(json.Curves ?? [])),
       fadeIn: Math.max(0, json.FadeInTime ?? 0.25),
       fadeOut: Math.max(0, json.FadeOutTime ?? 0.35),
+      loop: Boolean(json.Meta?.Loop),
     }
     for (const key of [name, ...aliases]) {
       if (key) this.motions.set(key.toLowerCase(), motion)
@@ -73,6 +75,9 @@ export class NativeMotionPlayer {
     if (!this.active) return { contributions: [], done: true }
     this.elapsed += Math.max(0, dt)
     const motion = this.active
+    if (motion.loop && this.elapsed >= motion.duration) {
+      this.elapsed %= motion.duration
+    }
     const fadeInWeight = motion.fadeIn <= 0 ? 1 : smoothstep(this.elapsed / motion.fadeIn)
     const remaining = motion.duration - this.elapsed
     const fadeOutWeight = motion.fadeOut <= 0 ? 1 : smoothstep(remaining / motion.fadeOut)
@@ -84,7 +89,7 @@ export class NativeMotionPlayer {
         value: sampleCurve(curve.Segments, Math.min(this.elapsed, motion.duration)),
         weight: curveWeight(curve, this.elapsed, motion.duration) * weight,
       }))
-    const done = this.elapsed >= motion.duration
+    const done = !motion.loop && this.elapsed >= motion.duration
     if (done) this.stop()
     return { contributions, done }
   }

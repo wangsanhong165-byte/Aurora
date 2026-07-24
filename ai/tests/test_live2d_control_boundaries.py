@@ -700,3 +700,15 @@ def test_logical_output_gain_is_bounded_by_safe_parameter_ranges():
     assert "clamp(value, -1, 1)" in resolver
     assert "clamp(value, -30, 30)" in resolver
     assert "clamp(value, -15, 15)" in resolver
+
+
+def test_initial_idle_starts_authored_native_idle_and_looping_motion_stays_alive():
+    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+    player = (
+        ROOT / "frontend/src/character/live2d/NativeMotionPlayer.ts"
+    ).read_text(encoding="utf-8")
+
+    assert "startNativeIdleIfAvailable" in controllers
+    assert "this.motionArbiter.play('idle', 'system'" in controllers
+    assert "loop: Boolean(json.Meta?.Loop)" in player
+    assert "this.elapsed %= motion.duration" in player

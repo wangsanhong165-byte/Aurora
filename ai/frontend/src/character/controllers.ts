@@ -401,6 +401,7 @@ export class CharacterController {
     this.motionArbiter.setNativeMotionPlayer(player, this._profile?.motionMap)
     this._nativeMotions = player?.list() ?? []
     this.emitNativeCatalog()
+    this.startNativeIdleIfAvailable()
   }
 
   /** Set the adapter reference and attach sub-controllers. */
@@ -513,6 +514,7 @@ export class CharacterController {
         this.idleCtrl.setBreathing(true)
         this.exprCtrl.apply('neutral', 1, 520)
         if (this.motionArbiter.isPlaying()) this.motionArbiter.enqueue('return_idle')
+        else this.startNativeIdleIfAvailable()
         // Pipeline idle does not cancel a presentation motion already in flight.
         break
       case 'thinking':
@@ -574,6 +576,11 @@ export class CharacterController {
       motions: this._nativeMotions,
       expressions: this._nativeExpressions,
     })
+  }
+
+  private startNativeIdleIfAvailable(): void {
+    if (this.currentActivity !== 'idle' || this.motionArbiter.isPlaying()) return
+    this.motionArbiter.play('idle', 'system', 0.7)
   }
 
   private submitLogicalLayer(
