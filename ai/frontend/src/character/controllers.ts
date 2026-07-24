@@ -1,0 +1,802 @@
+// Character Controller — coordinates Live2D subsystems
+// All parameter writes go through ParameterMixer → Live2DModelAdapter.
+// No business controller may hold CubismModelHandle directly.
+
+import { eventBus } from '../core/event-bus'
+import { getExpression } from './live2d/expression'
+import { ExpressionController } from './ExpressionController'
+import { MotionArbiter } from './MotionArbiter'
+import { CharacterBehaviorResolver, type CharacterBehaviorConfig } from './CharacterBehaviorResolver'
+import { CharacterPerformancePolicy } from './CharacterPerformancePolicy'
+import { IdleBehaviorController } from './IdleBehaviorController'
+import type { AvatarCapabilityProfile } from './AvatarCapabilityProfile'
+import { AvatarParameterResolver } from './AvatarParameterResolver'
+import { ParameterMixer } from './ParameterMixer'
+import { AudioAnalyzer } from './AudioAnalyzer'
+import { SpeechPerformanceController } from './performance/SpeechPerformanceController'
+import { resolveMotionStyle } from './performance/MotionStyle'
+import { VADState } from './performance/VADState'
+import { facsFromVAD } from './performance/FACSState'
+import type { NativeMotionPlayer } from './live2d/NativeMotionPlayer'
+import type { Live2DModelAdapter } from './Live2DModelAdapter'
+import { InteractionPerformancePolicy } from './performance/InteractionPerformancePolicy'
+
+// ── Parameter Interpolation (smooth transitions) ──
+
+interface ParamTarget {
+  id: string
+  from: number
+  to: number
+  startTime: number
+  duration: number
+}
+
+export function expressionTargetForBlend(
+  value: number,
+  intensity: number,
+  blend: 'add' | 'multiply' | 'overwrite' = 'add',
+  current = 0,
+): number {
+  const weight = Math.max(0, Math.min(1, intensity))
+  if (blend === 'multiply') return 1 + (value - 1) * weight
+  if (blend === 'overwrite') return current + (value - current) * weight
+  return value * weight
+}
+
+export class ParameterController {
+  private mixer: ParameterMixer | null = null
+  private targets: ParamTarget[] = []
+  private defaultParams = new Map<string, number>()
+  // Expressions must keep contributing after their transition finishes.
+  // ParameterMixer intentionally clears frame values every animation frame.
+  private activeExpressionParams = new Set<string>()
+  // Track last applied value for each parameter (used as interpolation "from")
+  private _currentValues = new Map<string, number>()
+
+  attach(_adapter: Live2DModelAdapter, mixer: ParameterMixer): void {
+    this.mixer = mixer
+    this._currentValues.clear()
+    this.activeExpressionParams.clear()
+  }
+
+  detach(): void {
+    this.mixer = null
+    this.targets = []
+    this._currentValues.clear()
+    this.activeExpressionParams.clear()
+  }
+
+  /** Set a tracked current value. */
+  private _setTracked(id: string, value: number): void {
+    this._currentValues.set(id, value)
+  }
+
+  /** Get tracked current value (fallback to 0). */
+  private _getTracked(id: string): number {
+    return this._currentValues.get(id) ?? 0
+  }
+
+  /** Queue a smooth parameter transition.
+   *  The interpolated values are later submitted to the mixer via getContributions(). */
+  setSmooth(id: string, to: number, duration = 300, delay = 0): void {
+    const from = this._getTracked(id)
+    this.removeTargets(id)
+    this.targets.push({ id, from, to, startTime: performance.now() + delay, duration })
+  }
+
+  /** Remove any pending interpolation targets for the given parameter id(s). */
+  removeTargets(ids: string | string[]): void {
+    const removeSet = new Set(typeof ids === 'string' ? [ids] : ids)
+    this.targets = this.targets.filter(t => !removeSet.has(t.id))
+  }
+
+  /** Count active targets for a given param. */
+  getTargetCount(id: string): number {
+    return this.targets.filter(t => t.id === id).length
+  }
+
+  /** Get all param IDs with active interpolation targets. */
+  getActiveTargetParams(): Set<string> {
+    return new Set(this.targets.map(t => t.id))
+  }
+
+  /** Apply expression preset with smooth transition. */
+  applyExpression(name: string, intensity: number, duration = 400): void {
+    const preset = getExpression(name)
+    const pIntensity = Math.max(0, Math.min(1, intensity))
+    const nextIds = new Set(preset.params.map((p) => p.id))
+
+    // Release controls owned by the prior expression but absent from this one.
+    for (const id of this.activeExpressionParams) {
+      if (!nextIds.has(id)) this.setSmooth(id, 0, duration)
+    }
+    this.activeExpressionParams = nextIds
+
+    for (const p of preset.params) {
+      const value = expressionTargetForBlend(
+        p.value,
+        pIntensity,
+        p.blend,
+        this._getTracked(p.id),
+      )
+      if (!this.defaultParams.has(p.id)) {
+        this.defaultParams.set(p.id, value)
+      }
+      this.setSmooth(p.id, value, duration)
+    }
+
+    // Part opacity changes follow the same adapter-owned write path as parameters.
+    if (preset.parts && this.mixer) {
+      for (const part of preset.parts) {
+        this.mixer.submitPartOpacity({
+          id: `expression-part:${part.id}`,
+          partId: part.id,
+          opacity: part.opacity * pIntensity,
+          priority: 75,
+        })
+      }
+    }
+  }
+
+  /** Reset to neutral with transition. */
+  resetToNeutral(duration = 500): void {
+    this.applyExpression('neutral', 1, duration)
+  }
+
+  /**
+   * Update active interpolations and return contributions for the mixer.
+   * Call each frame. The returned contributions should be submitted to
+   * ParameterMixer before resolve/apply.
+   */
+  update(): Array<{ parameterId: string; value: number; source: string; priority: number }> {
+    const now = performance.now()
+    this.targets = this.targets.filter((t) => {
+      const elapsed = now - t.startTime
+      const progress = Math.min(1, elapsed / t.duration)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      const value = t.from + (t.to - t.from) * eased
+      this._setTracked(t.id, value)
+
+      return progress < 1
+    })
+
+    // Return the settled values as well as values still interpolating. Without
+    // this, expressions disappear on the first frame after their fade-in.
+    return [...this.activeExpressionParams].map((parameterId) => ({
+      parameterId,
+      value: this._getTracked(parameterId),
+      source: 'expression',
+      priority: 75,
+    }))
+  }
+}
+
+// ── Idle Animation (blink + breath) ──
+
+export class IdleController {
+  constructor(private readonly parameters: AvatarParameterResolver) {}
+  private time = 0
+  private breathing = true
+  private breathWeight = 1
+  private breathTarget = 1
+  private blinking = true
+  private idleEnabled = true
+  private nextBlink = 0
+  private blinkState = 0
+  private blinkPhase = 0
+  private _eyeOpenValue = 1
+  private _blinkBreathValue = 0.5
+  private static readonly BASE_BLINK_INTERVAL = 2.8
+  private static readonly BLINK_VARIATION = 0.6
+  private static readonly BREATH_FREQ = 1.7
+
+  private _breathBodyX = 0
+  private _breathBodyY = 0
+
+  attach(): void {
+    this.time = 0
+    this.nextBlink = IdleController.BASE_BLINK_INTERVAL * (0.5 + Math.random() * IdleController.BLINK_VARIATION)
+  }
+
+  detach(): void {
+    // nothing to clean up — no handle reference
+  }
+
+  setBreathing(enabled: boolean): void {
+    this.breathing = enabled
+    this.breathTarget = enabled ? 1 : 0.35
+  }
+
+  setBlinking(enabled: boolean): void {
+    this.blinking = enabled
+    if (!enabled) { this._eyeOpenValue = 1 }
+  }
+
+  setIdleEnabled(enabled: boolean): void {
+    this.idleEnabled = enabled
+    if (!enabled) { this._breathBodyX = 0; this._breathBodyY = 0; this._eyeOpenValue = 1; this._blinkBreathValue = 0.5 }
+  }
+
+  getBreathBodyX(): number { return this._breathBodyX }
+  getBreathBodyY(): number { return this._breathBodyY }
+
+  getBlinkParams(externalEyeClose = 0): Record<string, number> {
+    const eyeOpen = Math.min(this._eyeOpenValue, 1 - Math.max(0, Math.min(1, externalEyeClose)))
+    return this.parameters.values({ 'blink.left': eyeOpen, 'blink.right': eyeOpen })
+  }
+
+  getBreathParams(): Record<string, number> {
+    const breath = Math.sin(this.time * IdleController.BREATH_FREQ)
+    return this.parameters.values({
+      'body.x': breath * 0.7 * this.breathWeight,
+      'body.y': breath * 1.2 * this.breathWeight,
+      breath: this._blinkBreathValue,
+    })
+  }
+
+  update(dt: number): void {
+    if (!this.idleEnabled) return
+    this.time += dt
+    this.breathWeight += (this.breathTarget - this.breathWeight)
+      * (1 - Math.exp(-dt * 3.5))
+
+    if (this.breathing || this.breathWeight > 0.01) {
+      const breath = Math.sin(this.time * IdleController.BREATH_FREQ)
+      this._breathBodyX = breath * 0.7 * this.breathWeight
+      this._breathBodyY = breath * 1.2 * this.breathWeight
+      this._blinkBreathValue = 0.5 + breath * 0.18 * this.breathWeight
+    }
+
+    if (!this.blinking) return
+    if (this.time >= this.nextBlink && this.blinkState === 0) {
+      this.blinkState = 1
+      this.blinkPhase = 0
+    }
+
+    if (this.blinkState > 0) {
+      this.blinkPhase += dt * 15
+      if (this.blinkState === 1) {
+        this._eyeOpenValue = Math.max(0, 1 - this.blinkPhase)
+        if (this._eyeOpenValue <= 0) {
+          this.blinkState = 2
+          this.blinkPhase = 0
+        }
+      } else {
+        this._eyeOpenValue = Math.min(1, this.blinkPhase)
+        if (this._eyeOpenValue >= 1) {
+          this.blinkState = 0
+          this._eyeOpenValue = 1
+          this.nextBlink = this.time + IdleController.BASE_BLINK_INTERVAL * (0.5 + Math.random() * IdleController.BLINK_VARIATION)
+        }
+      }
+    }
+  }
+}
+
+// ── Character Controller (top-level coordinator) ──
+
+const MODEL_PARAM_CONFIG: Record<string, {
+  angleXSign: number
+  angleYSign: number
+  eyeBallYSign: number
+}> = {
+  'Design_genius_White': { angleXSign: 1, angleYSign: 1, eyeBallYSign: 1 },
+  'youxiaomiao':         { angleXSign: 1, angleYSign: 1, eyeBallYSign: 1 },
+  'ariu':                { angleXSign: 1, angleYSign: 1, eyeBallYSign: 1 },
+  'mao_zh-Hans':         { angleXSign: 1, angleYSign: 1, eyeBallYSign: 1 },
+}
+
+function getModelParamConfig(modelName: string) {
+  return MODEL_PARAM_CONFIG[modelName] ?? MODEL_PARAM_CONFIG['Design_genius_White']
+}
+
+export class CharacterController {
+  paramCtrl = new ParameterController()
+  parameterResolver = new AvatarParameterResolver()
+  idleCtrl = new IdleController(this.parameterResolver)
+  exprCtrl = new ExpressionController(this.paramCtrl)
+  motionArbiter = new MotionArbiter()
+  behaviorResolver = new CharacterBehaviorResolver()
+  performancePolicy = new CharacterPerformancePolicy()
+  idleBehavior = new IdleBehaviorController()
+  mixer = new ParameterMixer()
+  audioAnalyzer = new AudioAnalyzer()
+  speechPerformance = new SpeechPerformanceController()
+  vad = new VADState()
+  interactionPolicy = new InteractionPerformancePolicy()
+
+  // References set externally by the animation loop
+  private adapter: Live2DModelAdapter | null = null
+  private cleanupFns: (() => void)[] = []
+  private currentActivity = 'idle'
+  private previousActivity = 'idle'
+  private activityEnteredAt = performance.now()
+  private activityBlend = 0
+  private speechWeight = 0
+  private lastDebugEmitAt = 0
+  private headTrackingEnabled = true
+  private _modelName = 'Design_genius_White'
+  private _profile: AvatarCapabilityProfile | undefined
+  private _performanceResetTimer: ReturnType<typeof setTimeout> | null = null
+
+  // Mouse tracking state
+  private mouseX = 0
+  private mouseY = 0
+  private targetMouseX = 0
+  private targetMouseY = 0
+  private headX = 0
+  private headY = 0
+  private idleTime = 0
+
+  // Lip-sync mouth value from AudioAnalyzer (submitted to mixer)
+  private _mouthOpenValue = 0
+
+  // Accessory state
+  private _accessoryParts: Record<string, string> = {}
+  private _accessoryState: Record<string, boolean> = {}
+  private _onAccessoryChange: ((label: string, enabled: boolean) => void) | null = null
+
+  setModelName(name: string, modelExpressionNames: string[] = []): void {
+    this._modelName = name
+    const configs = (window as any).__INITIAL_MODEL_INFO__?.behaviorConfig as Record<string, CharacterBehaviorConfig> | undefined
+    const config = configs?.[name]
+    const profiles = (window as any).__INITIAL_MODEL_INFO__?.avatarProfiles as Record<string, AvatarCapabilityProfile> | undefined
+    this._profile = profiles?.[name]
+    this.parameterResolver.setProfile(this._profile)
+    this.idleBehavior.setMotionStyle(
+      this._profile?.motionStyle,
+      this._profile?.personality,
+      this._profile?.capabilities,
+    )
+    this.speechPerformance.configure(resolveMotionStyle(this._profile?.motionStyle))
+    const motionPresets = (window as any).__INITIAL_MODEL_INFO__?.motionPresets
+    this.motionArbiter.setPresets(motionPresets)
+    this.behaviorResolver.setConfig(config)
+    this.exprCtrl.setModelConfig(
+      { ...(config?.emotionMap ?? {}), ...(this._profile?.expressionMap ?? {}) },
+      modelExpressionNames,
+    )
+  }
+
+  setNativeMotionPlayer(player: NativeMotionPlayer | null): void {
+    this.motionArbiter.setNativeMotionPlayer(player, this._profile?.motionMap)
+  }
+
+  /** Set the adapter reference and attach sub-controllers. */
+  attach(adapter: Live2DModelAdapter): void {
+    this.adapter = adapter
+    this.paramCtrl.attach(adapter, this.mixer)
+    this.idleCtrl.attach()
+    this.audioAnalyzer.reset()
+    this.speechPerformance.reset()
+
+    // Register mixer owners with priorities
+    const ids = (...keys: string[]) => keys.map(key => this.parameterResolver.resolve(key)).filter((id): id is string => Boolean(id))
+    this.mixer.registerOwner('gaze', ids('head.x', 'head.y', 'head.z', 'eye.x', 'eye.y', 'body.x', 'body.y'), 30)
+    this.mixer.registerOwner('blink', ids('blink.left', 'blink.right'), 40)
+    this.mixer.registerOwner('breath', ids('breath', 'body.x', 'body.y'), 20)
+    this.mixer.registerOwner('lip_sync', ids('mouth.open'), 60)
+    this.mixer.registerOwner('idle_sway', ids('head.x', 'head.y', 'head.z'), 10)
+
+    // Subscribe to event bus
+    this.cleanupFns.push(
+      eventBus.on('character:emotion', ({ emotion, intensity }) => {
+        this.applyIntent({ emotion, intensity })
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('character:intent', ({ emotion, behavior, intensity }) => {
+        this.applyIntent({ emotion, behavior, intensity })
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('character:interaction', (interaction) => {
+        const decision = this.interactionPolicy.resolve(interaction)
+        if (decision) this.applyIntent(decision.intent)
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('character:activity', ({ activity }) => {
+        this.onActivityChange(activity)
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('audio:stop', () => {
+        this.audioAnalyzer.reset()
+        this._mouthOpenValue = 0
+        this.onActivityChange('idle')
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('audio:end', () => {
+        // Backend completion may precede actual browser playback completion.
+        this.audioAnalyzer.reset()
+        this._mouthOpenValue = 0
+        this.onActivityChange('idle')
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('audio:volume', ({ volume }) => {
+        this._mouthOpenValue = this.audioAnalyzer.analyze(volume)
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('runtime:user_message', () => {
+        this.onActivityChange('listening')
+        this.applyIntent({ emotion: 'neutral', behavior: 'listen', intensity: 0.35, attention: 'user', energy: 0.25 })
+        setTimeout(() => { if (this.currentActivity === 'listening') this.onActivityChange('thinking') }, 350)
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('runtime:character_state', ({ activity, emotion, intensity, motion, behavior, attention, energy, durationMs }) => {
+        this.onActivityChange(activity)
+        this.applyIntent({ emotion, behavior: behavior || motion, intensity, activity, attention: attention as any, energy, durationMs })
+      }),
+    )
+  }
+
+  private onActivityChange(activity: string): void {
+    if (!activity || activity === this.currentActivity) return
+    this.previousActivity = this.currentActivity
+    this.currentActivity = activity
+    this.activityEnteredAt = performance.now()
+    this.activityBlend = 0
+    this.speechPerformance.setSpeaking(activity === 'speaking')
+    switch (activity) {
+      case 'idle':
+        this.idleCtrl.setBreathing(true)
+        this.exprCtrl.apply('neutral', 1, 520)
+        if (this.motionArbiter.isPlaying()) this.motionArbiter.enqueue('return_idle')
+        // Pipeline idle does not cancel a presentation motion already in flight.
+        break
+      case 'thinking':
+        this.idleCtrl.setBreathing(true)
+        this.motionArbiter.play('thinking', 'system', 0.3)
+        break
+      case 'speaking':
+        this.idleCtrl.setBreathing(false)
+        if (!this.motionArbiter.isPlaying()) this.motionArbiter.play('speak', 'system', 0.32)
+        break
+      case 'listening':
+        this.idleCtrl.setBreathing(true)
+        this.motionArbiter.stop()
+        break
+    }
+  }
+
+  /** Execute a semantic presentation plan through existing expression/motion controllers. */
+  private applyIntent(intent: import('./CharacterBehaviorResolver').CharacterIntent): void {
+    this.vad.setEmotion(intent.emotion, intent.intensity ?? 1)
+    const basePlan = this.behaviorResolver.resolve(intent)
+    const policy = this.performancePolicy.evaluate(intent, basePlan, this.behaviorResolver.getConfig(), this._profile)
+    this.exprCtrl.apply(policy.expression, policy.expressionIntensity, policy.transitionMs)
+    if (policy.motion && Math.random() <= policy.motionProbability) {
+      console.log('[MOTION APPLIED]', policy.motion, 'intensity:', policy.motionIntensity)
+      this.motionArbiter.play(policy.motion, 'ai', policy.motionIntensity)
+    }
+    eventBus.emit('character:performance', {
+      emotion: intent.emotion || 'neutral', behavior: intent.behavior || '', expression: policy.expression,
+      motion: policy.motion || '', profile: this._profile?.model || this._modelName,
+      transitionMs: policy.transitionMs, holdMs: policy.holdMs, motionProbability: policy.motionProbability,
+      modifiers: { ...policy.modifiers },
+    })
+    if (this._performanceResetTimer) clearTimeout(this._performanceResetTimer)
+    if (policy.holdMs > 0 && intent.activity !== 'speaking') {
+      this._performanceResetTimer = setTimeout(() => {
+        if (this.currentActivity === 'idle') {
+          this.exprCtrl.apply('neutral', 1, Math.max(420, policy.transitionMs))
+        }
+      }, policy.holdMs)
+    }
+  }
+
+  detach(): void {
+    this.cleanupFns.forEach((fn) => fn())
+    this.cleanupFns = []
+    this.paramCtrl.detach()
+    this.idleCtrl.detach()
+    if (this._performanceResetTimer) clearTimeout(this._performanceResetTimer)
+    this.adapter = null
+  }
+
+  // ── Accessory control ──
+
+  setAccessoryParts(parts: Record<string, string>): void {
+    this._accessoryParts = parts
+    this._accessoryState = {}
+    for (const label of Object.keys(parts)) {
+      this._accessoryState[label] = true
+    }
+  }
+
+  clearAccessories(): void {
+    this._accessoryParts = {}
+    this._accessoryState = {}
+    this._onAccessoryChange = null
+  }
+
+  setAccessoryEnabled(label: string, enabled: boolean): boolean {
+    const exprName = this._accessoryParts[label]
+    if (!exprName || !this.adapter) {
+      console.warn('[Accessory] setAccessoryEnabled failed: label=%s exprName=%s', label, exprName)
+      return false
+    }
+    this._accessoryState[label] = enabled
+
+    // Submit accessory parameter contributions to mixer instead of direct write
+    const preset = getExpression(exprName)
+    if (preset) {
+      for (const p of preset.params) {
+        this.mixer.submit({
+          id: `accessory:${label}:${p.id}`,
+          parameterId: p.id,
+          source: `accessory:${label}`,
+          channel: 'accessory',
+          value: enabled ? p.value : 0,
+          mode: 'add',
+          priority: 60,
+          createdAt: performance.now(),
+          persistent: true,
+        })
+      }
+    }
+    this._onAccessoryChange?.(label, enabled)
+    return true
+  }
+
+  toggleAccessory(label: string): boolean {
+    const current = this._accessoryState[label] ?? true
+    return this.setAccessoryEnabled(label, !current)
+  }
+
+  getAccessoryState(): Record<string, boolean> { return { ...this._accessoryState } }
+  getAccessoryParts(): Record<string, string> { return { ...this._accessoryParts } }
+
+  onAccessoryChange(cb: (label: string, enabled: boolean) => void): void {
+    this._onAccessoryChange = cb
+  }
+
+  resetAccessories(): void {
+    for (const [label, enabled] of Object.entries(this._accessoryState)) {
+      this.setAccessoryEnabled(label, enabled)
+    }
+  }
+
+  // ── Mouse tracking ──
+
+  setMouseTracking(enabled: boolean): void { this.headTrackingEnabled = enabled }
+
+  resetMousePosition(): void {
+    this.targetMouseX = 0
+    this.targetMouseY = 0
+    this.mouseX = 0
+    this.mouseY = 0
+  }
+
+  setMousePos(x: number, y: number): void {
+    this.targetMouseX = x
+    this.targetMouseY = y
+  }
+
+  // ── Per-frame update ──
+
+  /**
+   * Main per-frame update. SUBMITS contributions to the mixer.
+   * The caller (animation loop) is responsible for:
+   *   mixer.resolve()
+   *   mixer.apply(adapter)
+   *   adapter.applyPose()
+   *   adapter.updateModel()
+   *   render(handle)
+   */
+  update(dt: number): void {
+    if (!this.adapter) return
+
+    // Step 1: Reset mixer frame
+    this.mixer.resetFrame()
+
+    const vadSnapshot = this.vad.update(dt)
+    this.idleBehavior.setVAD(vadSnapshot.current)
+    this.idleBehavior.update(dt, this.currentActivity === 'idle' && !this.motionArbiter.isPlaying())
+    const idleSnapshot = this.idleBehavior.getSnapshot()
+    this.activityBlend = Math.min(1, (performance.now() - this.activityEnteredAt) / 420)
+    const speechTarget = this.currentActivity === 'speaking' ? 1 : 0
+    this.speechWeight += (speechTarget - this.speechWeight) * (1 - Math.exp(-dt * 7))
+
+    // Step 2: Expression interpolation contributions
+    const exprContribs = this.paramCtrl.update()
+    for (const c of exprContribs) {
+      this.mixer.submit({
+        id: `expr:${c.parameterId}`,
+        parameterId: c.parameterId,
+        source: c.source,
+        channel: 'expression',
+        value: c.value,
+        priority: c.priority,
+        createdAt: performance.now(),
+      })
+    }
+
+    // Step 3: Idle animations
+    this.idleCtrl.update(dt)
+
+    // Step 4: Submit per-frame behaviors to mixer
+
+    // 4a: Blink (priority 40)
+    this.mixer.setParams('blink', this.idleCtrl.getBlinkParams(idleSnapshot.eyeClose))
+
+    // 4b: Breath (priority 20)
+    this.mixer.setParams('breath', this.idleCtrl.getBreathParams())
+
+    const vadFacs = facsFromVAD(vadSnapshot.current)
+    const vadPosture = this.parameterResolver.values({
+      'eye.y': vadFacs.gazeY ?? 0,
+      'head.y': vadFacs.headY ?? 0,
+      'head.z': vadFacs.headZ ?? 0,
+      'body.x': vadFacs.bodyX ?? 0,
+      'body.y': vadFacs.bodyY ?? 0,
+    })
+    for (const [parameterId, value] of Object.entries(vadPosture)) {
+      this.mixer.submit({
+        id: `vad:${parameterId}`,
+        parameterId,
+        source: 'vad_posture',
+        channel: parameterId.includes('Body') ? 'body' : 'head',
+        value,
+        mode: 'add',
+        priority: 12,
+        createdAt: performance.now(),
+      })
+    }
+
+    // 4c: Lip-sync (priority 60)
+    if (this.currentActivity === 'speaking') {
+      this.mixer.setParams('lip_sync', this.parameterResolver.values({ 'mouth.open': this._mouthOpenValue }))
+    }
+
+    const speechSample = this.speechPerformance.update(dt, this._mouthOpenValue)
+    if (speechSample.weight > 0.01 || speechSample.state === 'releasing') {
+      this.mixer.setParams('speech', this.parameterResolver.values({
+        'head.x': speechSample.headX,
+        'head.y': speechSample.headY,
+        'head.z': speechSample.headZ,
+        'body.x': speechSample.bodyX,
+        'body.y': speechSample.bodyY,
+      }), 45)
+    }
+
+    // 4d: Gaze tracking (priority 30) or idle head sway (priority 10)
+    if (this.headTrackingEnabled && !this.motionArbiter.isPlaying()) {
+      this.idleTime = 0
+      const eyeSmooth = 0.18
+      this.mouseX += (this.targetMouseX - this.mouseX) * eyeSmooth
+      this.mouseY += (this.targetMouseY - this.mouseY) * eyeSmooth
+
+      const cfg = getModelParamConfig(this._modelName)
+      const headSmooth = 0.06
+      this.headX += (this.targetMouseX - this.headX) * headSmooth
+      this.headY += (this.targetMouseY - this.headY) * headSmooth
+      const hx = this.headX
+      const hy = this.headY
+      const breathBX = this.idleCtrl.getBreathBodyX()
+      const breathBY = this.idleCtrl.getBreathBodyY()
+
+      console.debug(
+        '[Gaze] mouse=(%+.3f,%+.3f) eye=(%+.3f,%+.3f) angle=(%+.3f,%+.3f,%+.3f)',
+        this.mouseX, this.mouseY,
+        this.mouseX * 0.85, cfg.eyeBallYSign * this.mouseY * 0.7,
+        cfg.angleXSign * hx * 15, cfg.angleYSign * hy * 10, hx * 4,
+      )
+
+      this.mixer.setParams('gaze', this.parameterResolver.values({
+        'eye.x': this.mouseX * 0.85 + idleSnapshot.eyeX,
+        'eye.y': cfg.eyeBallYSign * this.mouseY * 0.7 + idleSnapshot.eyeY,
+        'head.x': cfg.angleXSign * hx * 15 + idleSnapshot.headX,
+        'head.y': cfg.angleYSign * hy * 10 + idleSnapshot.headY,
+        'head.z': hx * 4 + idleSnapshot.headZ,
+        'body.x': breathBX + idleSnapshot.bodyX + hx * 4,
+        'body.y': breathBY + idleSnapshot.bodyY + hy * 3,
+      }))
+    } else if (this.currentActivity !== 'speaking') {
+      this.idleTime += dt
+      this.mixer.setParams('idle_sway', this.parameterResolver.values({
+        'head.x': idleSnapshot.headX,
+        'head.y': idleSnapshot.headY,
+        'head.z': idleSnapshot.headZ,
+        'eye.x': idleSnapshot.eyeX,
+        'eye.y': idleSnapshot.eyeY,
+        'body.x': idleSnapshot.bodyX,
+        'body.y': idleSnapshot.bodyY,
+      }))
+    }
+
+    // Step 5: Motion contributions
+    for (const step of this.motionArbiter.drainDueSteps()) {
+      if (step.type === 'expression') this.exprCtrl.apply(step.value, 1, 220)
+      else if (step.type === 'motion') this.motionArbiter.enqueue(step.value)
+      else if (step.type === 'attention') this.setMouseTracking(step.value !== 'away')
+      else if (step.type === 'behavior') this.applyIntent({ emotion: 'neutral', behavior: step.value, intensity: 0.5 })
+    }
+    const motionContribs = this.motionArbiter.update(dt)
+    const resolvedMotion = this.parameterResolver.resolveMotionParameters(
+      Object.fromEntries(motionContribs.map(c => [c.logicalParameter, c.value])),
+    )
+    for (const [parameterId, value] of Object.entries(resolvedMotion)) {
+      this.mixer.submit({
+        id: `motion:${parameterId}`,
+        parameterId,
+        source: `motion:${this.motionArbiter.currentMotion ?? 'unknown'}`,
+        channel: 'motion',
+        value,
+        priority: 50,
+        createdAt: performance.now(),
+      })
+    }
+    for (const contribution of this.motionArbiter.drainNativeContributions()) {
+      this.mixer.submit({
+        id: `native-motion:${contribution.parameterId}`,
+        parameterId: contribution.parameterId,
+        source: `native-motion:${this.motionArbiter.currentMotion ?? 'unknown'}`,
+        channel: 'motion',
+        value: contribution.value,
+        weight: contribution.weight,
+        priority: 50,
+        createdAt: performance.now(),
+      })
+    }
+
+    const now = performance.now()
+    if (now - this.lastDebugEmitAt >= 250) {
+      this.lastDebugEmitAt = now
+      const mixerFrame = this.mixer.debugFrame()
+      const contestedParameters = Object.fromEntries(
+        Object.entries(mixerFrame.frameValues).filter(([, values]) => values.length > 1),
+      )
+      const bindings = Object.entries(this.parameterResolver.getBindings())
+      const missingBindings = bindings
+        .filter(([, target]) => !this.adapter!.hasParameter(target))
+        .map(([logical, target]) => ({ logical, target }))
+      const resolvedCount = bindings.length - missingBindings.length
+      eventBus.emit('character:performance_debug', {
+        activity: this.currentActivity,
+        previousActivity: this.previousActivity,
+        transitionProgress: this.activityBlend,
+        vad: this.vad.getSnapshot(),
+        expression: {
+          name: this.exprCtrl.getCurrent(),
+          intensity: this.exprCtrl.getIntensity(),
+        },
+        motion: this.motionArbiter.getDebugState(),
+        idle: { ...this.idleBehavior.getSnapshot() },
+        lipSync: { ...this.audioAnalyzer.getDebugInfo() },
+        pose: this.adapter.getPoseDebug(),
+        profileCoverage: {
+          bindingCount: bindings.length,
+          resolvedCount,
+          coverage: bindings.length ? resolvedCount / bindings.length : 1,
+          missingBindings,
+        },
+        contestedParameters,
+      })
+    }
+  }
+
+  getLipSyncDebug() {
+    return this.audioAnalyzer.getDebugInfo()
+  }
+
+  getMixerDebug(): string {
+    const info = this.mixer.debugFrame()
+    return Object.entries(info.resolved)
+      .map(([k, v]) => `${k}=${v.toFixed(3)}`)
+      .join('  ')
+  }
+}

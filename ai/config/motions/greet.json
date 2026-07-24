@@ -1,0 +1,20 @@
+{
+  "name": "greet",
+  "duration": 1800,
+  "recoveryMs": 220,
+  "keyframes": [
+    {"time": 0, "parameter": "head.y", "value": 0},
+    {"time": 260, "parameter": "head.y", "value": 3},
+    {"time": 760, "parameter": "head.y", "value": -1},
+    {"time": 1600, "parameter": "head.y", "value": 0},
+    {"time": 0, "parameter": "body.x", "value": 0},
+    {"time": 420, "parameter": "body.x", "value": 2},
+    {"time": 1600, "parameter": "body.x", "value": 0}
+  ],
+  "steps": [
+    {"time": 0, "type": "attention", "value": "user"},
+    {"time": 120, "type": "expression", "value": "happy"},
+    {"time": 360, "type": "motion", "value": "wave"},
+    {"time": 1550, "type": "expression", "value": "neutral"}
+  ]
+}

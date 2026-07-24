@@ -1,0 +1,51 @@
+{
+  "name": "companion-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.cjs",
+  "description": "Companion Runtime frontend",
+  "scripts": {
+    "dev": "vite",
+    "dev:electron": "NODE_ENV=development electron .",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "profile:inspect": "node ../scripts/inspect_live2d_profiles.mjs --json",
+    "electron:start": "electron .",
+    "electron:build": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3",
+    "typescript": "~5.5.2",
+    "vite": "^5.3.1"
+  },
+  "build": {
+    "appId": "com.monika.companion",
+    "productName": "Monika Companion",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}

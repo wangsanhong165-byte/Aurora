@@ -1,0 +1,1 @@
+{"name":"tilt","duration":900,"recoveryMs":180,"keyframes":[{"time":0,"parameter":"head.x","value":0},{"time":280,"parameter":"head.x","value":7},{"time":650,"parameter":"head.x","value":5},{"time":900,"parameter":"head.x","value":0},{"time":0,"parameter":"head.y","value":0},{"time":350,"parameter":"head.y","value":-2},{"time":900,"parameter":"head.y","value":0}]}

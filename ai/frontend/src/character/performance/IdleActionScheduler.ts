@@ -1,0 +1,273 @@
+import type {
+  AvatarPerformanceCapabilities,
+  CharacterPerformancePersonality,
+} from '../AvatarCapabilityProfile'
+import { createSeededRandom, type RandomSource } from './SeededRandom'
+import type { VADVector } from './VADState'
+
+export type IdleActionLabel =
+  | 'small-nod'
+  | 'head-tilt'
+  | 'side-look'
+  | 'weight-shift'
+  | 'gentle-lean'
+  | 'sigh-sink'
+  | 'slow-blink'
+
+export interface IdleActionPose {
+  headX: number
+  headY: number
+  headZ: number
+  bodyX: number
+  bodyY: number
+  eyeX: number
+  eyeY: number
+  eyeClose: number
+}
+
+interface PoseKeyframe {
+  progress: number
+  pose: Partial<IdleActionPose>
+}
+
+interface ActiveAction {
+  label: IdleActionLabel
+  direction: -1 | 0 | 1
+  startedAt: number
+  duration: number
+  keyframes: PoseKeyframe[]
+}
+
+export interface IdleActionContext {
+  allowed: boolean
+  focusLevel: number
+  capabilities?: AvatarPerformanceCapabilities
+  personality?: CharacterPerformancePersonality
+  vad: VADVector
+}
+
+export interface IdleActionState {
+  activeAction: IdleActionLabel | null
+  direction: -1 | 0 | 1
+  progress: number
+  nextActionAt: number
+  recentActions: IdleActionLabel[]
+  recentDirections: Array<-1 | 1>
+}
+
+const labels: IdleActionLabel[] = [
+  'small-nod', 'head-tilt', 'side-look', 'weight-shift',
+  'gentle-lean', 'sigh-sink', 'slow-blink',
+]
+
+export class IdleActionScheduler {
+  private random: RandomSource
+  private active: ActiveAction | null = null
+  private nextActionAt = 5
+  private recentActions: IdleActionLabel[] = []
+  private recentDirections: Array<-1 | 1> = []
+  private lastProgress = 0
+
+  constructor(
+    seed: number,
+    private readonly spontaneity = 1,
+    private readonly gain = 1,
+    private readonly recentWindow = 3,
+  ) {
+    this.random = createSeededRandom(seed)
+  }
+
+  update(timeSeconds: number, context: IdleActionContext): IdleActionPose {
+    if (!context.allowed) {
+      this.active = null
+      this.nextActionAt = timeSeconds + this.sampleInterval(context.focusLevel)
+      this.lastProgress = 0
+      return neutralPose()
+    }
+    if (this.active) {
+      const elapsed = timeSeconds - this.active.startedAt
+      if (elapsed < this.active.duration) {
+        this.lastProgress = clamp(elapsed / this.active.duration, 0, 1)
+        return evaluateKeyframes(this.active.keyframes, this.lastProgress)
+      }
+      this.active = null
+      this.lastProgress = 0
+    }
+    if (timeSeconds < this.nextActionAt) return neutralPose()
+
+    const available = labels.filter(label => isAvailable(label, context.capabilities))
+    const fresh = available.filter(label => !this.recentActions.includes(label))
+    const pool = fresh.length ? fresh : available
+    if (!pool.length) return neutralPose()
+    const label = weightedPick(pool, context.personality, context.vad, this.random)
+    const direction = isDirectional(label) ? this.pickDirection() : 0
+    const duration = durationFor(label, this.random)
+    this.active = {
+      label,
+      direction,
+      duration,
+      startedAt: timeSeconds,
+      keyframes: buildKeyframes(label, direction, this.gain),
+    }
+    this.remember(label, direction)
+    this.nextActionAt = timeSeconds + duration + this.sampleInterval(context.focusLevel)
+    return evaluateKeyframes(this.active.keyframes, 0)
+  }
+
+  getState(): IdleActionState {
+    return {
+      activeAction: this.active?.label ?? null,
+      direction: this.active?.direction ?? 0,
+      progress: this.lastProgress,
+      nextActionAt: this.nextActionAt,
+      recentActions: [...this.recentActions],
+      recentDirections: [...this.recentDirections],
+    }
+  }
+
+  private pickDirection(): -1 | 1 {
+    let direction: -1 | 1 = this.random() < 0.5 ? -1 : 1
+    if (this.recentDirections.at(-1) === direction) direction = direction === -1 ? 1 : -1
+    return direction
+  }
+
+  private remember(label: IdleActionLabel, direction: -1 | 0 | 1): void {
+    this.recentActions.push(label)
+    while (this.recentActions.length > this.recentWindow) this.recentActions.shift()
+    if (direction) {
+      this.recentDirections.push(direction)
+      while (this.recentDirections.length > this.recentWindow) this.recentDirections.shift()
+    }
+  }
+
+  private sampleInterval(focusLevel: number): number {
+    const activity = clamp(this.spontaneity, 0.1, 2)
+    return (4.8 + this.random() * 6.7) / activity + clamp(focusLevel, 0, 1) * 2
+  }
+}
+
+function buildKeyframes(
+  label: IdleActionLabel,
+  direction: -1 | 0 | 1,
+  gain: number,
+): PoseKeyframe[] {
+  const side = direction || 1
+  let frames: PoseKeyframe[]
+  if (label === 'small-nod') {
+    frames = [frame(0, {}), frame(.2, { headY: 2.6, bodyY: .35 }),
+      frame(.42, { headY: -.8 }), frame(.68, { headY: .5 }), frame(1, {})]
+  } else if (label === 'head-tilt') {
+    frames = [frame(0, {}), frame(.28, { headX: side * .55, headZ: side * 2.8, eyeX: -side * .08 }),
+      frame(.64, { headZ: side * 2.3 }), frame(1, {})]
+  } else if (label === 'side-look') {
+    frames = [frame(0, {}), frame(.18, { eyeX: side * .45 }),
+      frame(.38, { eyeX: side * .58, headX: side * 1.4, headZ: -side * .8 }),
+      frame(.8, { eyeX: side * .06, headX: side * 1 }), frame(1, {})]
+  } else if (label === 'weight-shift') {
+    frames = [frame(0, {}), frame(.34, { bodyX: side * 2.3, headX: -side * .55, headZ: -side * 1.1 }),
+      frame(.7, { bodyX: side * 1.9, headZ: -side * .9 }), frame(1, {})]
+  } else if (label === 'gentle-lean') {
+    frames = [frame(0, {}), frame(.3, { bodyY: side * 1.3, headY: side * 1.1, eyeY: side * .06 }),
+      frame(.58, { bodyY: side * 1.1, headY: side * .9 }),
+      frame(.8, { bodyY: -side * .2 }), frame(1, {})]
+  } else if (label === 'sigh-sink') {
+    frames = [frame(0, {}), frame(.2, { eyeClose: .08 }),
+      frame(.48, { headY: -1.9, bodyY: -1, eyeY: -.12, eyeClose: .22 }),
+      frame(.73, { headY: -1.4, bodyY: -.75, eyeClose: .06 }), frame(1, {})]
+  } else {
+    frames = [frame(0, {}), frame(.3, { eyeClose: .82, headY: -.3 }),
+      frame(.47, { eyeClose: 1, headY: -.42 }),
+      frame(.72, { eyeClose: .18 }), frame(1, {})]
+  }
+  return frames.map(item => ({
+    progress: item.progress,
+    pose: Object.fromEntries(
+      Object.entries(item.pose).map(([key, value]) => [key, (value ?? 0) * gain]),
+    ),
+  }))
+}
+
+function frame(progress: number, pose: Partial<IdleActionPose>): PoseKeyframe {
+  return { progress, pose }
+}
+
+function evaluateKeyframes(frames: PoseKeyframe[], progress: number): IdleActionPose {
+  const nextIndex = frames.findIndex(item => item.progress >= progress)
+  if (nextIndex <= 0) return mergePose(frames[0]?.pose)
+  const previous = frames[nextIndex - 1]
+  const next = frames[nextIndex]
+  const local = smoothstep((progress - previous.progress) / (next.progress - previous.progress))
+  const result = neutralPose()
+  for (const key of poseKeys) {
+    result[key] = lerp(previous.pose[key] ?? 0, next.pose[key] ?? 0, local)
+  }
+  return result
+}
+
+function isAvailable(label: IdleActionLabel, capabilities?: AvatarPerformanceCapabilities): boolean {
+  if (!capabilities) return true
+  if (label === 'slow-blink') return capabilities.eyeBlink !== false
+  if (label === 'side-look') return capabilities.gazeControl !== false || capabilities.headControl !== false
+  if (label === 'weight-shift' || label === 'gentle-lean') return capabilities.bodyControl !== false
+  return capabilities.headControl !== false
+}
+
+function weightedPick(
+  pool: IdleActionLabel[],
+  personality: CharacterPerformancePersonality | undefined,
+  vad: VADVector,
+  random: RandomSource,
+): IdleActionLabel {
+  const expressive = personality?.expressiveness ?? .75
+  const shy = personality?.shyness ?? .5
+  const positive = Math.max(0, vad.valence)
+  const negative = Math.max(0, -vad.valence)
+  const active = Math.max(0, vad.arousal)
+  const withdrawn = Math.max(0, -vad.dominance)
+  const weights = pool.map(label => {
+    if (label === 'side-look') return .7 + shy + withdrawn * .7 + negative * .3
+    if (label === 'small-nod') return .8 + expressive + positive * .4 + active * .35
+    if (label === 'sigh-sink') return .55 + negative * .8 + Math.max(0, -vad.arousal) * .5
+    if (label === 'gentle-lean') return .7 + positive * .45 + Math.max(0, vad.dominance) * .3
+    return 1
+  })
+  let cursor = random() * weights.reduce((sum, value) => sum + value, 0)
+  for (let index = 0; index < pool.length; index += 1) {
+    cursor -= weights[index]
+    if (cursor <= 0) return pool[index]
+  }
+  return pool[pool.length - 1]
+}
+
+function durationFor(label: IdleActionLabel, random: RandomSource): number {
+  const ranges: Record<IdleActionLabel, readonly [number, number]> = {
+    'small-nod': [.82, 1.2], 'head-tilt': [1.35, 2.15], 'side-look': [1.45, 2.35],
+    'weight-shift': [1.65, 2.65], 'gentle-lean': [1.25, 2.05],
+    'sigh-sink': [1.7, 2.8], 'slow-blink': [.72, 1.08],
+  }
+  const [min, max] = ranges[label]
+  return min + (max - min) * random()
+}
+
+const poseKeys: Array<keyof IdleActionPose> = [
+  'headX', 'headY', 'headZ', 'bodyX', 'bodyY', 'eyeX', 'eyeY', 'eyeClose',
+]
+function neutralPose(): IdleActionPose {
+  return { headX: 0, headY: 0, headZ: 0, bodyX: 0, bodyY: 0, eyeX: 0, eyeY: 0, eyeClose: 0 }
+}
+function mergePose(pose: Partial<IdleActionPose> | undefined): IdleActionPose {
+  return { ...neutralPose(), ...pose }
+}
+function isDirectional(label: IdleActionLabel): boolean {
+  return ['head-tilt', 'side-look', 'weight-shift', 'gentle-lean'].includes(label)
+}
+function smoothstep(value: number): number {
+  const t = clamp(value, 0, 1)
+  return t * t * (3 - 2 * t)
+}
+function lerp(from: number, to: number, amount: number): number {
+  return from + (to - from) * amount
+}
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
+}
