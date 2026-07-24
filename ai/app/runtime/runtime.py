@@ -449,7 +449,9 @@ class CompanionRuntime:
             async def set_gesture(self, *a, **kw): pass
         return _Fallback()
 
-    async def dispatch(self, event: Event, status_callback=None) -> Context:
+    async def dispatch(
+        self, event: Event, status_callback=None, confirmation_callback=None
+    ) -> Context:
         """Single entry point — all interaction types flow through here.
 
         Args:
@@ -464,7 +466,11 @@ class CompanionRuntime:
         if self._initiative_task is None or self._initiative_task.done():
             self._start_initiative_drain()
 
-        ctx = Context(event=event, status_callback=status_callback)
+        ctx = Context(
+            event=event,
+            status_callback=status_callback,
+            confirmation_callback=confirmation_callback,
+        )
         ctx.state["event"] = event
 
         # Extract user_text from text events

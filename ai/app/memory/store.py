@@ -56,7 +56,9 @@ class MemoryStore:
     def __init__(self, base_dir: Optional[Path] = None):
         base = base_dir or Path(__file__).resolve().parents[2]
         base.mkdir(parents=True, exist_ok=True)
-        self._db_path = str(base / "data" / "memory" / "memory.db")
+        db_path = base / "data" / "memory" / "memory.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db_path = str(db_path)
         self._local = threading.local()
         self._init_db()
 
@@ -135,15 +137,17 @@ class MemoryStore:
     def log_turn(self, user_text: str, reply: dict, character_id: str = "") -> None:
         now = datetime.now(timezone.utc).isoformat()
         conn = self._get_conn()
-        conn.execute(
-            "INSERT INTO logs(role, content, intent, character_id, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("user", user_text[:1000], reply.get("intent", "unknown"), character_id, now),
-        )
+        if user_text.strip():
+            conn.execute(
+                "INSERT INTO logs(role, content, intent, character_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                ("user", user_text[:1000], reply.get("intent", "unknown"), character_id, now),
+            )
         reply_text = reply.get("reply_text", "")[:2000]
-        conn.execute(
-            "INSERT INTO logs(role, content, intent, character_id, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("assistant", reply_text, "reply", character_id, now),
-        )
+        if reply_text.strip():
+            conn.execute(
+                "INSERT INTO logs(role, content, intent, character_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                ("assistant", reply_text, reply.get("intent", "reply"), character_id, now),
+            )
         conn.commit()
 
     def enqueue_turn(self, user_text: str, reply: dict) -> None:
@@ -165,18 +169,29 @@ class MemoryStore:
             })
         return turns
 
-    def search_logs(self, query: str, limit: int = 5) -> list[dict]:
+    def search_logs(
+        self, query: str, limit: int = 5, character_id: str = ""
+    ) -> list[dict]:
         fts_query = _build_fts_query(query)
         if not fts_query:
             return []
         conn = self._get_conn()
         try:
-            rows = conn.execute(
-                "SELECT l.role, l.content, l.intent, l.created_at "
-                "FROM logs_fts f JOIN logs l ON f.rowid = l.id "
-                "WHERE logs_fts MATCH ? ORDER BY rank LIMIT ?",
-                (fts_query, limit),
-            ).fetchall()
+            if character_id:
+                rows = conn.execute(
+                    "SELECT l.role, l.content, l.intent, l.character_id, l.created_at "
+                    "FROM logs_fts f JOIN logs l ON f.rowid = l.id "
+                    "WHERE logs_fts MATCH ? AND l.character_id = ? "
+                    "ORDER BY rank LIMIT ?",
+                    (fts_query, character_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT l.role, l.content, l.intent, l.character_id, l.created_at "
+                    "FROM logs_fts f JOIN logs l ON f.rowid = l.id "
+                    "WHERE logs_fts MATCH ? ORDER BY rank LIMIT ?",
+                    (fts_query, limit),
+                ).fetchall()
         except sqlite3.OperationalError:
             return []
         return [dict(r) for r in rows]

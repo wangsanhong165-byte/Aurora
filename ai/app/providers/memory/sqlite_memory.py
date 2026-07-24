@@ -130,7 +130,14 @@ class SQLiteMemory(MemoryInterface):
                 user_text = data.get("user", "")
                 assistant_text = data.get("assistant", "")
                 if user_text or assistant_text:
-                    reply = {"reply_text": assistant_text, "intent": data.get("intent", "conversation")}
+                    reply = {
+                        "reply_text": assistant_text,
+                        "intent": (
+                            "initiative"
+                            if data.get("origin") == "initiative"
+                            else data.get("intent", "conversation")
+                        ),
+                    }
                     from app.memory.compiler import get_active_char_id
                     char_id = data.get("character_id", get_active_char_id() or "default")
                     self._store.log_turn(user_text, reply, character_id=char_id)
@@ -155,7 +162,9 @@ class SQLiteMemory(MemoryInterface):
                 })
 
             # 2. Log entries from SQLite
-            logs = self._store.search_logs(query, limit=limit)
+            logs = self._store.search_logs(
+                query, limit=limit, character_id=character_id
+            )
             for l in logs:
                 results.append({
                     "type": "log",

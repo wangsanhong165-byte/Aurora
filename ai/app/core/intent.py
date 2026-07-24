@@ -41,6 +41,24 @@ def compute_candidates(
                 "source_type": event.type,
                 "source_payload": payload,
             })
+        elif event.type == "observation":
+            payload = dict(event.payload or {})
+            candidates.append({
+                "type": "idle_observation",
+                "topic": "gentle check-in after extended inactivity",
+                "score": 0.55,
+                "source_type": event.type,
+                "source_payload": payload,
+            })
+        elif event.type not in {"screen_change", "idle_timeout"}:
+            payload = dict(event.payload or {})
+            candidates.append({
+                "type": "external_event",
+                "topic": payload.get("topic") or event.type,
+                "score": min(0.75, 0.35 + 0.1 * getattr(event, "priority", 0)),
+                "source_type": event.type,
+                "source_payload": payload,
+            })
 
     if mood < 48:
         candidates.append({

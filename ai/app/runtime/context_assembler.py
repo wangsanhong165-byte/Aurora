@@ -4,6 +4,29 @@ from __future__ import annotations
 
 
 class ContextAssembler:
+    def assemble_character_state(self, character) -> str:
+        relationship = character.relationship.to_dict()
+        affinity = relationship.get("affinity", {}).get("default", 0.5)
+        goals = [g.description for g in character.goals.top(3)]
+        liked = [p.topic for p in character.preferences.top_liked(5)]
+        disliked = [p.topic for p in character.preferences.top_disliked(3)
+                     if p.valence < 0]
+        lines = [
+            "[Dynamic character state]",
+            f"- mood: {character.mood.current}",
+            f"- relationship affinity: {affinity:.2f}",
+        ]
+        if goals:
+            lines.append("- active goals: " + "; ".join(goals))
+        if liked:
+            lines.append("- learned likes: " + "; ".join(liked))
+        if disliked:
+            lines.append("- learned dislikes: " + "; ".join(disliked))
+        lines.append(
+            "- Use this state subtly. Never recite scores or call it system state."
+        )
+        return "\n".join(lines)
+
     def assemble_memories(
         self, memories: list[dict], *, total_chars: int = 6000
     ) -> tuple[str, list[str]]:

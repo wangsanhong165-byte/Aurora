@@ -31,12 +31,14 @@ class MemorySaveStep(Step):
             return
 
         # Store the turn as a memory entry
+        character = ctx.state.get("character")
         await self.memory.store("conversation_turn", {
             "user": user_text,
             "assistant": reply_text,
             "emotion": ctx.emotion,
             "origin": ctx.input_origin,
             "initiative": ctx.event.payload.get("initiative", {}),
+            "character_id": getattr(character, "id", "") if character else "",
         })
 
         # Optionally trigger consolidation every 5 turns

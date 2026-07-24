@@ -252,7 +252,19 @@ class RuntimeEventHandler:
             source="websocket",
         )
 
-        ctx = await self.runtime.dispatch(event)
+        async def confirm_tool(name, args, risk):
+            if not push:
+                return False
+            from app.runtime.tool_confirmation import tool_confirmation_broker
+            from app.transport.protocol import ToolConfirmation
+            return await tool_confirmation_broker.request(
+                lambda payload: push(ToolConfirmation(**payload)),
+                name, args, risk,
+            )
+
+        ctx = await self.runtime.dispatch(
+            event, confirmation_callback=confirm_tool
+        )
 
         if ctx.error:
             err = Error(code="runtime", message=ctx.error)
@@ -351,7 +363,19 @@ class RuntimeEventHandler:
             source="websocket",
         )
 
-        ctx = await self.runtime.dispatch(event)
+        async def confirm_tool(name, args, risk):
+            if not push:
+                return False
+            from app.runtime.tool_confirmation import tool_confirmation_broker
+            from app.transport.protocol import ToolConfirmation
+            return await tool_confirmation_broker.request(
+                lambda payload: push(ToolConfirmation(**payload)),
+                name, args, risk,
+            )
+
+        ctx = await self.runtime.dispatch(
+            event, confirmation_callback=confirm_tool
+        )
 
         if ctx.error:
             err = Error(code="runtime", message=ctx.error)

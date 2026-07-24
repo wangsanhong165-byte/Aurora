@@ -210,6 +210,11 @@ class DefaultPlanner:
                         "Let this naturally influence your tone and phrasing."
                     ),
                 })
+            from app.runtime.context_assembler import ContextAssembler
+            messages.append({
+                "role": "system",
+                "content": ContextAssembler().assemble_character_state(character),
+            })
 
         # 4. Output format instructions
         if character is not None:
@@ -376,16 +381,21 @@ class DecisionStep(Step):
                 }
                 policy = ToolPolicy()
                 risk = policy.risk_for(schema_by_name.get(tc_name))
-                if risk != "read_only":
-                    result_text = (
-                        '{"error":"confirmation_required",'
-                        f'"tool":"{tc_name}","risk":"{risk}"}}'
+                approved = risk == "read_only"
+                if risk != "read_only" and callable(ctx.confirmation_callback):
+                    approved = await ctx.confirmation_callback(
+                        tc_name, tc_args, risk
                     )
-                else:
+                if approved:
                     try:
                         result_text = await self.tools.execute(tc_name, tc_args)
                     except Exception as exc:
                         result_text = f"Error: {exc}"
+                else:
+                    result_text = (
+                        '{"error":"confirmation_denied_or_required",'
+                        f'"tool":"{tc_name}","risk":"{risk}"}}'
+                    )
                 result_text = policy.clean_result(result_text)
 
                 # Detect screenshot JSON
@@ -431,6 +441,24 @@ class DecisionStep(Step):
         safe = ResponseValidator().validate(
             final_reply or response.reply, response.segments or []
         )
+        if not safe.valid:
+            messages.append({
+                "role": "assistant",
+                "content": final_reply or response.reply,
+            })
+            messages.append({
+                "role": "system",
+                "content": (
+                    "Your previous response was invalid structured output. "
+                    "Repair it now. Return only the required valid JSON object; "
+                    "preserve the intended meaning and do not call tools."
+                ),
+            })
+            repair = await self.llm.generate(messages, tools=None, temperature=0)
+            response = repair
+            safe = ResponseValidator().validate(
+                repair.reply, repair.segments or []
+            )
         ctx.reply_text, tagged_reasoning = split_reasoning(safe.reply)
         provider_reasoning = (response.reasoning or "").strip()
         ctx.reasoning = "\n\n".join(part for part in (provider_reasoning, tagged_reasoning) if part)

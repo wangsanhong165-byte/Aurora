@@ -286,6 +286,15 @@ BACKGROUNDS_DIR = Path(
 
 # ── App ─────────────────────────────────────────────────────────────────
 app = FastAPI()
+
+
+@app.post("/api/tool-confirmations/{request_id}")
+async def resolve_tool_confirmation(request_id: str, payload: dict):
+    from app.runtime.tool_confirmation import tool_confirmation_broker
+    resolved = tool_confirmation_broker.resolve(
+        request_id, bool(payload.get("approved", False))
+    )
+    return {"resolved": resolved}
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

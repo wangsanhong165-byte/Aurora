@@ -42,6 +42,18 @@ class RuntimeWebSocketHandler:
         """Push a status update to the WebSocket client during pipeline execution."""
         await self._send(websocket, {"type": "status", "text": msg})
 
+    async def _confirmation_callback(
+        self, websocket: WebSocket, name: str, args: dict, risk: str
+    ) -> bool:
+        from app.runtime.tool_confirmation import tool_confirmation_broker
+
+        async def notify(payload):
+            await self._send(websocket, {"type": "tool_confirmation", **payload})
+
+        return await tool_confirmation_broker.request(
+            notify, name, args, risk
+        )
+
     async def handle_text(self, websocket: WebSocket, text: str) -> None:
         """Handle a text-input message via Runtime.dispatch()."""
         await self._send(websocket, {"type": "control", "text": "conversation-chain-start"})
@@ -55,6 +67,8 @@ class RuntimeWebSocketHandler:
         ctx = await self.runtime.dispatch(
             event,
             status_callback=lambda msg: self._status_callback(websocket, msg),
+            confirmation_callback=lambda name, args, risk:
+                self._confirmation_callback(websocket, name, args, risk),
         )
 
         if ctx.error:
@@ -101,6 +115,8 @@ class RuntimeWebSocketHandler:
         ctx = await self.runtime.dispatch(
             event,
             status_callback=lambda msg: self._status_callback(websocket, msg),
+            confirmation_callback=lambda name, args, risk:
+                self._confirmation_callback(websocket, name, args, risk),
         )
 
         if ctx.error:
@@ -146,6 +162,8 @@ class RuntimeWebSocketHandler:
         ctx = await self.runtime.dispatch(
             event,
             status_callback=lambda msg: self._status_callback(websocket, msg),
+            confirmation_callback=lambda name, args, risk:
+                self._confirmation_callback(websocket, name, args, risk),
         )
 
         if ctx.error or not ctx.reply_text:

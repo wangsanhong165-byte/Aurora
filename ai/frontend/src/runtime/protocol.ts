@@ -41,6 +41,14 @@ export interface RuntimeStatus {
   message: string
 }
 
+export interface ToolConfirmation {
+  type: 'tool_confirmation'
+  request_id: string
+  tool: string
+  args: Record<string, unknown>
+  risk: string
+}
+
 export interface CharacterAction {
   type: 'character_action'
   emotion: string
@@ -171,6 +179,7 @@ export type InboundMessage =
   | ServerPing
   | UserMessage
   | CommandResponse
+  | ToolConfirmation
   // Avatar protocol
   | AvatarComponentUpdate
   | AvatarExpressionUpdate

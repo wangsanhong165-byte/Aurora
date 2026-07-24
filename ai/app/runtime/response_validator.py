@@ -9,10 +9,15 @@ from app.runtime.character_intent import BEHAVIORS, EMOTIONS
 class ValidatedResponse:
     reply: str
     segments: list[dict]
+    valid: bool = True
 
 
 class ResponseValidator:
     def validate(self, reply: str, segments: list[dict] | None) -> ValidatedResponse:
+        malformed_structured = bool(
+            reply and str(reply).lstrip().startswith(("{", "["))
+            and not segments
+        )
         normalized = []
         for raw in segments or []:
             text = str(raw.get("text", "")).strip()
@@ -44,7 +49,9 @@ class ResponseValidator:
                 "behavior": "speak", "attention": "user",
                 "energy": 0.5, "intensity": 0.5,
             }]
-        return ValidatedResponse(str(reply or "").strip(), normalized)
+        return ValidatedResponse(
+            str(reply or "").strip(), normalized, not malformed_structured
+        )
 
     @staticmethod
     def _clamp(value) -> float:

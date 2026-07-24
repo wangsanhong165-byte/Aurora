@@ -161,3 +161,128 @@ def test_context_assembler_deduplicates_and_bounds_memories():
     _, relevant = ContextAssembler().assemble_memories(memories, total_chars=400)
     assert relevant.count("[Fact] likes tea") == 1
     assert sum(map(len, relevant)) <= 400
+
+
+def test_memory_store_filters_logs_by_character(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORY_DB_PATH", str(tmp_path / "memory.db"))
+    from app.memory.store import MemoryStore
+
+    store = MemoryStore(base_dir=tmp_path)
+    store.log_turn("same topic alpha", {"reply_text": "A"}, character_id="alpha")
+    store.log_turn("same topic beta", {"reply_text": "B"}, character_id="beta")
+    alpha = store.search_logs("same topic", limit=10, character_id="alpha")
+    assert alpha
+    assert {row["character_id"] for row in alpha} == {"alpha"}
+
+
+def test_memory_store_does_not_create_blank_user_for_initiative(tmp_path, monkeypatch):
+    monkeypatch.setenv("MEMORY_DB_PATH", str(tmp_path / "initiative.db"))
+    from app.memory.store import MemoryStore
+
+    store = MemoryStore(base_dir=tmp_path)
+    store.log_turn("", {"reply_text": "主动问候", "intent": "initiative"}, "monika")
+    rows = store._get_conn().execute(
+        "SELECT role, content FROM logs ORDER BY id"
+    ).fetchall()
+    assert [(row["role"], row["content"]) for row in rows] == [
+        ("assistant", "主动问候")
+    ]
+
+
+def test_observation_event_retains_idle_payload():
+    event = InitiativeEvent(
+        type="observation", payload={"idle_seconds": 900}, priority=1
+    )
+    candidates = compute_candidates(900, 50, events=[event])
+    observation = next(c for c in candidates if c["type"] == "idle_observation")
+    assert observation["source_payload"]["idle_seconds"] == 900
+
+
+def test_context_assembler_includes_dynamic_character_state():
+    from app.runtime.context_assembler import ContextAssembler
+
+    character = Character({
+        "id": "monika", "name": {"en": "Monika"}, "character_setting": "Natural."
+    })
+    character.relationship.update_affinity(0.2)
+    character.mood.set("playful")
+    character.preferences.update("coding", 0.8)
+    character.goals.add("help with the project", priority=5)
+    text = ContextAssembler().assemble_character_state(character)
+    assert "playful" in text
+    assert "coding" in text
+    assert "help with the project" in text
+    assert "affinity" in text
+
+
+def test_response_validator_marks_malformed_structured_reply_invalid():
+    from app.runtime.response_validator import ResponseValidator
+
+    result = ResponseValidator().validate('{"segments": broken}', [])
+    assert result.valid is False
+
+
+def test_decision_step_retries_malformed_output_once():
+    from app.interfaces.llm import LLMResponse
+    from app.runtime.steps.decision_step import DecisionStep
+
+    class RepairingLLM:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(reply='{"segments": broken}')
+            return LLMResponse(
+                reply="fixed",
+                segments=[{"text": "fixed", "emotion": "neutral", "behavior": "speak"}],
+            )
+
+    llm = RepairingLLM()
+    ctx = Context(Event(EventType.TEXT_RECEIVED, {"text": "hello"}))
+    ctx.user_text = "hello"
+    run(DecisionStep(llm).run(ctx))
+    assert llm.calls == 2
+    assert ctx.reply_text == "fixed"
+
+
+def test_confirmed_tool_executes_and_returns_to_model():
+    from app.interfaces.llm import LLMResponse, ToolCall
+    from app.runtime.steps.decision_step import DecisionStep
+
+    class ConfirmTool:
+        def __init__(self):
+            self.executed = False
+
+        async def list_tools(self):
+            return [{
+                "type": "function",
+                "function": {"name": "write_note", "parameters": {"type": "object"}},
+                "risk": "confirm",
+            }]
+
+        async def execute(self, name, args):
+            self.executed = True
+            return "written"
+
+    class ToolLLM:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(tool_calls=[ToolCall("write_note", {"text": "x"})])
+            return LLMResponse(reply="done")
+
+    async def approve(name, args, risk):
+        return name == "write_note" and risk == "confirm"
+
+    tool = ConfirmTool()
+    ctx = Context(Event(EventType.TEXT_RECEIVED, {"text": "write"}))
+    ctx.user_text = "write"
+    ctx.confirmation_callback = approve
+    run(DecisionStep(ToolLLM(), tool_provider=tool).run(ctx))
+    assert tool.executed is True
+    assert ctx.reply_text == "done"

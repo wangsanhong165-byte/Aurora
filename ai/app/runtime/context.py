@@ -27,3 +27,4 @@ class Context:
     error: str = ""
     status_message: str = ""
     status_callback: Any = None
+    confirmation_callback: Any = None

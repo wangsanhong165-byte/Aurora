@@ -126,6 +126,15 @@ class RuntimeStatus:
 
 
 @dataclass
+class ToolConfirmation:
+    type: str = "tool_confirmation"
+    request_id: str = ""
+    tool: str = ""
+    args: dict[str, Any] = field(default_factory=dict)
+    risk: str = "confirm"
+
+
+@dataclass
 class CharacterAction:
     """Character expression/motion/gesture update.
 
@@ -207,6 +216,7 @@ OutboundMessage = (
     AssistantMessage | AssistantChunk | TtsStart | TtsAudio | TtsEnd
     | RuntimeStatus | CharacterAction | CharacterState | CharacterUpdate
     | SessionEvent | Error | Pong | CommandResponse | UserMessage
+    | ToolConfirmation
 )
 
 
