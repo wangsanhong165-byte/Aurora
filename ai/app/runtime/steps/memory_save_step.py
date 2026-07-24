@@ -23,6 +23,8 @@ class MemorySaveStep(Step):
     async def run(self, ctx: Context) -> None:
         # Get user text from ASR (voice) or event payload (text input)
         user_text = ctx.user_text or ctx.event.payload.get("text", "")
+        if ctx.input_origin == "initiative":
+            user_text = ""
         reply_text = ctx.reply_text or ""
 
         if not user_text and not reply_text:
@@ -33,6 +35,8 @@ class MemorySaveStep(Step):
             "user": user_text,
             "assistant": reply_text,
             "emotion": ctx.emotion,
+            "origin": ctx.input_origin,
+            "initiative": ctx.event.payload.get("initiative", {}),
         })
 
         # Optionally trigger consolidation every 5 turns

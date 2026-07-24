@@ -25,7 +25,7 @@ class Persona:
 
     @property
     def setting(self) -> str:
-        return self._card.get("character_setting", "")
+        return self._card.get("character_setting") or self._card.get("system_prompt", "")
 
     @property
     def color(self) -> str:

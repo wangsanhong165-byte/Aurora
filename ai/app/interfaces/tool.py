@@ -20,4 +20,9 @@ class MockTool(ToolInterface):
         return f"[mock] {name} executed with {args}"
 
     async def list_tools(self) -> list[dict]:
-        return [{"name": "mock_tool", "description": "A mock tool for testing"}]
+        return [{
+            "type": "function",
+            "function": {"name": "mock_tool", "description": "A mock tool for testing"},
+            "risk": "read_only",
+            "allowed_in_initiative": True,
+        }]

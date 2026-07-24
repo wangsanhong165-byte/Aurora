@@ -25,7 +25,7 @@ class MemoryInterface(ABC):
         ...
 
     @abstractmethod
-    async def retrieve(self, query: str, limit: int = 10) -> list[dict]:
+    async def retrieve(self, query: str, limit: int = 10, **context) -> list[dict]:
         ...
 
     @abstractmethod
@@ -73,7 +73,7 @@ class MockMemory(MemoryInterface):
     async def store(self, event_type: str, data: dict) -> None:
         self._storage.append({"event_type": event_type, "data": data})
 
-    async def retrieve(self, query: str, limit: int = 10) -> list[dict]:
+    async def retrieve(self, query: str, limit: int = 10, **context) -> list[dict]:
         return self._storage[-limit:]
 
     async def consolidate(self) -> None:

@@ -13,6 +13,7 @@ class Context:
     """
     event: Event
     state: dict = field(default_factory=dict)
+    input_origin: str = "user"
     user_text: str = ""
     reply_text: str = ""
     reasoning: str = ""
