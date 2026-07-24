@@ -137,7 +137,11 @@ class SQLiteMemory(MemoryInterface):
         else:
             self._fallback.append({"event_type": event_type, "data": data})
 
-    async def retrieve(self, query: str, limit: int = 10) -> list[dict]:
+    async def retrieve(
+        self, query: str, limit: int = 10, *,
+        character_id: str = "", event_type: str = "",
+        input_origin: str = "user",
+    ) -> list[dict]:
         results: list[dict] = []
 
         if self._store is not None:
@@ -161,7 +165,7 @@ class SQLiteMemory(MemoryInterface):
 
             # 3. Compiled memory context (if available)
             from app.memory.compiler import get_compiled_memory
-            compiled = get_compiled_memory()
+            compiled = get_compiled_memory(character_id)
             if compiled:
                 results.append({
                     "type": "compiled",

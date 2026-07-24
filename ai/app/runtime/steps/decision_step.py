@@ -19,7 +19,7 @@ from app.interfaces.llm import LLMInterface, LLMResponse
 from app.interfaces.tool import ToolInterface
 from app.runtime.character_intent import EMOTIONS, BEHAVIORS
 
-_MAX_TOOL_ROUNDS = int(os.environ.get("AGENT_MAX_TOOL_ROUNDS", "5"))
+_MAX_TOOL_ROUNDS = min(3, max(1, int(os.environ.get("AGENT_MAX_TOOL_ROUNDS", "3"))))
 
 
 def _load_live2d_emotions() -> list[str]:
@@ -178,31 +178,8 @@ class DefaultPlanner:
         # 2. Retrieved memories as context (from SQLiteMemory)
         memories = ctx.state.get("memories", [])
         if memories:
-            memory_parts = []
-            compiled_memory = ""
-
-            for m in memories[-10:]:
-                mtype = m.get("type", "") if isinstance(m, dict) else ""
-                data = m.get("data", {}) if isinstance(m, dict) else {}
-
-                if mtype == "compiled":
-                    compiled_memory = data.get("content", "")
-                elif mtype == "fact":
-                    fact = data.get("fact", "")
-                    if fact:
-                        memory_parts.append(f"[Fact] {fact}")
-                elif mtype == "log":
-                    content = data.get("content", "")
-                    role = data.get("role", "")
-                    if content and role:
-                        label = "User" if role == "user" else "Assistant"
-                        memory_parts.append(f"{label}: {content[:200]}")
-                else:
-                    # Legacy format (MockMemory conversation turns)
-                    user = data.get("user", "")
-                    assistant = data.get("assistant", "")
-                    if user and assistant:
-                        memory_parts.append(f"User said: {user}\nYou said: {assistant}")
+            from app.runtime.context_assembler import ContextAssembler
+            compiled_memory, memory_parts = ContextAssembler().assemble_memories(memories)
 
             if compiled_memory:
                 messages.append({
@@ -271,7 +248,16 @@ class DefaultPlanner:
 
         # 5. Current user input
         user_text = ctx.user_text or ctx.event.payload.get("text", "")
-        if user_text:
+        if user_text and ctx.input_origin == "initiative":
+            initiative = ctx.state.get("initiative", {})
+            messages.append({
+                "role": "system",
+                "content": (
+                    "Trusted initiative event (not a user message):\n"
+                    f"{user_text}\nStructured event: {initiative}"
+                ),
+            })
+        elif user_text:
             messages.append({"role": "user", "content": user_text})
 
         return Plan(messages=messages)
@@ -304,6 +290,9 @@ class DecisionStep(Step):
         self.planner = planner or DefaultPlanner()
 
     async def run(self, ctx: Context) -> None:
+        from app.runtime.response_validator import ResponseValidator
+        from app.runtime.tool_policy import ToolPolicy
+
         plan = self.planner.plan(ctx)
         messages = list(plan.messages)
 
@@ -314,6 +303,9 @@ class DecisionStep(Step):
         if self.tools is not None:
             try:
                 tool_schemas = await self.tools.list_tools()
+                tool_schemas = ToolPolicy().filter_schemas(
+                    tool_schemas, input_origin=ctx.input_origin
+                )
             except Exception:
                 logger.warning("Failed to list tools — tool calling disabled")
 
@@ -378,10 +370,23 @@ class DecisionStep(Step):
                 if callable(ctx.status_callback):
                     await ctx.status_callback(ctx.status_message)
 
-                try:
-                    result_text = await self.tools.execute(tc_name, tc_args)
-                except Exception as exc:
-                    result_text = f"Error: {exc}"
+                schema_by_name = {
+                    item.get("function", {}).get("name", ""): item
+                    for item in (tool_schemas or [])
+                }
+                policy = ToolPolicy()
+                risk = policy.risk_for(schema_by_name.get(tc_name))
+                if risk != "read_only":
+                    result_text = (
+                        '{"error":"confirmation_required",'
+                        f'"tool":"{tc_name}","risk":"{risk}"}}'
+                    )
+                else:
+                    try:
+                        result_text = await self.tools.execute(tc_name, tc_args)
+                    except Exception as exc:
+                        result_text = f"Error: {exc}"
+                result_text = policy.clean_result(result_text)
 
                 # Detect screenshot JSON
                 # NOTE: image_url content type is NOT sent because DeepSeek
@@ -423,12 +428,15 @@ class DecisionStep(Step):
 
         from app.modules.tts_preprocessor import split_reasoning
 
-        ctx.reply_text, tagged_reasoning = split_reasoning(final_reply or response.reply)
+        safe = ResponseValidator().validate(
+            final_reply or response.reply, response.segments or []
+        )
+        ctx.reply_text, tagged_reasoning = split_reasoning(safe.reply)
         provider_reasoning = (response.reasoning or "").strip()
         ctx.reasoning = "\n\n".join(part for part in (provider_reasoning, tagged_reasoning) if part)
 
         # Extract segments from the final LLM response
-        segments = response.segments or []
+        segments = safe.segments
         if segments:
             ctx.segments = segments
             last_tone = segments[-1].get("emotion", segments[-1].get("tone", ""))
@@ -438,7 +446,7 @@ class DecisionStep(Step):
         # Add turns to conversation
         conversation = ctx.state.get("conversation")
         if conversation is not None:
-            if user_text:
+            if user_text and ctx.input_origin == "user":
                 conversation.add_turn("user", user_text)
             if ctx.reply_text:
                 conversation.add_turn("assistant", ctx.reply_text)

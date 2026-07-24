@@ -132,7 +132,19 @@ class LegacyToolProvider(ToolInterface):
         await self._ensure_mcp()
 
         builtin_schemas = self._registry.list_openai_schemas()
-        return builtin_schemas + self._openai_schemas
+        for schema in builtin_schemas:
+            name = schema.get("function", {}).get("name", "")
+            tool = self._registry.get(name)
+            risk = getattr(tool, "risk", "confirm")
+            schema["risk"] = "read_only" if risk == "safe" else risk
+            schema["allowed_in_initiative"] = risk == "safe"
+        mcp_schemas = []
+        for raw in self._openai_schemas:
+            schema = dict(raw)
+            schema.setdefault("risk", "confirm")
+            schema.setdefault("allowed_in_initiative", False)
+            mcp_schemas.append(schema)
+        return builtin_schemas + mcp_schemas
 
     # ── lifecycle ────────────────────────────────────────────────────────
 

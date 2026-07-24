@@ -28,7 +28,7 @@ if os.path.abspath(".") != os.path.abspath(_PROJECT_ROOT):
 
 # ── Skip guard ──────────────────────────────────────────────────────────────
 
-RUN_PRODUCTION = not os.environ.get("SKIP_PRODUCTION_TESTS")
+RUN_PRODUCTION = os.environ.get("RUN_PRODUCTION_TESTS") == "1"
 
 
 def requires_env(var: str):

@@ -15,6 +15,9 @@ class CharacterStep(Step):
     def __init__(self, character: Character):
         self.character = character
 
+    def set_character(self, character: Character) -> None:
+        self.character = character
+
     async def run(self, ctx: Context) -> None:
         ctx.state["character"] = self.character
         ctx.state["emotion"] = self.character.emotion.current

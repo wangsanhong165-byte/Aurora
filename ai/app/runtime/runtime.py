@@ -40,7 +40,7 @@ class CompanionRuntime:
         self._character_registry = None
         self._initiative_cooldown: float = 120.0
         self._last_initiative_time: float = 0.0
-        self._pending_initiatives: list[str] = []  # thread-safe: prompts from initiative thread
+        self._pending_initiatives: list[tuple[str, dict]] = []
         self._initiative_lock = threading.Lock()
         self._initiative_task: Any = None  # asyncio Task for draining
         self._proactive_handlers: list[Callable[[Context], Awaitable[None]]] = []
@@ -70,6 +70,8 @@ class CompanionRuntime:
 
         for step in self._build_pipeline_steps(self.providers, character):
             if step is not None:
+                if step.__class__.__name__ == "CharacterStep":
+                    self._character_step = step
                 self.pipeline.add(step)
 
         # Save to state store
@@ -140,6 +142,9 @@ class CompanionRuntime:
             reg.activate(character_id)
             self._character_registry = reg
             card = reg.active
+            new_character = Character(card)
+            if hasattr(self, "_character_step"):
+                self._character_step.set_character(new_character)
             name = card.get("name", {}).get("zh", card.get("id", "AI"))
             # Notify memory compiler of character switch
             from app.memory import on_character_switch
@@ -339,14 +344,25 @@ class CompanionRuntime:
         )
 
         # Thread-safe: push to pending list, main-loop coroutine dispatches it
+        initiative = {
+            "intent": candidate["type"],
+            "topic": candidate["topic"],
+            "source_type": candidate.get("source_type", ""),
+            "source_payload": candidate.get("source_payload", {}),
+            "urgency": candidate.get("score", 0),
+        }
         with self._initiative_lock:
-            self._pending_initiatives.append(prompt)
+            self._pending_initiatives.append((prompt, initiative))
 
-    async def _dispatch_initiative(self, prompt: str) -> None:
+    async def _dispatch_initiative(self, pending) -> None:
         """Create and dispatch an INITIATIVE_TRIGGERED event."""
+        if isinstance(pending, tuple):
+            prompt, initiative = pending
+        else:
+            prompt, initiative = pending, {}
         event = Event(
             type=EventType.INITIATIVE_TRIGGERED,
-            payload={"text": prompt},
+            payload={"display_text": prompt, "initiative": initiative},
             source="initiative_checker",
         )
         ctx = await self.dispatch(event)
@@ -465,7 +481,9 @@ class CompanionRuntime:
 
         # Initiative events carry a generated prompt as user_text
         if event.type == EventType.INITIATIVE_TRIGGERED:
-            ctx.user_text = event.payload.get("text", "")
+            ctx.input_origin = "initiative"
+            ctx.user_text = event.payload.get("display_text", event.payload.get("text", ""))
+            ctx.state["initiative"] = event.payload.get("initiative", {})
 
         # Inject persistent Conversation
         if self.conversation is not None:

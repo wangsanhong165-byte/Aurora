@@ -22,6 +22,26 @@ def compute_candidates(
     event_types = [e.type for e in events] if events else []
     print(f"[Intent] idle={idle_sec:.0f}s mood={mood:.0f} activity={activity} events={event_types}")
 
+    for event in events or []:
+        if event.type == "reminder":
+            payload = dict(event.payload or {})
+            candidates.append({
+                "type": "scheduled_reminder",
+                "topic": payload.get("task_name") or "scheduled reminder",
+                "score": 0.90,
+                "source_type": event.type,
+                "source_payload": payload,
+            })
+        elif event.type == "relationship_milestone":
+            payload = dict(event.payload or {})
+            candidates.append({
+                "type": "relationship_milestone",
+                "topic": f"relationship milestone {payload.get('milestone', '')}".strip(),
+                "score": 0.80,
+                "source_type": event.type,
+                "source_payload": payload,
+            })
+
     if mood < 48:
         candidates.append({
             "type": "care",
