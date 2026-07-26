@@ -42,7 +42,7 @@ def test_electron_bat_is_a_thin_entry_and_main_owns_shutdown():
     bat = (ROOT / "start_electron.bat").read_text(encoding="utf-8")
     main = (ROOT / "frontend/electron/main.cjs").read_text(encoding="utf-8")
 
-    assert "npm.cmd run electron:start" in bat
+    assert "scripts\\launcher.py electron" in bat
     assert "electron.pid" in main
     assert "taskkill" not in bat
     assert "shutdownStarted" in main

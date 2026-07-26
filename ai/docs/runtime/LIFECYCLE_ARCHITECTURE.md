@@ -17,6 +17,8 @@ Electron 只维护 Python supervisor 的 stdin/stdout 请求；服务事实和�
 ## 生产入口
 
 - 交互 Runtime：`python run.py`
-- Web/full：`python scripts/lifecycle.py start --mode full`
+- Web 一键启动：`start_web.bat`，统一委托 `scripts/launcher.py web`
 - 后端：`python scripts/lifecycle.py start --mode backend`
-- Electron：`frontend` 下执行 `npm run electron:start`
+- Electron 一键启动：`start_electron.bat`，统一委托 `scripts/launcher.py electron`
+
+启动器按 `MAIN_PYTHON`、未提交的 `config/runtime.local.json`、已知项目 Conda 环境、当前解释器依次选择 Python，执行依赖与资产预检，并在启动前构建前端。可用 `python scripts/launcher.py doctor` 单独诊断环境；本机配置模板见 `config/runtime.local.example.json`。

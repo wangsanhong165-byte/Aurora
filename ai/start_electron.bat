@@ -1,5 +1,5 @@
 @echo off
 setlocal
-cd /d "%~dp0frontend"
-npm.cmd run electron:start
+cd /d "%~dp0"
+python scripts\launcher.py electron --pause-on-error
 endlocal

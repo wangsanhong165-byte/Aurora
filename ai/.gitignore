@@ -27,6 +27,7 @@ tts_outputs/
 # Environment files with secrets
 .env
 config/.env
+config/runtime.local.json
 
 olv_extracted/
 

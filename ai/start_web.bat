@@ -1,5 +1,5 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-python scripts\lifecycle.py start --mode full
+python scripts\launcher.py web --pause-on-error
 endlocal
