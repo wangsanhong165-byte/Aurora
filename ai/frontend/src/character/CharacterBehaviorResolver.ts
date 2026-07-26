@@ -9,6 +9,8 @@ export interface CharacterIntent {
   attention?: 'user' | 'screen' | 'away' | 'neutral'
   energy?: number
   durationMs?: number
+  naturalVAD?: { valence: number; arousal: number; dominance: number }
+  contextTags?: string[]
 }
 
 export interface BehaviorMapping {
@@ -46,6 +48,12 @@ const DEFAULT_BEHAVIORS: Record<string, BehaviorMapping> = {
   disagree: { motion: 'tilt' },
   think: { motion: 'thinking', suppressIdle: true },
   excited: { motion: 'wave', expression: 'happy', motionIntensityScale: 1.15 },
+  laugh: { motion: 'nod', expression: 'joyful', motionIntensityScale: 1.1 },
+  comfort: { motion: 'tilt', expression: 'calm', motionIntensityScale: 0.65 },
+  wave: { motion: 'wave' },
+  nod: { motion: 'nod' },
+  tilt: { motion: 'tilt' },
+  shrug: { motion: 'tilt', motionIntensityScale: 0.7 },
   listen: { expression: 'neutral' },
   idle: { expression: 'neutral' },
 }

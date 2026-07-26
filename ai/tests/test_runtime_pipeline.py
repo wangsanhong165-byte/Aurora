@@ -22,7 +22,6 @@ from app.interfaces.asr import ASRInterface, MockASR
 from app.interfaces.tts import TTSInterface, MockTTS
 from app.interfaces.memory import MemoryInterface, MockMemory
 from app.interfaces.tool import ToolInterface
-from app.interfaces.live2d import Live2DInterface
 from app.providers.registry import provider_registry
 
 # Force ALL default providers to mocks BEFORE Runtime import
@@ -32,9 +31,29 @@ provider_registry.register(TTSInterface, "default", MockTTS)
 provider_registry.register(MemoryInterface, "default", MockMemory)
 
 from app.runtime.event import Event, EventType
-from app.runtime.context import Context
 from app.runtime.pipeline import Pipeline, Step
-from app.runtime.runtime import CompanionRuntime
+from app.runtime.character_turn import CharacterTurn, TurnInput, TurnOrigin
+from app.runtime.runtime import CharacterRuntime
+
+
+class CompanionRuntime(CharacterRuntime):
+    """Test-only adapter for exercising the preserved event fixtures."""
+
+    async def dispatch(self, event):
+        if event.type == EventType.SPEECH_RECEIVED:
+            turn_input = TurnInput(
+                audio=event.payload["audio"],
+                sample_rate=event.payload.get("sample_rate", 16000),
+            )
+        elif event.type == EventType.INITIATIVE_TRIGGERED:
+            turn_input = TurnInput(
+                text=event.payload.get("display_text", event.payload.get("text", "")),
+                origin=TurnOrigin.INITIATIVE,
+                metadata={"initiative": event.payload.get("initiative", {})},
+            )
+        else:
+            turn_input = TurnInput(text=event.payload.get("text", ""))
+        return await self.handle_turn(turn_input)
 from app.runtime.state_store import state_store
 
 
@@ -48,21 +67,21 @@ class TrackingStep(Step):
         self.set_key = set_key
         self.set_value = set_value
 
-    async def run(self, ctx: Context) -> None:
+    async def run(self, ctx: CharacterTurn) -> None:
         self.order.append(self.name)
         if self.set_key:
-            ctx.state[self.set_key] = self.set_value
+            ctx.metrics[self.set_key] = self.set_value
 
 
 class ErrorStep(Step):
     """Step that sets ctx.error."""
-    async def run(self, ctx: Context) -> None:
-        ctx.error = "test error"
+    async def run(self, ctx: CharacterTurn) -> None:
+        ctx.fail("test.error", "test error")
 
 
 class BrokenStep(Step):
     """Step that raises an exception."""
-    async def run(self, ctx: Context) -> None:
+    async def run(self, ctx: CharacterTurn) -> None:
         raise RuntimeError("broken")
 
 
@@ -83,10 +102,10 @@ class TestPipeline(unittest.TestCase):
 
     def test_empty_pipeline_returns_context(self):
         """An empty pipeline should run without error."""
-        ctx = Context(event=Event(EventType.TEXT_RECEIVED, {"text": "hello"}))
+        ctx = CharacterTurn(input=TurnInput(text="hello"))
         result = _run(self.pipeline.run(ctx))
         self.assertIs(result, ctx)
-        self.assertEqual(ctx.error, "")
+        self.assertIsNone(ctx.error)
 
     def test_steps_execute_in_order(self):
         """Steps should execute in the order they were added."""
@@ -94,13 +113,13 @@ class TestPipeline(unittest.TestCase):
         b = TrackingStep("B", "from_b", "val_b")
         self.pipeline.add(a).add(b)
 
-        ctx = Context(event=Event(EventType.TEXT_RECEIVED, {"text": "hi"}))
+        ctx = CharacterTurn(input=TurnInput(text="hi"))
         _run(self.pipeline.run(ctx))
 
         self.assertEqual(a.order, ["A"])
         self.assertEqual(b.order, ["B"])
-        self.assertEqual(ctx.state.get("from_a"), "val_a")
-        self.assertEqual(ctx.state.get("from_b"), "val_b")
+        self.assertEqual(ctx.metrics.get("from_a"), "val_a")
+        self.assertEqual(ctx.metrics.get("from_b"), "val_b")
 
     def test_pipeline_stops_on_error(self):
         """Pipeline should stop at the first step that sets ctx.error."""
@@ -109,11 +128,11 @@ class TestPipeline(unittest.TestCase):
         c = TrackingStep("C")
         self.pipeline.add(a).add(b).add(c)
 
-        ctx = Context(event=Event(EventType.TEXT_RECEIVED, {"text": "hi"}))
+        ctx = CharacterTurn(input=TurnInput(text="hi"))
         _run(self.pipeline.run(ctx))
 
         self.assertEqual(a.order, ["A"])
-        self.assertEqual(ctx.error, "test error")
+        self.assertEqual(ctx.error.message, "test error")
         self.assertEqual(c.order, [])
 
 
@@ -134,7 +153,7 @@ class TestCompanionRuntime(unittest.TestCase):
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
         ctx = _run(self.runtime.dispatch(event))
         self.assertIsNotNone(ctx)
-        self.assertEqual(ctx.error, "")
+        self.assertIsNone(ctx.error)
 
     def test_dispatch_populates_user_text(self):
         """TEXT_RECEIVED should populate ctx.user_text."""
@@ -152,7 +171,7 @@ class TestCompanionRuntime(unittest.TestCase):
         """Context should have a character after dispatch."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
         ctx = _run(self.runtime.dispatch(event))
-        self.assertIn("character", ctx.state)
+        self.assertIsNotNone(ctx.character)
 
     def test_dispatch_speech_event(self):
         """SPEECH_RECEIVED events should be processed."""
@@ -164,7 +183,7 @@ class TestCompanionRuntime(unittest.TestCase):
 
     def test_providers_available(self):
         """All expected providers should be initialized."""
-        expected = {"llm", "memory", "tool", "tts", "asr", "live2d"}
+        expected = {"llm", "memory", "tool", "tts", "asr"}
         self.assertTrue(expected.issubset(self.runtime.providers.keys()))
 
     def test_conversation_history(self):
@@ -192,14 +211,14 @@ class TestDecisionStep(unittest.TestCase):
         """DecisionStep should produce a reply_text in the context."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "Hello!"}, source="test")
         ctx = _run(self.runtime.dispatch(event))
-        self.assertEqual(ctx.error, "")
+        self.assertIsNone(ctx.error)
 
     def test_pipeline_includes_all_steps(self):
-        """The pipeline should have all 9 registered steps."""
+        """The pipeline should use the single durable MemorySaveStep."""
         step_names = [type(s).__name__ for s in self.runtime.pipeline._steps]
         expected = ["ASRStep", "CharacterStep", "MemoryRetrieveStep",
                     "DecisionStep", "EmotionStep", "MemorySaveStep",
-                    "TTSStep", "Live2DStep", "HistorySaveStep"]
+                    "TTSStep", "Live2DStep"]
         self.assertEqual(step_names, expected)
 
 
@@ -232,29 +251,24 @@ class TestEventCreation(unittest.TestCase):
         self.assertEqual(e.payload.get("key"), "val")
 
 
-class TestContextCreation(unittest.TestCase):
-    """Context initialization and state."""
+class TestCharacterTurnCreation(unittest.TestCase):
+    """CharacterTurn initialization and typed state."""
 
     def test_context_from_event(self):
-        """Context stores the event; user_text is set by dispatch, not Context."""
-        e = Event(EventType.TEXT_RECEIVED, {"text": "hello world"})
-        ctx = Context(event=e)
-        self.assertEqual(ctx.event, e)
-        # user_text is NOT auto-extracted by Context — runtime.dispatch() sets it
-        self.assertEqual(ctx.user_text, "")
+        """CharacterTurn derives its event and text from TurnInput."""
+        ctx = CharacterTurn(input=TurnInput(text="hello world"))
+        self.assertEqual(ctx.event.type, EventType.TEXT_RECEIVED)
+        self.assertEqual(ctx.user_text, "hello world")
 
     def test_context_from_speech_event(self):
         """Context should have empty user_text for speech events."""
-        e = Event(EventType.SPEECH_RECEIVED,
-                  {"audio": b"data", "sample_rate": 16000})
-        ctx = Context(event=e)
+        ctx = CharacterTurn(input=TurnInput(audio=b"data", sample_rate=16000))
         self.assertEqual(ctx.user_text, "")
 
     def test_context_default_values(self):
         """Context should have sensible defaults."""
-        e = Event(EventType.TEXT_RECEIVED, {"text": "hi"})
-        ctx = Context(event=e)
-        self.assertEqual(ctx.error, "")
+        ctx = CharacterTurn(input=TurnInput(text="hi"))
+        self.assertIsNone(ctx.error)
         self.assertEqual(ctx.reply_text, "")
         self.assertEqual(ctx.emotion, "neutral")
 
@@ -298,21 +312,20 @@ class TestMemorySteps(unittest.TestCase):
         self.runtime = CompanionRuntime()
 
     def test_memory_retrieve(self):
-        """MemoryRetrieveStep should store results in ctx.state['memories']."""
+        """MemoryRetrieveStep should store results in the typed turn field."""
         from app.runtime.steps import MemoryRetrieveStep
         step = MemoryRetrieveStep(self.memory)
-        ctx = Context(
-            event=Event(EventType.TEXT_RECEIVED,
-                        {"text": "what did we talk about?"})
-        )
+        from app.runtime.character_turn import CharacterTurn, TurnInput
+        ctx = CharacterTurn(input=TurnInput(text="what did we talk about?"))
         _run(step.run(ctx))
-        self.assertIn("memories", ctx.state)
+        self.assertIsInstance(ctx.memories, list)
 
     def test_memory_save(self):
         """MemorySaveStep should store turn data."""
         from app.runtime.steps import MemorySaveStep
         step = MemorySaveStep(self.memory)
-        ctx = Context(event=Event(EventType.TEXT_RECEIVED, {"text": "hi"}))
+        from app.runtime.character_turn import CharacterTurn, TurnInput
+        ctx = CharacterTurn(input=TurnInput(text="hi"))
         ctx.reply_text = "hello back"
         ctx.user_text = "hi"
         _run(step.run(ctx))
@@ -331,8 +344,8 @@ class TestCharacterStep(unittest.TestCase):
         """CharacterStep should inject character into context."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
         ctx = _run(CompanionRuntime().dispatch(event))
-        self.assertIn("character", ctx.state)
-        self.assertIn("emotion", ctx.state)
+        self.assertIsNotNone(ctx.character)
+        self.assertTrue(ctx.emotion)
 
 
 class TestEmotionStep(unittest.TestCase):
@@ -346,7 +359,7 @@ class TestEmotionStep(unittest.TestCase):
         """EmotionStep should set a default emotion."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
         ctx = _run(CompanionRuntime().dispatch(event))
-        self.assertIn("emotion", ctx.state)
+        self.assertTrue(ctx.emotion)
 
 
 class TestTTSStep(unittest.TestCase):
@@ -362,7 +375,7 @@ class TestTTSStep(unittest.TestCase):
         """TTSStep should not crash when reply_text is empty."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
         ctx = _run(self.runtime.dispatch(event))
-        self.assertEqual(ctx.error, "")
+        self.assertIsNone(ctx.error)
 
 
 class TestFullEventFlow(unittest.TestCase):
@@ -380,7 +393,7 @@ class TestFullEventFlow(unittest.TestCase):
         """Text input → dispatch → reply context."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
         ctx = _run(self.runtime.dispatch(event))
-        self.assertEqual(ctx.error, "")
+        self.assertIsNone(ctx.error)
         self.assertEqual(ctx.user_text, "hello")
 
     def test_multiple_turns(self):
@@ -389,7 +402,7 @@ class TestFullEventFlow(unittest.TestCase):
             event = Event(EventType.TEXT_RECEIVED,
                           {"text": f"message {i}"}, source="test")
             ctx = _run(self.runtime.dispatch(event))
-            self.assertEqual(ctx.error, "")
+            self.assertIsNone(ctx.error)
 
     def test_speech_then_text(self):
         """Mixed speech and text events should both work."""
@@ -401,7 +414,7 @@ class TestFullEventFlow(unittest.TestCase):
         text_event = Event(EventType.TEXT_RECEIVED,
                            {"text": "hello"}, source="test")
         ctx = _run(self.runtime.dispatch(text_event))
-        self.assertEqual(ctx.error, "")
+        self.assertIsNone(ctx.error)
 
 
 if __name__ == "__main__":

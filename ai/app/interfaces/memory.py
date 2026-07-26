@@ -53,7 +53,7 @@ class MemoryInterface(ABC):
     def notify_turn(self) -> None:
         """Signal that a conversation turn has been processed.
 
-        Called by Runtime.dispatch() after each successful pipeline run.
+        Called by CharacterRuntime after each successful turn.
         Implementations use this to trigger periodic background work
         (e.g., fact extraction, memory compilation) without Runtime
         knowing about their internal scheduler.

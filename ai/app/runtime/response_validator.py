@@ -23,8 +23,8 @@ class ResponseValidator:
             text = str(raw.get("text", "")).strip()
             if not text:
                 continue
-            emotion = raw.get("emotion", "neutral")
-            behavior = raw.get("behavior", "speak")
+            emotion = str(raw.get("emotion", "neutral")).lower()
+            behavior = str(raw.get("behavior", "speak")).lower()
             if emotion not in EMOTIONS:
                 emotion = "neutral"
             if behavior not in BEHAVIORS or behavior == "idle":

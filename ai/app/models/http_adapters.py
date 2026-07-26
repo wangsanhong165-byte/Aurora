@@ -151,10 +151,15 @@ class OpenAILLMAdapter:
 
             usage = {}
             if resp.usage:
+                prompt_details = getattr(resp.usage, "prompt_tokens_details", None)
                 usage = {
                     "prompt_tokens": resp.usage.prompt_tokens,
                     "completion_tokens": resp.usage.completion_tokens,
                     "total_tokens": resp.usage.total_tokens,
+                    "cached_tokens": (
+                        getattr(prompt_details, "cached_tokens", 0)
+                        if prompt_details is not None else 0
+                    ),
                 }
 
             if msg.tool_calls and tools:

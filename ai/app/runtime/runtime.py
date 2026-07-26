@@ -1,29 +1,37 @@
-"""CompanionRuntime — the single entry point for all events.
+"""CharacterRuntime — the single owner and entry point for all turns.
 
 Usage:
     from app.runtime.runtime import runtime
-    from app.runtime.event import Event
+    from app.runtime.character_turn import TurnInput
 
-    ctx = await runtime.dispatch(Event("text_received", {"text": "hello"}))
+    turn = await runtime.handle_turn(TurnInput(text="hello"))
 """
 
 from __future__ import annotations
 
 import os
-import threading
+import logging
+import time
 from typing import Any, Awaitable, Callable
 
 from app.core.initiative_queue import initiative_queue
 from app.core.intent import compute_candidates, decide_action
 from app.core.state import mood_tracker, state_store as core_state_store
-from app.runtime.event import Event, EventType
-from app.runtime.context import Context
+from app.runtime.character_turn import (
+    CharacterTurn,
+    TurnInput,
+    TurnOrigin,
+    TurnPhase,
+)
+from app.runtime.initiative import InitiativeCandidate, InitiativeQueue
 from app.runtime.pipeline import Pipeline
 from app.runtime.prompts import build_initiative_prompt
 from app.runtime.state_store import state_store
 
+logger = logging.getLogger("character_runtime")
 
-class CompanionRuntime:
+
+class CharacterRuntime:
     """Central runtime. Holds a Pipeline and dispatches Events through it.
 
     Subclasses can override PROVIDER_BINDINGS to change which interfaces
@@ -40,10 +48,12 @@ class CompanionRuntime:
         self._character_registry = None
         self._initiative_cooldown: float = 120.0
         self._last_initiative_time: float = 0.0
-        self._pending_initiatives: list[tuple[str, dict]] = []
-        self._initiative_lock = threading.Lock()
+        self._initiative_queue = InitiativeQueue()
+        self._turn_lock = None
+        self._runtime_idle = True
         self._initiative_task: Any = None  # asyncio Task for draining
-        self._proactive_handlers: list[Callable[[Context], Awaitable[None]]] = []
+        self._proactive_handlers: list[Callable[[CharacterTurn], Awaitable[None]]] = []
+        self._initiative_memory_selector = None
         self._setup_pipeline()
 
     def _setup_pipeline(self):
@@ -66,6 +76,8 @@ class CompanionRuntime:
         from app.domain.conversation import Conversation
 
         character = self._load_character()
+        from app.domain.character_self import CharacterSelf
+        self.character_self = CharacterSelf(character)
         self.conversation = Conversation()
 
         for step in self._build_pipeline_steps(self.providers, character):
@@ -79,6 +91,9 @@ class CompanionRuntime:
 
         # ── Background services ─────────────────────────────────────
         self._init_memory_ticker()
+        memory_provider = self.providers.get("memory")
+        if memory_provider is not None and hasattr(memory_provider, "restore_character"):
+            memory_provider.restore_character(character)
         self._init_initiative_system()
         self._init_screen_watcher()
 
@@ -93,7 +108,6 @@ class CompanionRuntime:
         from app.interfaces.tts import TTSInterface
         from app.interfaces.asr import ASRInterface
         from app.interfaces.memory import MemoryInterface
-        from app.interfaces.live2d import Live2DInterface
         from app.interfaces.tool import ToolInterface
 
         return [
@@ -102,7 +116,6 @@ class CompanionRuntime:
             (ToolInterface, "tool"),
             (TTSInterface, "tts"),
             (ASRInterface, "asr"),
-            (Live2DInterface, "live2d"),
         ]
 
     def _build_pipeline_steps(self, providers: dict, character: Any) -> list:
@@ -113,7 +126,7 @@ class CompanionRuntime:
         """
         from app.runtime.steps import (
             ASRStep, MemoryRetrieveStep, MemorySaveStep, CharacterStep,
-            EmotionStep, DecisionStep, TTSStep, Live2DStep, HistorySaveStep,
+            EmotionStep, DecisionStep, TTSStep, Live2DStep,
         )
 
         return [
@@ -125,7 +138,6 @@ class CompanionRuntime:
             MemorySaveStep(providers["memory"]),
             TTSStep(providers["tts"]),
             Live2DStep(),
-            HistorySaveStep(),
         ]
 
     def switch_character(self, character_id: str) -> dict:
@@ -143,6 +155,11 @@ class CompanionRuntime:
             self._character_registry = reg
             card = reg.active
             new_character = Character(card)
+            from app.domain.character_self import CharacterSelf
+            self.character_self = CharacterSelf(new_character)
+            memory_provider = self.providers.get("memory")
+            if memory_provider is not None and hasattr(memory_provider, "restore_character"):
+                memory_provider.restore_character(new_character)
             if hasattr(self, "_character_step"):
                 self._character_step.set_character(new_character)
             name = card.get("name", {}).get("zh", card.get("id", "AI"))
@@ -222,7 +239,7 @@ class CompanionRuntime:
         self._initiative_task = self._start_initiative_drain()
 
     def register_proactive_handler(
-        self, handler: Callable[[Context], Awaitable[None]]
+        self, handler: Callable[[CharacterTurn], Awaitable[None]]
     ) -> None:
         """Register an async handler that receives proactive LLM responses.
 
@@ -232,7 +249,7 @@ class CompanionRuntime:
         self._proactive_handlers.append(handler)
 
     def unregister_proactive_handler(
-        self, handler: Callable[[Context], Awaitable[None]]
+        self, handler: Callable[[CharacterTurn], Awaitable[None]]
     ) -> None:
         """Remove a previously registered proactive handler."""
         if handler in self._proactive_handlers:
@@ -265,16 +282,15 @@ class CompanionRuntime:
         import asyncio
         while True:
             await asyncio.sleep(0.5)
-            with self._initiative_lock:
-                if not self._pending_initiatives:
-                    continue
-                prompts = self._pending_initiatives[:]
-                self._pending_initiatives.clear()
-            for prompt in prompts:
-                try:
-                    await self._dispatch_initiative(prompt)
-                except Exception:
-                    pass
+            candidate = self._initiative_queue.pop_next(
+                runtime_idle=self._runtime_idle
+            )
+            if candidate is None:
+                continue
+            try:
+                await self._dispatch_initiative(candidate)
+            except Exception:
+                logger.exception("Initiative turn failed")
 
     def _on_initiative(self, events: list) -> None:
         """Called by InitiativeChecker (in a daemon thread).
@@ -307,6 +323,25 @@ class CompanionRuntime:
         self._last_initiative_time = time.time()
         if candidate is None:
             return
+
+        # Enrich the proactive topic with durable memory when one is valuable.
+        memory_provider = self.providers.get("memory")
+        store = getattr(memory_provider, "_store", None)
+        char = getattr(getattr(self, "_character_step", None), "character", None)
+        if char is None:
+            char = ctx.get("character") or core_state_store.get("character")
+        char_id = getattr(char, "id", "") if char is not None else ""
+        memory_topic = None
+        if store is not None:
+            from app.runtime.initiative_memory import InitiativeMemorySelector
+            if self._initiative_memory_selector is None:
+                self._initiative_memory_selector = InitiativeMemorySelector(store)
+            memory_topic = self._initiative_memory_selector.select(char_id)
+        if memory_topic:
+            candidate = dict(candidate)
+            candidate["topic"] = memory_topic["topic"]
+            candidate["memory_reason"] = memory_topic["reason"]
+            candidate["memory_id"] = memory_topic["memory_id"]
 
         # Step 3: detect character language for initiative prompt
         char = ctx.get("character") or core_state_store.get("character")
@@ -343,41 +378,58 @@ class CompanionRuntime:
             recent_conversation=recent_summary,
         )
 
-        # Thread-safe: push to pending list, main-loop coroutine dispatches it
         initiative = {
             "intent": candidate["type"],
             "topic": candidate["topic"],
             "source_type": candidate.get("source_type", ""),
             "source_payload": candidate.get("source_payload", {}),
             "urgency": candidate.get("score", 0),
+            "memory_reason": candidate.get("memory_reason", ""),
+            "memory_id": candidate.get("memory_id"),
         }
-        with self._initiative_lock:
-            self._pending_initiatives.append((prompt, initiative))
-
-    async def _dispatch_initiative(self, pending) -> None:
-        """Create and dispatch an INITIATIVE_TRIGGERED event."""
-        if isinstance(pending, tuple):
-            prompt, initiative = pending
-        else:
-            prompt, initiative = pending, {}
-        event = Event(
-            type=EventType.INITIATIVE_TRIGGERED,
-            payload={"display_text": prompt, "initiative": initiative},
-            source="initiative_checker",
+        self._initiative_queue.enqueue(
+            InitiativeCandidate.create(
+                source="initiative_checker",
+                topic=str(candidate["topic"]),
+                priority=float(candidate.get("score", 0)),
+                freshness=1.0,
+                ttl_seconds=max(30.0, self._initiative_cooldown),
+                payload={"prompt": prompt, "initiative": initiative},
+            )
         )
-        ctx = await self.dispatch(event)
 
-        if ctx.error or not ctx.reply_text:
+    async def _dispatch_initiative(self, pending: InitiativeCandidate) -> None:
+        """Create and dispatch an INITIATIVE_TRIGGERED event."""
+        prompt = str(pending.payload.get("prompt", pending.topic))
+        initiative = dict(pending.payload.get("initiative", {}))
+        turn = await self.handle_turn(
+            TurnInput(
+                text=prompt,
+                origin=TurnOrigin.INITIATIVE,
+                metadata={"initiative": initiative},
+            )
+        )
+
+        if turn.error or not turn.reply_text:
             return
+
+        initiative = turn.initiative
+        memory_id = initiative.get("memory_id")
+        if memory_id is not None:
+            memory_provider = self.providers.get("memory")
+            store = getattr(memory_provider, "_store", None)
+            character = turn.character
+            if store is not None and character is not None:
+                store.mark_initiative_used(character.id, memory_id)
 
         # Track in initiative buffer for closure detection
         from app.core.initiative_buffer import initiative_buffer
-        initiative_buffer.push(ctx.reply_text[:80], ctx.reply_text)
+        initiative_buffer.push(turn.reply_text[:80], turn.reply_text)
 
         # Push to all registered frontend handlers
         for handler in self._proactive_handlers:
             try:
-                await handler(ctx)
+                await handler(turn)
             except Exception:
                 pass
 
@@ -449,66 +501,91 @@ class CompanionRuntime:
             async def set_gesture(self, *a, **kw): pass
         return _Fallback()
 
-    async def dispatch(
-        self, event: Event, status_callback=None, confirmation_callback=None
-    ) -> Context:
-        """Single entry point — all interaction types flow through here.
+    async def handle_turn(
+        self,
+        turn_input: TurnInput,
+        status_callback=None,
+        confirmation_callback=None,
+    ) -> CharacterTurn:
+        """Run one typed character turn through the complete pipeline.
 
         Args:
-            event: The event to dispatch.
+            turn_input: Typed user, speech, tool, system, or initiative input.
             status_callback: Optional async callable called with status strings
                              during pipeline execution (e.g., tool calls).
 
-        Returns the Context after all pipeline steps have run.
+        Returns the completed or failed CharacterTurn.
         """
+        started_at = time.perf_counter()
+        import asyncio
+        if self._turn_lock is None:
+            self._turn_lock = asyncio.Lock()
+        async with self._turn_lock:
+            self._runtime_idle = False
+            try:
+                return await self._handle_turn_locked(
+                    turn_input,
+                    status_callback=status_callback,
+                    confirmation_callback=confirmation_callback,
+                    started_at=started_at,
+                )
+            finally:
+                self._runtime_idle = True
+
+    async def _handle_turn_locked(
+        self,
+        turn_input: TurnInput,
+        *,
+        status_callback,
+        confirmation_callback,
+        started_at: float,
+    ) -> CharacterTurn:
+        """Execute a turn while the runtime ownership lock is held."""
         # Ensure drain loop is running (retry after import-time failure
         # when no event loop was available).
         if self._initiative_task is None or self._initiative_task.done():
             self._start_initiative_drain()
 
-        ctx = Context(
-            event=event,
+        turn = CharacterTurn(
+            input=turn_input,
             status_callback=status_callback,
             confirmation_callback=confirmation_callback,
         )
-        ctx.state["event"] = event
+        turn.transition_to(TurnPhase.PROCESSING)
 
-        # Extract user_text from text events
-        if event.type == EventType.TEXT_RECEIVED:
-            ctx.user_text = event.payload.get("text", "")
-            # Reset idle timer — user actively interacted
+        if turn_input.origin is TurnOrigin.USER:
             if self.initiative_checker is not None:
                 self.initiative_checker.touch()
 
-        # Reset idle timer on speech events too
-        if event.type == EventType.SPEECH_RECEIVED:
-            if self.initiative_checker is not None:
-                self.initiative_checker.touch()
-
-        # Initiative events carry a generated prompt as user_text
-        if event.type == EventType.INITIATIVE_TRIGGERED:
-            ctx.input_origin = "initiative"
-            ctx.user_text = event.payload.get("display_text", event.payload.get("text", ""))
-            ctx.state["initiative"] = event.payload.get("initiative", {})
-
-        # Inject persistent Conversation
-        if self.conversation is not None:
-            ctx.state["conversation"] = self.conversation
+        turn.conversation = self.conversation
+        turn.character_self = self.character_self
 
         # Track turn count in state store
         turn_count = state_store.get("turn_count", 0)
         state_store.set("turn_count", turn_count + 1)
-        ctx.state["turn_count"] = turn_count + 1
+        turn.turn_count = turn_count + 1
 
-        ctx = await self.pipeline.run(ctx)
+        turn = await self.pipeline.run(turn)
 
         # Notify memory provider for background processing (ticker, etc.)
         memory_provider = self.providers.get("memory")
-        if memory_provider is not None and not ctx.error and hasattr(memory_provider, "notify_turn"):
+        usage = turn.llm_usage
+        store = getattr(memory_provider, "_store", None)
+        character = turn.character
+        if usage and store is not None and hasattr(store, "record_usage"):
+            store.record_usage(
+                getattr(character, "id", ""),
+                usage,
+                turn.context_budget,
+            )
+        if memory_provider is not None and not turn.error and hasattr(memory_provider, "notify_turn"):
             memory_provider.notify_turn()
 
-        return ctx
+        if not turn.error:
+            turn.transition_to(TurnPhase.COMPLETED)
+        turn.metrics["e2e_latency_ms"] = (time.perf_counter() - started_at) * 1000
+        return turn
 
 
 # Module-level singleton
-runtime = CompanionRuntime()
+runtime = CharacterRuntime()

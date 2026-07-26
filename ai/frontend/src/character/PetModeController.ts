@@ -21,6 +21,7 @@ export class PetModeController {
   private _state: PetState = 'OFF'
   private _idleTimer: ReturnType<typeof setTimeout> | null = null
   private _interactTimer: ReturnType<typeof setTimeout> | null = null
+  private _resumeTimer: ReturnType<typeof setTimeout> | null = null
   private _lastInteractionAt = 0
   /** Unique instance ID — used by CharacterView to detect duplicate instances. */
   public readonly instanceId: number
@@ -87,10 +88,13 @@ export class PetModeController {
   /** Runtime reports character is idle. */
   onSpeakingEnd(): void {
     if (this._state === 'OFF') return
+    if (this._state !== 'SPEAKING') return
     console.log('[PET] SPEAKING → IDLE')
     this._state = 'IDLE'
     // Delay before resuming autonomous idle (give user time to read)
-    setTimeout(() => {
+    this._clearResumeTimer()
+    this._resumeTimer = setTimeout(() => {
+      this._resumeTimer = null
       if (this._state === 'IDLE') {
         this._scheduleIdle()
       }
@@ -117,8 +121,13 @@ export class PetModeController {
     if (this._interactTimer) { clearTimeout(this._interactTimer); this._interactTimer = null }
   }
 
+  private _clearResumeTimer(): void {
+    if (this._resumeTimer) { clearTimeout(this._resumeTimer); this._resumeTimer = null }
+  }
+
   private _clearTimers(): void {
     this._clearIdleTimer()
     this._clearInteractTimer()
+    this._clearResumeTimer()
   }
 }

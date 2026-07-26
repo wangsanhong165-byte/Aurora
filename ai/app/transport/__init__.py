@@ -1,8 +1,8 @@
 # Transport layer — Companion Runtime communication protocol
 #
 # Architecture:
-#   Frontend → Transport Protocol → Runtime.dispatch()
-#   Runtime.dispatch() → Transport Protocol → Frontend
+#   Frontend → Transport Protocol → CharacterRuntime.handle_turn()
+#   CharacterRuntime.handle_turn() → Transport Protocol → Frontend
 #
 # Transport is a thin layer that serializes/deserializes messages
 # between the Frontend and the Companion Runtime. It carries NO

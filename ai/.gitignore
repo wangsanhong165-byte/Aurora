@@ -30,3 +30,11 @@ frontend/dist/
 frontend/.pytest_cache/
 frontend/*.log
 frontend/*.pid
+
+# Private runtime state (never publish to source control)
+data/avatar_state.json
+data/memory/*.db*
+data/memory/compiled/
+data/memory/histories/
+data/pids/
+.codex-*.png

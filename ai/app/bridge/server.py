@@ -1,4 +1,4 @@
-"""Live2D Bridge Server — serves frontend, Live2D models, WebSocket API."""
+﻿"""Live2D Bridge Server — serves frontend, Live2D models, WebSocket API."""
 import asyncio
 import io
 import json
@@ -187,7 +187,7 @@ def _ensure_env():
 
 
 def _load_character():
-    """Load active character card via CompanionRuntime."""
+    """Load the active character card through CharacterRuntime."""
     global _char_card, _char_name
     if _char_card is not None:
         return
@@ -278,6 +278,7 @@ logger.addHandler(_ch)
 # ── Paths ───────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend" / "dist"
+FRONTEND_PUBLIC_DIR = BASE_DIR / "frontend" / "public"
 LIVE2D_DIR = BASE_DIR / "models" / "live2d-models"
 BACKGROUNDS_DIR = Path(
     os.environ.get("BRIDGE_BACKGROUNDS_DIR",
@@ -519,32 +520,6 @@ async def list_models():
 
 
 # ── V2 Protocol WebSocket ─────────────────────────────────────────────
-
-def _make_live2d_mapper():
-    """Create a mapper that translates semantic emotions to model-specific expressions.
-
-    Reads config/live2d_models.json and the active model to resolve:
-      emotion ("happy") → emotion_map → expression ("zs1")
-
-    The mapper is called by RuntimeEventHandler._character_update() when
-    producing CharacterUpdate messages for the V2 frontend.
-    """
-    cfg = _load_live2d_config()
-    model_cfg = cfg.get(_live2d_model, {})
-    emotion_map = model_cfg.get("emotion_map", {})
-
-    def mapper(intent: dict) -> dict:
-        emotion = intent.get("emotion", "neutral")
-        model_expr = emotion_map.get(emotion, "")
-        return {
-            "model_id": _live2d_model,
-            "expression": model_expr or emotion,
-            "motion": intent.get("gesture", ""),
-        }
-
-    return mapper
-
-
 @app.websocket("/v2/ws")
 async def v2_websocket_endpoint(websocket: WebSocket):
     """V2 Runtime Protocol WebSocket.
@@ -556,10 +531,7 @@ async def v2_websocket_endpoint(websocket: WebSocket):
     from app.transport.session import WebSocketSession
 
     avatar_ctrl = _get_avatar_controller()
-    handler = RuntimeEventHandler(
-        live2d_mapper=_make_live2d_mapper(),
-        avatar_controller=avatar_ctrl,
-    )
+    handler = RuntimeEventHandler(avatar_controller=avatar_ctrl)
     session = WebSocketSession(websocket, handler.handle)
     handler.send_message = session.send  # enable assistant_chunk streaming
     handler.enable_proactive_push()       # receive proactive LLM responses
@@ -696,242 +668,20 @@ async def _send_init_conf(websocket: WebSocket) -> None:
     })
 
 
-# ── Client-WS Endpoint ──────────────────────────────────────────────────
-
-@app.websocket("/runtime-ws")
-async def runtime_websocket_endpoint(websocket: WebSocket):
-    """Alternate WebSocket endpoint that routes through CompanionRuntime.dispatch().
-
-    Opt-in by connecting to ws://host:port/runtime-ws instead of /client-ws.
-    Handles the same message types but uses the v2 Pipeline internally.
-    """
-    from app.bridge.runtime_handler import RuntimeWebSocketHandler
-    handler = RuntimeWebSocketHandler(avatar_controller=_get_avatar_controller())
-
-    await websocket.accept()
-    await _send_init_conf(websocket)
-    logger.info("[RuntimeWS] New connection")
-
-    ws_id = f"rws_{id(websocket)}"
-    _mic_buffers[ws_id] = {"samples": [], "sample_rate": 16000}
-
-    try:
-        while True:
-            try:
-                raw = await asyncio.wait_for(websocket.receive_text(), timeout=300)
-            except asyncio.TimeoutError:
-                # No message for 5 min — probe connection
-                try:
-                    await websocket.send_text(json.dumps({"type": "pong"}))
-                except Exception:
-                    break
-                continue
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-
-            msg_type = msg.get("type", "")
-
-            if msg_type == "text-input":
-                user_text = str(msg.get("text", "")).strip()
-                if user_text:
-                    await handler.handle_text(websocket, user_text)
-
-            elif msg_type == "mic-audio-data":
-                audio_data = msg.get("audio", [])
-                buf = _mic_buffers.get(ws_id)
-                if buf:
-                    buf["samples"].extend(float(v) for v in audio_data)
-
-            elif msg_type == "mic-audio-end":
-                buf = _mic_buffers.pop(ws_id, None)
-                if buf and buf["samples"]:
-                    import struct
-                    samples = buf["samples"]
-                    sr = buf["sample_rate"]
-                    wav_bytes = _float32_to_wav(samples, sr)
-                    await handler.handle_voice(websocket, wav_bytes, sr)
-
-            elif msg_type == "ai-speak-signal":
-                idle_time = float(msg.get("idle_time", 5))
-                await handler.handle_proactive(websocket, idle_time)
-
-            elif msg_type == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}))
-
-            # All other message types (fetch-backgrounds, history, etc.)
-            # fall through to the legacy handler for now
-            elif msg_type in ("fetch-backgrounds", "fetch-configs",
-                              "fetch-history-list", "fetch-and-set-history",
-                              "create-new-history", "delete-history",
-                              "switch-character", "reload-prompts"):
-                # Delegate to legacy handler for non-core messages
-                pass  # These are handled by REST API endpoints in production
-
-    except WebSocketDisconnect:
-        _mic_buffers.pop(ws_id, None)
-        logger.info("[RuntimeWS] disconnected")
-    except Exception as e:
-        _mic_buffers.pop(ws_id, None)
-        logger.error("[RuntimeWS] error: %s", e)
-
+# ── Canonical V3 WebSocket alias ───────────────────────────────────────
 
 @app.websocket("/client-ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint — routes core interaction through CompanionRuntime.dispatch().
-
-    Thin transport layer: text-input, mic-audio-end, and ai-speak-signal are
-    forwarded to RuntimeWebSocketHandler which calls Runtime.dispatch().
-    All other message types (history, backgrounds, config) are handled inline.
-    """
-    from app.bridge.runtime_handler import RuntimeWebSocketHandler
-    handler = RuntimeWebSocketHandler(avatar_controller=_get_avatar_controller())
-
-    logger.info("New WebSocket: %s", websocket.client)
-    t0 = time.perf_counter()
-    ws_id = f"ws_{id(websocket)}"
-    await websocket.accept()
-    logger.info("WebSocket accepted in %s", _elapsed_s(t0))
-    # Send initial config to properly initialize frontend state
-    await _send_init_conf(websocket)
-
-    try:
-        while True:
-            try:
-                raw = await asyncio.wait_for(websocket.receive_text(), timeout=300)
-            except asyncio.TimeoutError:
-                # No message for 5 min — probe connection
-                try:
-                    await _ws_send(websocket, {"type": "pong"})
-                except Exception:
-                    break
-                continue
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                await websocket.send_text(raw)
-                continue
-
-            msg_type = msg.get("type", "")
-
-            if msg_type == "text-input":
-                user_text = str(msg.get("text", "")).strip()
-                if user_text:
-                    await handler.handle_text(websocket, user_text)
-
-            elif msg_type == "mic-audio-data":
-                # Buffer audio chunk
-                audio_data = msg.get("audio", [])
-                buf = _get_mic_buffer(ws_id)
-                buf["samples"].extend(float(v) for v in audio_data)
-
-            elif msg_type == "mic-audio-end":
-                buf = _mic_buffers.pop(ws_id, None)
-                if buf and buf["samples"]:
-                    samples = buf["samples"]
-                    sr = buf["sample_rate"]
-                    wav_bytes = _float32_to_wav(samples, sr)
-                    await handler.handle_voice(websocket, wav_bytes, sr)
-
-            elif msg_type == "ping":
-                await _ws_send(websocket, {"type": "pong"})
-
-            elif msg_type == "ai-speak-signal":
-                idle_time = float(msg.get("idle_time", 5))
-                logger.info("[Proactive] Triggered (idle=%.0fs)", idle_time)
-                await handler.handle_proactive(websocket, idle_time)
-
-            elif msg_type == "fetch-backgrounds":
-                files = []
-                bg_dir = BACKGROUNDS_DIR
-                if bg_dir.exists():
-                    files = sorted(f.name for f in bg_dir.iterdir() if f.is_file())
-                await _ws_send(websocket, {"type": "background-files", "files": files})
-
-            elif msg_type == "fetch-configs":
-                await _ws_send(websocket, {"type": "config-files", "configs": []})
-
-            elif msg_type == "fetch-history-list":
-                histories = _get_manager().get_history_list()
-                await _ws_send(websocket, {"type": "history-list", "histories": histories})
-
-            elif msg_type == "fetch-and-set-history":
-                uid = str(msg.get("history_uid", ""))
-                if uid:
-                    result = _get_manager().load_history(uid)
-                    messages = result.get("messages", [])
-                    await _ws_send(websocket, {"type": "history-data", "messages": messages})
-
-            elif msg_type == "create-new-history":
-                result = _get_manager().create_history()
-                await _ws_send(websocket, {
-                    "type": "new-history-created",
-                    "history_uid": result.get("history_uid", ""),
-                })
-
-            elif msg_type == "delete-history":
-                uid = str(msg.get("history_uid", ""))
-                if uid:
-                    result = _get_manager().delete_history(uid)
-                    await _ws_send(websocket, {
-                        "type": "history-deleted",
-                        "success": result.get("success", False),
-                        "history_uid": uid,
-                    })
-                else:
-                    await _ws_send(websocket, {"type": "history-deleted", "success": False, "history_uid": uid})
-
-            elif msg_type == "switch-character":
-                char_id = str(msg.get("character_id", "")).strip()
-                if char_id:
-                    logger.info("[Switch] Switching to character: %s", char_id)
-                    result = _get_manager().switch_character(char_id)
-                    if "error" in result:
-                        logger.error("[Switch] Failed: %s", result["error"])
-                    else:
-                        global _char_name
-                        _char_name = result.get("character_name", "AI")
-                        logger.info("[Switch] Character switched to: %s", _char_name)
-
-                    # Send new config to frontend
-                    await _send_init_conf(websocket)
-                    await _ws_send(websocket, {
-                        "type": "character-switched",
-                        "character_id": char_id,
-                        "character_name": _char_name,
-                    })
-                else:
-                    await _ws_send(websocket, {"type": "error", "message": "switch-character requires character_id"})
-
-            elif msg_type == "reload-prompts":
-                """Hot-reload prompt template files without restart."""
-                _get_manager().reload_prompts()
-                await _ws_send(websocket, {"type": "prompts-reloaded"})
-
-            else:
-                # Unknown type: echo back for debugging
-                await websocket.send_text(raw)
-
-    except WebSocketDisconnect:
-        # Clean up mic buffer if any
-        _mic_buffers.pop(ws_id, None)
-        logger.info("WebSocket disconnected after %s", _elapsed_s(t0))
-    except Exception as e:
-        _mic_buffers.pop(ws_id, None)
-        logger.error("WebSocket error: %s", e)
-
-
-# ── Static File Serving ─────────────────────────────────────────────────
-
-PUBLIC_DIR = BASE_DIR / "frontend" / "public"
+async def client_websocket_endpoint(websocket: WebSocket):
+    """Route the historical public URL through the canonical V3 session."""
+    return await v2_websocket_endpoint(websocket)
 
 @app.get("/libs/{rest:path}")
 async def serve_libs(rest: str):
     """Serve frontend library files (Cubism Core JS, etc.)."""
-    target = PUBLIC_DIR / "libs" / rest
-    if target.exists() and target.is_file():
-        return FileResponse(str(target))
+    for root in (FRONTEND_DIR, FRONTEND_PUBLIC_DIR):
+        target = root / "libs" / rest
+        if target.exists() and target.is_file():
+            return FileResponse(str(target))
     logger.warning("  -> 404: /libs/%s not found", rest)
     return Response(status_code=404)
 

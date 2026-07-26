@@ -1,0 +1,26 @@
+# Deterministic core coverage; expand without renaming as new regressions appear.
+scenarios:
+  - id: text_greeting
+    text: "Hello. How are you today?"
+    persona_score: 4.0
+  - id: memory_recall
+    text: "What do you remember about our recent conversation?"
+    persona_score: 4.0
+  - id: tool_question
+    text: "Tell me the current time if a safe time tool is available."
+    persona_score: 4.0
+  - id: initiative_reminder
+    origin: initiative
+    text: "Offer a brief, natural reminder to drink water."
+    initiative:
+      intent: scheduled_reminder
+      topic: drink water
+    persona_score: 4.0
+  - id: screen_context
+    text: "React briefly to what I am working on."
+    screen_context:
+      activity: coding
+    persona_score: 4.0
+  - id: error_resilience
+    text: "Give a short answer without using any tool."
+    persona_score: 4.0

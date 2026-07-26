@@ -3,7 +3,7 @@ import asyncio
 from app.core.initiative_queue import InitiativeEvent
 from app.core.intent import compute_candidates
 from app.domain.character import Character
-from app.runtime.context import Context
+from app.runtime.character_turn import CharacterTurn, TurnInput, TurnOrigin
 from app.runtime.event import Event, EventType
 from app.runtime.steps.character_step import CharacterStep
 from app.runtime.steps.memory_retrieve_step import MemoryRetrieveStep
@@ -44,10 +44,10 @@ class RecordingMemory:
 
 def test_memory_retrieval_passes_character_and_origin_without_query_prefix():
     memory = RecordingMemory()
-    ctx = Context(Event(EventType.INITIATIVE_TRIGGERED, {"display_text": "提醒喝水"}))
-    ctx.user_text = "提醒喝水"
-    ctx.input_origin = "initiative"
-    ctx.state["character"] = Character({
+    ctx = CharacterTurn(input=TurnInput(
+        text="提醒喝水", origin=TurnOrigin.INITIATIVE,
+    ))
+    ctx.character = Character({
         "id": "monika", "name": {"en": "Monika"}, "character_setting": "Be natural."
     })
 
@@ -64,13 +64,12 @@ def test_memory_retrieval_passes_character_and_origin_without_query_prefix():
 
 def test_initiative_save_does_not_persist_prompt_as_user_speech():
     memory = RecordingMemory()
-    ctx = Context(Event(EventType.INITIATIVE_TRIGGERED, {
-        "display_text": "提醒喝水",
-        "initiative": {"intent": "scheduled_reminder", "topic": "喝水"},
-    }))
-    ctx.user_text = "提醒喝水"
+    ctx = CharacterTurn(input=TurnInput(
+        text="提醒喝水",
+        origin=TurnOrigin.INITIATIVE,
+        metadata={"initiative": {"intent": "scheduled_reminder", "topic": "喝水"}},
+    ))
     ctx.reply_text = "该喝水啦。"
-    ctx.input_origin = "initiative"
 
     run(MemorySaveStep(memory).run(ctx))
 
@@ -86,11 +85,11 @@ def test_character_step_can_switch_active_character():
     new = Character({"id": "new", "name": {"en": "New"}, "character_setting": "New"})
     step = CharacterStep(old)
     step.set_character(new)
-    ctx = Context(Event(EventType.TEXT_RECEIVED, {"text": "hi"}))
+    ctx = CharacterTurn(input=TurnInput(text="hi"))
 
     run(step.run(ctx))
 
-    assert ctx.state["character"].id == "new"
+    assert ctx.character.id == "new"
 
 
 def test_tool_policy_blocks_unapproved_initiative_tools():
@@ -127,11 +126,12 @@ def test_response_validator_clamps_and_replaces_invalid_presentation_fields():
 def test_planner_represents_initiative_as_system_event_not_user_message():
     from app.runtime.steps.decision_step import DefaultPlanner
 
-    ctx = Context(Event(EventType.INITIATIVE_TRIGGERED, {"display_text": "提醒喝水"}))
-    ctx.user_text = "提醒喝水"
-    ctx.input_origin = "initiative"
-    ctx.state["initiative"] = {"intent": "scheduled_reminder", "topic": "喝水"}
-    ctx.state["character"] = Character({
+    ctx = CharacterTurn(input=TurnInput(
+        text="提醒喝水",
+        origin=TurnOrigin.INITIATIVE,
+        metadata={"initiative": {"intent": "scheduled_reminder", "topic": "喝水"}},
+    ))
+    ctx.character = Character({
         "id": "monika", "name": {"en": "Monika"}, "character_setting": "Be natural."
     })
     messages = DefaultPlanner().plan(ctx).messages
@@ -240,8 +240,7 @@ def test_decision_step_retries_malformed_output_once():
             )
 
     llm = RepairingLLM()
-    ctx = Context(Event(EventType.TEXT_RECEIVED, {"text": "hello"}))
-    ctx.user_text = "hello"
+    ctx = CharacterTurn(input=TurnInput(text="hello"))
     run(DecisionStep(llm).run(ctx))
     assert llm.calls == 2
     assert ctx.reply_text == "fixed"
@@ -280,9 +279,54 @@ def test_confirmed_tool_executes_and_returns_to_model():
         return name == "write_note" and risk == "confirm"
 
     tool = ConfirmTool()
-    ctx = Context(Event(EventType.TEXT_RECEIVED, {"text": "write"}))
-    ctx.user_text = "write"
+    ctx = CharacterTurn(input=TurnInput(text="write"))
     ctx.confirmation_callback = approve
     run(DecisionStep(ToolLLM(), tool_provider=tool).run(ctx))
     assert tool.executed is True
     assert ctx.reply_text == "done"
+
+
+def test_tool_round_limit_forces_a_final_answer_without_more_tools():
+    from app.interfaces.llm import LLMResponse, ToolCall
+    from app.runtime.steps.decision_step import DecisionStep
+
+    class ReadTool:
+        async def list_tools(self):
+            return [{
+                "type": "function",
+                "function": {"name": "lookup", "parameters": {"type": "object"}},
+                "risk": "read_only",
+            }]
+
+        async def execute(self, name, args):
+            return "result"
+
+    class LoopingLLM:
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, messages, **kwargs):
+            self.calls.append(kwargs.get("tools"))
+            if kwargs.get("tools") is None:
+                return LLMResponse(reply="final synthesis")
+            return LLMResponse(tool_calls=[ToolCall("lookup", {})])
+
+    llm = LoopingLLM()
+    ctx = CharacterTurn(input=TurnInput(text="research"))
+    run(DecisionStep(llm, tool_provider=ReadTool()).run(ctx))
+    assert ctx.reply_text == "final synthesis"
+    assert llm.calls[-1] is None
+
+
+def test_json_text_tool_call_has_no_fake_native_transcript():
+    from app.providers.llm.openai_adapter import OpenAILLMProvider
+
+    provider = object.__new__(OpenAILLMProvider)
+    response = provider._normalize({
+        "content": (
+            '{"segments":[],"tool_calls":[{"name":"lookup",'
+            '"args":{"query":"x"}}],"final_reply":""}'
+        ),
+    }, [{"role": "user", "content": "find x"}])
+    assert response.tool_calls[0].name == "lookup"
+    assert response.messages == []

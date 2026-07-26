@@ -50,3 +50,16 @@ def test_electron_bat_replaces_only_the_previous_companion_instance():
     assert "electron.pid" in main
     assert "taskkill /F /T /PID" in bat
     assert "taskkill /IM electron.exe" not in bat
+
+
+def test_process_manager_has_bounded_health_recovery():
+    manager = (ROOT / "electron/process-manager.cjs").read_text(encoding="utf-8")
+
+    assert "_startHealthMonitor" in manager
+    assert "_stopHealthMonitor" in manager
+    assert "consecutiveHealthFailures" in manager
+    assert "restartHistory" in manager
+    assert "MAX_RESTARTS_PER_WINDOW" in manager
+    assert "restart_suppressed" in manager
+    assert "MAX_LOG_BYTES" in manager
+    assert "_rotateLog" in manager

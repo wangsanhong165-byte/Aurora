@@ -134,6 +134,7 @@ export class RuntimeClient {
           text: data.text,
           reasoning: data.reasoning,
           segments: data.segments,
+          diagnostics: data.diagnostics,
         })
         break
 
@@ -160,49 +161,18 @@ export class RuntimeClient {
         eventBus.emit('runtime:tts_end', { reason: data.reason })
         break
 
-      // Character state (unified)
-      case 'character_state':
-        eventBus.emit('runtime:character_state', {
-          activity: data.activity,
-          emotion: data.emotion,
-          intensity: data.intensity,
-          expression: data.expression,
-          motion: data.motion,
-          behavior: data.behavior,
-          attention: data.attention,
-          energy: data.energy,
-          durationMs: data.duration_ms,
-        })
-        break
-
-      // Character update (V2 model-ready presentation)
+      // Renderer-independent semantic presentation update.
       case 'character_update':
         console.log('[Live2D EVENT RECEIVED]', {
-          expression: data.expression,
-          motion: data.motion,
+          emotion: data.emotion,
+          behavior: data.behavior,
           speaking: data.speaking,
         })
-        eventBus.emit('runtime:character_state', {
-          activity: data.speaking ? 'speaking' : 'idle',
-          emotion: data.emotion,
-          intensity: data.intensity,
-          expression: data.expression,
-          motion: data.motion,
-          behavior: data.behavior,
-          attention: data.attention,
-          energy: data.energy,
-          durationMs: data.duration_ms,
-        })
         eventBus.emit('runtime:character_intent', {
-          emotion: data.emotion, behavior: data.behavior || data.motion, attention: data.attention || 'user',
+          emotion: data.emotion, behavior: data.behavior || 'speak', attention: data.attention || 'user',
           energy: data.energy ?? data.intensity, intensity: data.intensity, durationMs: data.duration_ms,
+          naturalVAD: data.natural_vad, contextTags: data.context_tags,
         })
-        break
-
-      // Legacy wire compatibility only. Runtime presentation is V2
-      // character_update/character_state and must not create a second path.
-      case 'character_action':
-        console.warn('[Live2D] Ignoring legacy character_action; expected V2 character_update')
         break
 
       // User message (ASR transcription forwarded from voice input)

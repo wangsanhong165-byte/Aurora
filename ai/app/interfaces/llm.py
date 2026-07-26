@@ -20,6 +20,28 @@ class ToolCall:
 
 
 @dataclass
+class LLMUsage:
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+    cached_tokens: int = 0
+    model: str = ""
+    estimated: bool = False
+
+    def __post_init__(self):
+        if not self.total_tokens:
+            self.total_tokens = self.prompt_tokens + self.completion_tokens
+
+    def add(self, other: "LLMUsage") -> None:
+        self.prompt_tokens += other.prompt_tokens
+        self.completion_tokens += other.completion_tokens
+        self.total_tokens += other.total_tokens
+        self.cached_tokens += other.cached_tokens
+        self.model = other.model or self.model
+        self.estimated = self.estimated or other.estimated
+
+
+@dataclass
 class LLMResponse:
     """Canonical LLM response — every provider returns exactly this.
 
@@ -38,6 +60,10 @@ class LLMResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     messages: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""
+    usage: LLMUsage = field(default_factory=LLMUsage)
+
+    def add_usage(self, usage: LLMUsage) -> None:
+        self.usage.add(usage)
 
 
 class LLMInterface(ABC):

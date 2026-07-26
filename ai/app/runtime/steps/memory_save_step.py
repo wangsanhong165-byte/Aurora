@@ -3,7 +3,7 @@
 import logging
 
 from app.runtime.pipeline import Step
-from app.runtime.context import Context
+from app.runtime.character_turn import CharacterTurn
 from app.interfaces.memory import MemoryInterface
 
 
@@ -20,7 +20,7 @@ class MemorySaveStep(Step):
     def __init__(self, memory: MemoryInterface):
         self.memory = memory
 
-    async def run(self, ctx: Context) -> None:
+    async def run(self, ctx: CharacterTurn) -> None:
         # Get user text from ASR (voice) or event payload (text input)
         user_text = ctx.user_text or ctx.event.payload.get("text", "")
         if ctx.input_origin == "initiative":
@@ -31,18 +31,40 @@ class MemorySaveStep(Step):
             return
 
         # Store the turn as a memory entry
-        character = ctx.state.get("character")
-        await self.memory.store("conversation_turn", {
+        character = ctx.character
+        memory_payload = {
             "user": user_text,
             "assistant": reply_text,
             "emotion": ctx.emotion,
             "origin": ctx.input_origin,
             "initiative": ctx.event.payload.get("initiative", {}),
             "character_id": getattr(character, "id", "") if character else "",
-        })
+            "character": character,
+            "turn_id": ctx.turn_id,
+            "write_token": "conversation",
+        }
+        try:
+            from app.runtime.management import get_manager
+            memory_payload["history_uid"] = get_manager().current_history_uid(
+                create=True
+            )
+        except Exception:
+            memory_payload["history_uid"] = ""
+        await self.memory.store("conversation_turn", memory_payload)
+        if memory_payload["history_uid"]:
+            try:
+                get_manager().record_turn_metadata(
+                    memory_payload["history_uid"], user_text
+                )
+            except Exception:
+                logging.getLogger("memory_step").exception(
+                    "Failed to update history metadata"
+                )
+        if memory_payload.get("learned_memories"):
+            ctx.learned_memories = memory_payload["learned_memories"]
 
         # Optionally trigger consolidation every 5 turns
-        turn_count = ctx.state.get("turn_count", 0)
+        turn_count = ctx.turn_count
         if turn_count > 0 and turn_count % 5 == 0:
             try:
                 await self.memory.consolidate()

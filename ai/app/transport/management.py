@@ -62,6 +62,45 @@ class ManagementHandler:
             content = self._manager.set_pinned(params.get("content", ""))
             return [CommandResponse(action="set_pinned", data={"content": content})]
 
+        elif action == "get_memories":
+            return [CommandResponse(
+                action="get_memories",
+                data={"memories": self._manager.get_memories(
+                    bool(params.get("include_inactive", False)),
+                    int(params.get("limit", 200)),
+                )},
+            )]
+
+        elif action == "update_memory":
+            result = self._manager.update_memory(int(params.get("memory_id", 0)), params)
+            if "error" in result:
+                return [Error(code="memory_update_failed", message=result["error"])]
+            return [CommandResponse(action="update_memory", data=result)]
+
+        elif action == "forget_memory":
+            result = self._manager.forget_memory(int(params.get("memory_id", 0)))
+            return [CommandResponse(action="forget_memory", data=result)]
+
+        elif action == "get_system_metrics":
+            return [CommandResponse(
+                action="get_system_metrics",
+                data=self._manager.get_system_metrics(),
+            )]
+
+        elif action == "get_tools":
+            return [CommandResponse(
+                action="get_tools",
+                data={"tools": await self._manager.get_tools()},
+            )]
+
+        elif action == "set_tool_enabled":
+            result = self._manager.set_tool_enabled(
+                str(params.get("name", "")), bool(params.get("enabled", True))
+            )
+            if "error" in result:
+                return [Error(code="tool_settings_failed", message=result["error"])]
+            return [CommandResponse(action="set_tool_enabled", data=result)]
+
         # ── Character management ──
         elif action == "switch_character":
             result = self._manager.switch_character(params.get("character_id", ""))

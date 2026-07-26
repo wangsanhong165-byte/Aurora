@@ -75,6 +75,7 @@ class AssistantMessage:
     text: str = ""
     reasoning: str = ""
     segments: list[dict[str, Any]] = field(default_factory=list)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -135,48 +136,19 @@ class ToolConfirmation:
 
 
 @dataclass
-class CharacterAction:
-    """Character expression/motion/gesture update.
-
-    Frontend is responsible for mapping this to Live2D parameters.
-    Runtime never sends raw Cubism parameter values.
-    """
-    type: str = "character_action"
-    emotion: str = "neutral"
-    intensity: float = 0.5
-    gesture: str = ""
-
-
-@dataclass
-class CharacterState:
-    """Unified character state update.
-
-    Provides the full state snapshot so the frontend can render
-    the character without tracking state across multiple messages.
-    """
-    type: str = "character_state"
-    activity: str = "idle"      # "idle" | "thinking" | "speaking" | "listening"
-    emotion: str = "neutral"    # emotion name
-    intensity: float = 0.5      # emotion intensity 0-1
-    expression: str = ""        # specific expression name (may differ from emotion)
-    motion: str = ""            # gesture/motion name
-
-
-@dataclass
 class CharacterUpdate:
-    """Model-ready Live2D presentation update for V2 clients."""
+    """Renderer-independent semantic presentation update for V3 clients."""
     type: str = "character_update"
-    model_id: str = ""
     emotion: str = "neutral"
     intensity: float = 0.5
-    expression: str = ""
-    motion: str = ""
     speaking: bool = False
     timestamp: float = 0.0
     behavior: str = ""
     attention: str = "user"
     energy: float = 0.5
     duration_ms: int | None = None
+    natural_vad: dict[str, float] | None = None
+    context_tags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -214,7 +186,7 @@ class CommandResponse:
 
 OutboundMessage = (
     AssistantMessage | AssistantChunk | TtsStart | TtsAudio | TtsEnd
-    | RuntimeStatus | CharacterAction | CharacterState | CharacterUpdate
+    | RuntimeStatus | CharacterUpdate
     | SessionEvent | Error | Pong | CommandResponse | UserMessage
     | ToolConfirmation
 )

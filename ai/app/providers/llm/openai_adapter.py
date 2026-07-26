@@ -10,7 +10,7 @@ import asyncio
 import json
 from typing import Any, AsyncIterator
 
-from app.interfaces.llm import LLMInterface, LLMResponse, ToolCall
+from app.interfaces.llm import LLMInterface, LLMResponse, LLMUsage, ToolCall
 from app.models.http_adapters import OpenAILLMAdapter
 
 
@@ -87,7 +87,10 @@ class OpenAILLMProvider(LLMInterface):
         # ── Parse LLM text content ────────────────────────────────────
         content = result.get("content", "")
         segments: list[dict] = []
-        messages: list = result.get("_messages", list(original_messages))
+        # Only expose a transcript when the provider actually returned one.
+        # JSON-in-text tool calls have no native assistant/tool_call message;
+        # DecisionStep must synthesize that message before appending tool results.
+        messages: list = result.get("_messages", [])
         reply = content
         reasoning = str(result.get("reasoning", "") or "")
 
@@ -116,12 +119,23 @@ class OpenAILLMProvider(LLMInterface):
             except (json.JSONDecodeError, ValueError):
                 pass  # content is plain text, use as-is
 
+        raw_usage = result.get("usage") or {}
+        cached = raw_usage.get("cached_tokens", 0)
+        usage_details = raw_usage.get("prompt_tokens_details") or {}
+        cached = cached or usage_details.get("cached_tokens", 0)
         return LLMResponse(
             reply=reply,
             reasoning=reasoning,
             segments=segments,
             tool_calls=tool_calls,
             messages=messages,
+            usage=LLMUsage(
+                prompt_tokens=int(raw_usage.get("prompt_tokens", 0) or 0),
+                completion_tokens=int(raw_usage.get("completion_tokens", 0) or 0),
+                total_tokens=int(raw_usage.get("total_tokens", 0) or 0),
+                cached_tokens=int(cached or 0),
+                model=str(result.get("model", "")),
+            ),
         )
 
     async def generate_stream(

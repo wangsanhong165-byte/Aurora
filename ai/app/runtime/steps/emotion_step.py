@@ -1,7 +1,7 @@
 """EmotionStep — analyze reply text and update character emotion."""
 
 from app.runtime.pipeline import Step
-from app.runtime.context import Context
+from app.runtime.character_turn import CharacterTurn
 
 
 # Keyword → emotion mapping for lightweight analysis
@@ -57,7 +57,7 @@ class EmotionStep(Step):
       3. Keyword-based fallback detection
     """
 
-    async def run(self, ctx: Context) -> None:
+    async def run(self, ctx: CharacterTurn) -> None:
         # If LLM already provided structured segments with emotion, use those
         if ctx.segments:
             # Emotion already set by DecisionStep from segment tones
@@ -78,15 +78,16 @@ class EmotionStep(Step):
         self._update_character_emotion(ctx, emotion)
 
     @staticmethod
-    def _update_character_emotion(ctx: Context, emotion: str) -> None:
+    def _update_character_emotion(ctx: CharacterTurn, emotion: str) -> None:
         """Update character EmotionState and context emotion fields."""
-        character = ctx.state.get("character")
-        if character is not None:
-            try:
-                character.emotion.set(emotion)
-                character.mood.shift_from_emotion(emotion)
-            except Exception:
-                pass
+        character = ctx.character
+        if character is not None and ctx.character_self is not None:
+            intensity = (
+                min(1.0, ctx.emotion_intensity + 0.1)
+                if emotion != "neutral"
+                else max(0.3, ctx.emotion_intensity - 0.05)
+            )
+            ctx.character_self.commit_emotion(emotion, intensity=intensity)
             ctx.emotion = character.emotion.current
         else:
             ctx.emotion = emotion

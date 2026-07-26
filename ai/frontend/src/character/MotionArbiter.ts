@@ -84,6 +84,11 @@ export class MotionArbiter {
 
   play(name: string, source: MotionSource = 'ai', intensity = 1, durationOverride?: number): boolean {
     const normalized = name.toLowerCase()
+    if (normalized === 'idle') {
+      this.stop()
+      this._nativeFallbackReason = ''
+      return true
+    }
     const nativeName = this._motionMap[normalized] ?? normalized
     if (this._nativePlayer?.has(nativeName) && this._nativePlayer.play(nativeName, intensity)) {
       this._currentMotion = `native:${nativeName}`

@@ -44,11 +44,11 @@ def test_live2d_config_declares_behavior_mapping_without_parameter_ids():
     assert "Param" not in json.dumps(mapping)
 
 
-def test_runtime_client_does_not_drive_live2d_from_legacy_character_action():
+def test_runtime_client_has_no_legacy_character_action_protocol():
     client = (ROOT / "frontend/src/runtime/client.ts").read_text(encoding="utf-8")
-
-    legacy_case = client.split("case 'character_action':", 1)[1].split("break", 1)[0]
-    assert "eventBus.emit" not in legacy_case
+    protocol = (ROOT / "frontend/src/runtime/protocol.ts").read_text(encoding="utf-8")
+    assert "case 'character_action':" not in client
+    assert "CharacterAction" not in protocol
 
 
 def test_mixer_declares_contribution_lifecycle_and_blend_modes():
@@ -539,6 +539,18 @@ def test_native_motion_is_authorized_by_arbiter_with_logical_fallback():
     assert "channel: 'motion'" in controllers
 
 
+def test_semantic_idle_stops_business_motion_without_preset_lookup():
+    arbiter = (
+        ROOT / "frontend/src/character/MotionArbiter.ts"
+    ).read_text(encoding="utf-8")
+
+    idle_guard = arbiter.index("if (normalized === 'idle')")
+    native_lookup = arbiter.index("const nativeName")
+    unknown_warning = arbiter.index("Unknown motion:")
+    assert idle_guard < native_lookup < unknown_warning
+    assert "this.stop()" in arbiter[idle_guard:native_lookup]
+
+
 def test_profile_inspector_reports_model_assets_and_binding_coverage():
     inspector_path = ROOT / "scripts/inspect_live2d_profiles.mjs"
     assert inspector_path.exists()
@@ -731,3 +743,37 @@ def test_model_specific_idle_mouth_baseline_only_applies_outside_speech():
     assert "idle_mouth_baseline" in controllers
     assert "this.currentActivity !== 'speaking'" in controllers
     assert mao["idleMouthOpen"] > 0
+
+
+def test_live2d_defers_idle_until_browser_audio_finishes():
+    source = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+    assert "private audioPlaybackActive = false" in source
+    assert "eventBus.on('audio:start'" in source
+    assert "if (activity === 'idle' && this.audioPlaybackActive)" in source
+
+
+def test_idle_and_speech_layers_use_crossfade_weights():
+    source = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+    assert "const idleLayerWeight = 1 - this.speechWeight" in source
+    assert "idleSnapshot.headX * idleMotionScale * idleLayerWeight" in source
+    assert "this.idleCtrl.setBreathing(false)" not in source
+
+
+def test_pet_mode_tracks_delayed_idle_timer_and_ignores_duplicate_end():
+    source = (ROOT / "frontend/src/character/PetModeController.ts").read_text(encoding="utf-8")
+    assert "private _resumeTimer" in source
+    assert "if (this._state !== 'SPEAKING')" in source
+
+
+def test_context_tags_drive_performance_policy():
+    source = (ROOT / "frontend/src/character/CharacterPerformancePolicy.ts").read_text(encoding="utf-8")
+    assert "contextTags.has('whisper')" in source
+    assert "contextTags.has('reassuring')" in source
+    assert "contextTags.has('close-up')" in source
+
+
+def test_audio_decode_failure_does_not_emit_end_between_queued_segments():
+    source = (ROOT / "frontend/src/audio/player.ts").read_text(encoding="utf-8")
+    assert "private playbackGeneration = 0" in source
+    assert "if (this.queue.length > 0)" in source
+    assert "} else {\n        this.handlers.onEnd?.()" in source

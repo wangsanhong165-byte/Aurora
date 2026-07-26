@@ -34,7 +34,18 @@ class ContextAssembler:
         relevant: list[str] = []
         seen: set[str] = set()
         used = 0
-        for memory in reversed(memories[-10:]):
+        ordered = sorted(
+            enumerate(memories),
+            key=lambda pair: (
+                pair[1].get("type") == "compiled",
+                pair[1].get("source") == "hybrid",
+                float(pair[1].get("data", {}).get("score", 0) or 0),
+                pair[1].get("type") == "fact",
+                pair[0],
+            ),
+            reverse=True,
+        )
+        for _, memory in ordered:
             if not isinstance(memory, dict):
                 continue
             kind = memory.get("type", "")
@@ -52,6 +63,16 @@ class ContextAssembler:
                 role = data.get("role", "")
                 label = "User" if role == "user" else "Assistant"
                 text = f"{label}: {str(data.get('content', ''))[:300]}"
+            elif data.get("content"):
+                label = {
+                    "preference": "Preference",
+                    "recent_state": "Recent state",
+                    "episode": "Shared experience",
+                    "relationship": "Relationship memory",
+                    "open_loop": "Unfinished topic",
+                    "fact": "Fact",
+                }.get(kind, "Memory")
+                text = f"[{label}] {str(data.get('content', ''))[:500]}"
             else:
                 user, assistant = data.get("user", ""), data.get("assistant", "")
                 text = f"User said: {user}\nYou said: {assistant}" if user and assistant else ""
@@ -61,5 +82,4 @@ class ContextAssembler:
             seen.add(key)
             relevant.append(text)
             used += len(text)
-        relevant.reverse()
         return compiled, relevant

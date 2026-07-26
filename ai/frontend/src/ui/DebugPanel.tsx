@@ -22,6 +22,7 @@ interface DiagState {
   bindings: string
   intent: string
   performanceDebug: string
+  llmDiagnostics: string
 }
 
 export function DebugPanel() {
@@ -47,6 +48,7 @@ export function DebugPanel() {
     bindings: 'none',
     intent: 'none',
     performanceDebug: 'none',
+    llmDiagnostics: 'none',
   })
   const stateRef = useRef(state)
   stateRef.current = state
@@ -100,6 +102,12 @@ export function DebugPanel() {
       setState(s => ({ ...s, intent: JSON.stringify(intent) }))
     }))
 
+    unsubs.push(eventBus.on('runtime:message', ({ diagnostics }) => {
+      if (diagnostics) {
+        setState(s => ({ ...s, llmDiagnostics: JSON.stringify(diagnostics, null, 2) }))
+      }
+    }))
+
     unsubs.push(eventBus.on('character:native_catalog', ({ motions, expressions }) => {
       setNativeMotions(motions)
       setNativeExpressions(expressions)
@@ -144,6 +152,7 @@ export function DebugPanel() {
     ['Performance', state.performance],
     ['Performance Runtime', state.performanceDebug],
     ['Character Intent', state.intent],
+    ['Memory / Token', state.llmDiagnostics],
     ['Avatar Bindings', state.bindings],
     ['Last Live2D Event', state.lastLive2dEvent],
     ['TTS', state.ttsState],

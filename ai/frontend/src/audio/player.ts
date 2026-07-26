@@ -19,6 +19,7 @@ export class AudioPlayer {
   private animFrameId: number | null = null
   private queue: QueuedAudio[] = []
   private _isPlaying = false
+  private playbackGeneration = 0
 
 
 
@@ -44,6 +45,7 @@ export class AudioPlayer {
 
   /** Stop current playback and clear queue */
   stop(): void {
+    this.playbackGeneration += 1
     this.queue = []
     this.stopCurrent()
   }
@@ -68,13 +70,14 @@ export class AudioPlayer {
     if (this.queue.length === 0) return
 
     const item = this.queue.shift()!
+    const generation = this.playbackGeneration
     this._isPlaying = true
-    this.handlers.onStart?.()
 
     try {
       const ctx = this.getContext()
       const arrayBuffer = this.base64ToArrayBuffer(item.audio)
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer)
+      if (generation !== this.playbackGeneration) return
 
       const source = ctx.createBufferSource()
       source.buffer = audioBuffer
@@ -102,14 +105,17 @@ export class AudioPlayer {
         }
       }
 
+      this.handlers.onStart?.()
       source.start()
       this.startVolumeAnalysis()
     } catch {
+      if (generation !== this.playbackGeneration) return
       this._isPlaying = false
-      this.handlers.onEnd?.()
       // Skip failed audio, try next
       if (this.queue.length > 0) {
         this.playNext()
+      } else {
+        this.handlers.onEnd?.()
       }
     }
   }

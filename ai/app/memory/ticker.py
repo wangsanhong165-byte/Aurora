@@ -94,14 +94,20 @@ class MemoryTicker:
         self._last_extraction_time = now
 
         char_name = self._get_char_name()
-        stats = run_extraction_pipeline(self._llm_adapter, character_name=char_name)
+        stats = run_extraction_pipeline(
+            self._llm_adapter, character_name=char_name,
+            character_id=self._get_char_id(),
+        )
         if stats.get("facts_stored", 0) > 0 or stats.get("summary"):
             compile_today_and_assemble()
 
     def _on_session_end(self):
         """Session ended: final extraction + compile today."""
         char_name = self._get_char_name()
-        stats = run_extraction_pipeline(self._llm_adapter, character_name=char_name)
+        stats = run_extraction_pipeline(
+            self._llm_adapter, character_name=char_name,
+            character_id=self._get_char_id(),
+        )
         compile_today_and_assemble()
 
     # ── daily job ─────────────────────────────────────────────────
@@ -136,6 +142,14 @@ class MemoryTicker:
             from app.memory.compiler import get_active_char_id, _char_name_from_id
             cid = get_active_char_id()
             return _char_name_from_id(cid)
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _get_char_id() -> str:
+        try:
+            from app.memory.compiler import get_active_char_id
+            return get_active_char_id()
         except Exception:
             return ""
 

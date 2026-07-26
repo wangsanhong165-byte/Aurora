@@ -59,6 +59,19 @@ class SQLiteMemory(MemoryInterface):
 
         # Ensure memory store is initialized
         memory_store.start()
+        if self._store is not None:
+            self._store.backfill_legacy_facts()
+            from pathlib import Path
+            from app.memory.history_migration import migrate_legacy_histories
+            migrate_legacy_histories(
+                Path(__file__).resolve().parents[3],
+                self._store,
+                character_id=(
+                    getattr(character_registry, "active_id", "")
+                    if character_registry is not None
+                    else ""
+                ) or "default",
+            )
 
         # Get sync LLM adapter for the ticker
         llm_adapter = self._get_ticker_adapter(llm_provider)
@@ -140,7 +153,27 @@ class SQLiteMemory(MemoryInterface):
                     }
                     from app.memory.compiler import get_active_char_id
                     char_id = data.get("character_id", get_active_char_id() or "default")
-                    self._store.log_turn(user_text, reply, character_id=char_id)
+                    committed = self._store.log_turn(
+                        user_text,
+                        reply,
+                        character_id=char_id,
+                        turn_id=str(data.get("turn_id", "")),
+                        write_token=str(data.get("write_token", "")),
+                        history_uid=str(data.get("history_uid", "")),
+                    )
+                    if not committed:
+                        data["idempotent_replay"] = True
+                        return
+                    character = data.get("character")
+                    if character is not None and user_text:
+                        from app.runtime.character_learning import learn_from_turn
+                        data["learned_memories"] = learn_from_turn(
+                            character, user_text, self._store
+                        )
+                    elif character is not None:
+                        self._store.save_character_state(
+                            character.id, character.dynamic_state()
+                        )
         else:
             self._fallback.append({"event_type": event_type, "data": data})
 
@@ -152,9 +185,31 @@ class SQLiteMemory(MemoryInterface):
         results: list[dict] = []
 
         if self._store is not None:
+            # 0. Structured hybrid memories (semantic/lexical/importance/recency)
+            structured = self._store.search_memories(
+                query, character_id=character_id, limit=max(3, limit // 2)
+            )
+            for memory in structured:
+                results.append({
+                    "type": memory.get("memory_type", "memory"),
+                    "data": {
+                        "content": memory.get("content", ""),
+                        "score": memory.get("score", 0),
+                        "reasons": memory.get("reasons", []),
+                    },
+                    "source": "hybrid",
+                })
+            structured_contents = {
+                str(memory.get("content", "")).strip() for memory in structured
+            }
+
             # 1. Facts from SQLite
-            facts = self._store.search_facts(query=query, k=limit // 2)
+            facts = self._store.search_facts(
+                query=query, k=limit // 2, character_id=character_id
+            )
             for f in facts:
+                if str(f.get("fact", "")).strip() in structured_contents:
+                    continue
                 results.append({
                     "type": "fact",
                     "data": {"fact": f.get("fact", ""), "tags": f.get("tags", [])},
@@ -191,6 +246,12 @@ class SQLiteMemory(MemoryInterface):
                 })
 
         return results
+
+    def restore_character(self, character: Any) -> None:
+        if self._store is not None and character is not None:
+            character.restore_dynamic_state(
+                self._store.load_character_state(getattr(character, "id", ""))
+            )
 
     async def consolidate(self) -> None:
         if self._store is not None:

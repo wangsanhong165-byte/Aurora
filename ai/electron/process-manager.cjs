@@ -158,6 +158,12 @@ if (_isDev() && fs.existsSync(VITE_BIN)) {
 }
 
 const SERVICE_TIMEOUTS = { asr: 60, gsvi: 180, tts: 120, default: 30 }
+const HEALTH_INTERVAL_MS = 10000
+const HEALTH_FAILURE_THRESHOLD = 3
+const RESTART_WINDOW_MS = 5 * 60 * 1000
+const MAX_RESTARTS_PER_WINDOW = 3
+const MAX_LOG_BYTES = 5 * 1024 * 1024
+const LOG_BACKUPS = 3
 
 // ── ProcessManager class ─────────────────────────────────────────────
 
@@ -165,6 +171,9 @@ class ProcessManager {
   constructor () {
     this._processes = new Map() // name → { proc, pid, status, startTime }
     this._ready = false
+    this._stopping = false
+    this._healthTimer = null
+    this._healthCheckRunning = false
     this._ensureLogDir()
   }
 
@@ -215,7 +224,23 @@ class ProcessManager {
 
   _logFileStream (name) {
     const logPath = this._logPath(name)
+    this._rotateLog(logPath)
     return fs.createWriteStream(logPath, { flags: 'a', encoding: 'utf-8' })
+  }
+
+  _rotateLog (logPath) {
+    try {
+      if (!fs.existsSync(logPath) || fs.statSync(logPath).size < MAX_LOG_BYTES) return
+      for (let index = LOG_BACKUPS; index >= 1; index--) {
+        const source = index === 1 ? logPath : `${logPath}.${index - 1}`
+        const target = `${logPath}.${index}`
+        if (!fs.existsSync(source)) continue
+        if (fs.existsSync(target)) fs.unlinkSync(target)
+        fs.renameSync(source, target)
+      }
+    } catch (err) {
+      console.warn(`[ProcessManager] Log rotation failed: ${err.message}`)
+    }
   }
 
   _timestamp () {
@@ -279,7 +304,18 @@ class ProcessManager {
       windowsHide: true,
     }
 
-    const entry = { proc: null, pid: null, status: 'starting', startTime: Date.now(), logStream }
+    const previous = this._processes.get(name)
+    const entry = {
+      proc: null,
+      pid: null,
+      status: 'starting',
+      startTime: Date.now(),
+      logStream,
+      consecutiveHealthFailures: 0,
+      lastHealthAt: 0,
+      lastHealthError: '',
+      restartHistory: previous?.restartHistory || [],
+    }
     this._processes.set(name, entry)
 
     logStream.write(`[${this._timestamp()}] Starting: ${cmd.join(' ')}\n`)
@@ -388,6 +424,119 @@ class ProcessManager {
 
   // ── Public API ──
 
+  _probeService (svc, timeoutMs = 2000) {
+    const http = require('http')
+    const probePath = svc.startupProbe || ''
+    const url = `http://127.0.0.1:${svc.port}${probePath}`
+    return new Promise((resolve, reject) => {
+      const req = http.get(url, (res) => {
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', chunk => { body += chunk })
+        res.on('end', () => {
+          if (res.statusCode !== 200 && res.statusCode !== 404) {
+            reject(new Error(`status ${res.statusCode}`))
+            return
+          }
+          if (res.statusCode === 200 && body) {
+            try {
+              const payload = JSON.parse(body)
+              if (payload.ready === false) {
+                reject(new Error('service not ready'))
+                return
+              }
+            } catch (err) {
+              if (err.message === 'service not ready') {
+                reject(err)
+                return
+              }
+            }
+          }
+          resolve()
+        })
+      })
+      req.on('error', reject)
+      req.setTimeout(timeoutMs, () => req.destroy(new Error('health timeout')))
+    })
+  }
+
+  _startHealthMonitor () {
+    if (this._healthTimer) return
+    this._healthTimer = setInterval(() => {
+      void this._runHealthChecks()
+    }, HEALTH_INTERVAL_MS)
+    this._healthTimer.unref?.()
+  }
+
+  _stopHealthMonitor () {
+    if (this._healthTimer) clearInterval(this._healthTimer)
+    this._healthTimer = null
+  }
+
+  async _runHealthChecks () {
+    if (this._stopping || this._healthCheckRunning) return
+    this._healthCheckRunning = true
+    try {
+      for (const svc of SERVICE_DEFINITIONS) {
+        const entry = this._processes.get(svc.name)
+        if (!entry || entry.status === 'starting' || entry.status === 'restarting') continue
+        if (entry.status === 'error') {
+          await this._recoverService(svc, 'process exited')
+          continue
+        }
+        if (entry.status !== 'running') continue
+        try {
+          await this._probeService(svc)
+          entry.consecutiveHealthFailures = 0
+          entry.lastHealthAt = Date.now()
+          entry.lastHealthError = ''
+        } catch (err) {
+          entry.consecutiveHealthFailures = (entry.consecutiveHealthFailures || 0) + 1
+          entry.lastHealthAt = Date.now()
+          entry.lastHealthError = err.message
+          if (entry.consecutiveHealthFailures >= HEALTH_FAILURE_THRESHOLD) {
+            await this._recoverService(svc, err.message)
+          }
+        }
+      }
+    } finally {
+      this._healthCheckRunning = false
+    }
+  }
+
+  async _recoverService (svc, reason) {
+    if (this._stopping) return false
+    const entry = this._processes.get(svc.name)
+    if (!entry || entry.status === 'restarting') return false
+    const now = Date.now()
+    entry.restartHistory = (entry.restartHistory || [])
+      .filter(timestamp => now - timestamp < RESTART_WINDOW_MS)
+    if (entry.restartHistory.length >= MAX_RESTARTS_PER_WINDOW) {
+      entry.status = 'restart_suppressed'
+      entry.lastHealthError = `restart limit reached: ${reason}`
+      console.error(`[ProcessManager] ${svc.name}: restart suppressed (${reason})`)
+      return false
+    }
+    entry.restartHistory.push(now)
+    entry.status = 'restarting'
+    const attempt = entry.restartHistory.length
+    const delayMs = Math.min(15000, 1000 * (2 ** (attempt - 1)))
+    console.warn(`[ProcessManager] ${svc.name}: unhealthy (${reason}), restart in ${delayMs}ms`)
+    await new Promise(resolve => setTimeout(resolve, delayMs))
+    if (this._stopping) return false
+    await this._stopService(svc.name)
+    await this._startService(svc)
+    const ready = await this._waitForService(svc)
+    const fresh = this._processes.get(svc.name)
+    if (fresh) {
+      fresh.restartHistory = entry.restartHistory
+      fresh.consecutiveHealthFailures = 0
+      fresh.lastHealthAt = Date.now()
+      if (!ready) fresh.status = 'error'
+    }
+    return ready
+  }
+
   _service (name) {
     return SERVICE_DEFINITIONS.find(svc => svc.name === name)
   }
@@ -451,6 +600,7 @@ class ProcessManager {
 
   async startAll () {
     console.log('[ProcessManager] Starting all services...')
+    this._stopping = false
     this._ensureLogDir()
 
     // GPU services are sequential: avoid allocation races and only expose the
@@ -477,10 +627,13 @@ class ProcessManager {
       console.log('[ProcessManager] All services and GPU models ready')
     }
     console.log(`[ProcessManager] Startup gates: ${readyCnt}/${results.length} ready`)
+    this._startHealthMonitor()
   }
 
   async stopAll () {
     console.log('[ProcessManager] Stopping all services...')
+    this._stopping = true
+    this._stopHealthMonitor()
     const stopOrder = ['bridge', 'gsvi', 'tts', 'llm', 'asr', 'memory']
 
     for (const name of stopOrder) {
@@ -559,6 +712,10 @@ class ProcessManager {
         pid: entry.pid,
         status: entry.status,
         uptime: entry.startTime ? Date.now() - entry.startTime : 0,
+        consecutiveHealthFailures: entry.consecutiveHealthFailures || 0,
+        lastHealthAt: entry.lastHealthAt || 0,
+        lastHealthError: entry.lastHealthError || '',
+        restartCount: (entry.restartHistory || []).length,
       })
     }
     return {

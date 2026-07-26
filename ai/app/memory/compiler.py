@@ -228,7 +228,7 @@ def facts_digest(char_id: str = "") -> str:
     """Compile all stored facts into a stable user profile summary."""
     cid = char_id or _current_char_id or "default"
 
-    facts = memory_store.get_all_facts()
+    facts = memory_store.get_all_facts(character_id=cid)
     if not facts:
         return ""
 
@@ -299,7 +299,7 @@ def regenerate_for_character(char_id: str):
     print(f"[compiler] Regenerating memory for character: {char_name} ({char_id})")
 
     # Compile facts section from shared facts
-    facts = memory_store.get_all_facts()
+    facts = memory_store.get_all_facts(character_id=char_id)
     if facts:
         text = "\n".join(f"- {f['fact']}" for f in facts[:30])
         result = _call_llm(system_compile_facts(), text, timeout=20)

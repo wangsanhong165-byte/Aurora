@@ -30,7 +30,7 @@ class InitiativeChecker:
 
     Fires an on_initiative callback with the best candidate when the agent
     should proactively speak. The callback is typically wired to dispatch
-    an INITIATIVE_TRIGGERED event through CompanionRuntime.
+    an InitiativeCandidate for CharacterRuntime.
 
     Extended with additional event sources:
       - _last_reminder_check: tracks last scheduler poll

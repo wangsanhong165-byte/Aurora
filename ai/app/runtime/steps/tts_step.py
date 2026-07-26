@@ -7,15 +7,15 @@ without crashing the pipeline.
 import logging
 
 from app.runtime.pipeline import Step
-from app.runtime.context import Context
+from app.runtime.character_turn import CharacterTurn
 from app.interfaces.tts import TTSInterface
 
 logger = logging.getLogger("tts_step")
 
 
-def _extract_voice_kwargs(ctx: Context) -> dict:
+def _extract_voice_kwargs(ctx: CharacterTurn) -> dict:
     """Extract TTS voice parameters from the character card."""
-    character = ctx.state.get("character")
+    character = ctx.character
     if character is None:
         return {}
 
@@ -50,7 +50,7 @@ class TTSStep(Step):
     def __init__(self, tts_provider: TTSInterface):
         self.tts = tts_provider
 
-    async def run(self, ctx: Context) -> None:
+    async def run(self, ctx: CharacterTurn) -> None:
         if not ctx.reply_text:
             return
         voice_kwargs = _extract_voice_kwargs(ctx)

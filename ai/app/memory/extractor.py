@@ -52,7 +52,9 @@ def run_rolling_summary(llm_adapter: Any, character_name: str = "") -> str:
     return _call_llm(system_rolling_summary(character_name), conv_text, llm_adapter)
 
 
-def extract_facts(summary: str, llm_adapter: Any) -> list[dict]:
+def extract_facts(
+    summary: str, llm_adapter: Any, character_id: str = ""
+) -> list[dict]:
     """Split a summary into atomic facts with tags."""
     if not summary or len(summary) < 10:
         return []
@@ -83,6 +85,7 @@ def extract_facts(summary: str, llm_adapter: Any) -> list[dict]:
         return []
 
     stored = []
+    structured_candidates = []
     for f in facts:
         if not isinstance(f, dict):
             continue
@@ -99,14 +102,24 @@ def extract_facts(summary: str, llm_adapter: Any) -> list[dict]:
             importance=0.6,
             source="auto_extract",
             time=str(time_val) if time_val else None,
+            character_id=character_id,
         )
         if ok:
             stored.append(content)
+        structured_candidates.append(f)
+
+    # Structured lifecycle is independent from the legacy facts table so
+    # conflicting values can supersede old ones instead of being rejected
+    # merely because they share a broad tag.
+    from app.memory.lifecycle import store_candidates
+    store_candidates(memory_store, structured_candidates, character_id=character_id)
 
     return stored
 
 
-def run_extraction_pipeline(llm_adapter: Any, character_name: str = "") -> dict:
+def run_extraction_pipeline(
+    llm_adapter: Any, character_name: str = "", character_id: str = ""
+) -> dict:
     """Run one full extraction cycle: summary → facts."""
     stats = {"summary": "", "facts_stored": 0}
 
@@ -115,7 +128,7 @@ def run_extraction_pipeline(llm_adapter: Any, character_name: str = "") -> dict:
         return stats
 
     stats["summary"] = summary[:100]
-    facts = extract_facts(summary, llm_adapter)
+    facts = extract_facts(summary, llm_adapter, character_id=character_id)
     stats["facts_stored"] = len(facts)
 
     return stats

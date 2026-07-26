@@ -335,6 +335,7 @@ export class CharacterController {
   private activityEnteredAt = performance.now()
   private activityBlend = 0
   private speechWeight = 0
+  private audioPlaybackActive = false
   private lastDebugEmitAt = 0
   private headTrackingEnabled = true
   private _modelName = 'Design_genius_White'
@@ -465,6 +466,7 @@ export class CharacterController {
 
     this.cleanupFns.push(
       eventBus.on('audio:stop', () => {
+        this.audioPlaybackActive = false
         this.audioAnalyzer.reset()
         this._mouthOpenValue = 0
         this.onActivityChange('idle')
@@ -472,8 +474,16 @@ export class CharacterController {
     )
 
     this.cleanupFns.push(
+      eventBus.on('audio:start', () => {
+        this.audioPlaybackActive = true
+        this.onActivityChange('speaking')
+      }),
+    )
+
+    this.cleanupFns.push(
       eventBus.on('audio:end', () => {
         // Backend completion may precede actual browser playback completion.
+        this.audioPlaybackActive = false
         this.audioAnalyzer.reset()
         this._mouthOpenValue = 0
         this.onActivityChange('idle')
@@ -495,14 +505,15 @@ export class CharacterController {
     )
 
     this.cleanupFns.push(
-      eventBus.on('runtime:character_state', ({ activity, emotion, intensity, motion, behavior, attention, energy, durationMs }) => {
+      eventBus.on('runtime:character_state', ({ activity, emotion, intensity, motion, behavior, attention, energy, durationMs, naturalVAD, contextTags }) => {
         this.onActivityChange(activity)
-        this.applyIntent({ emotion, behavior: behavior || motion, intensity, activity, attention: attention as any, energy, durationMs })
+        this.applyIntent({ emotion, behavior: behavior || motion, intensity, activity, attention: attention as any, energy, durationMs, naturalVAD, contextTags })
       }),
     )
   }
 
   private onActivityChange(activity: string): void {
+    if (activity === 'idle' && this.audioPlaybackActive) return
     if (!activity || activity === this.currentActivity) return
     this.previousActivity = this.currentActivity
     this.currentActivity = activity
@@ -522,8 +533,11 @@ export class CharacterController {
         this.motionArbiter.play('thinking', 'system', 0.3)
         break
       case 'speaking':
-        this.idleCtrl.setBreathing(false)
-        if (!this.motionArbiter.isPlaying()) this.motionArbiter.play('speak', 'system', 0.32)
+        this.idleCtrl.setBreathing(true)
+        if (
+          !this.motionArbiter.isPlaying()
+          || this.motionArbiter.currentMotion?.toLowerCase() === 'native:idle'
+        ) this.motionArbiter.play('speak', 'system', 0.32)
         break
       case 'listening':
         this.idleCtrl.setBreathing(true)
@@ -537,6 +551,9 @@ export class CharacterController {
     this._currentEmotion = intent.emotion || 'neutral'
     this._currentEmotionIntensity = Math.max(0, Math.min(1, intent.intensity ?? 1))
     this.vad.setEmotion(intent.emotion, intent.intensity ?? 1)
+    if (intent.naturalVAD) {
+      this.vad.setTarget(intent.naturalVAD, Math.max(0.6, (intent.durationMs ?? 2400) / 1000))
+    }
     const basePlan = this.behaviorResolver.resolve(intent)
     const policy = this.performancePolicy.evaluate(intent, basePlan, this.behaviorResolver.getConfig(), this._profile)
     this.exprCtrl.apply(policy.expression, policy.expressionIntensity, policy.transitionMs)
@@ -759,6 +776,7 @@ export class CharacterController {
     this.activityBlend = Math.min(1, (performance.now() - this.activityEnteredAt) / 420)
     const speechTarget = this.currentActivity === 'speaking' ? 1 : 0
     this.speechWeight += (speechTarget - this.speechWeight) * (1 - Math.exp(-dt * 7))
+    const idleLayerWeight = 1 - this.speechWeight
 
     // Step 2: Expression interpolation contributions
     const exprContribs = this.paramCtrl.update()
@@ -807,8 +825,8 @@ export class CharacterController {
     }
 
     // 4c: Lip-sync (priority 60)
-    if (this.currentActivity === 'speaking') {
-      this.mixer.setParams('lip_sync', this.parameterResolver.values({ 'mouth.open': this._mouthOpenValue }))
+    if (this.speechWeight > 0.01) {
+      this.mixer.setParams('lip_sync', this.parameterResolver.values({ 'mouth.open': this._mouthOpenValue * this.speechWeight }))
     }
 
     const speechSample = this.speechPerformance.update(dt, this._mouthOpenValue)
@@ -846,24 +864,24 @@ export class CharacterController {
       )
 
       this.mixer.setParams('gaze', this.parameterResolver.values({
-        'eye.x': this.mouseX * 0.85 + idleSnapshot.eyeX * idleMotionScale,
-        'eye.y': cfg.eyeBallYSign * this.mouseY * 0.7 + idleSnapshot.eyeY * idleMotionScale,
-        'head.x': cfg.angleXSign * hx * 15 + idleSnapshot.headX * idleMotionScale,
-        'head.y': cfg.angleYSign * hy * 10 + idleSnapshot.headY * idleMotionScale,
-        'head.z': hx * 4 + idleSnapshot.headZ * idleMotionScale,
-        'body.x': breathBX + idleSnapshot.bodyX * idleMotionScale + hx * 4,
-        'body.y': breathBY + idleSnapshot.bodyY * idleMotionScale + hy * 3,
+        'eye.x': this.mouseX * 0.85 + idleSnapshot.eyeX * idleMotionScale * idleLayerWeight,
+        'eye.y': cfg.eyeBallYSign * this.mouseY * 0.7 + idleSnapshot.eyeY * idleMotionScale * idleLayerWeight,
+        'head.x': cfg.angleXSign * hx * 15 + idleSnapshot.headX * idleMotionScale * idleLayerWeight,
+        'head.y': cfg.angleYSign * hy * 10 + idleSnapshot.headY * idleMotionScale * idleLayerWeight,
+        'head.z': hx * 4 + idleSnapshot.headZ * idleMotionScale * idleLayerWeight,
+        'body.x': breathBX + idleSnapshot.bodyX * idleMotionScale * idleLayerWeight + hx * 4,
+        'body.y': breathBY + idleSnapshot.bodyY * idleMotionScale * idleLayerWeight + hy * 3,
       }))
-    } else if (this.currentActivity !== 'speaking') {
+    } else {
       this.idleTime += dt
       this.mixer.setParams('idle_sway', this.parameterResolver.values({
-        'head.x': idleSnapshot.headX * idleMotionScale,
-        'head.y': idleSnapshot.headY * idleMotionScale,
-        'head.z': idleSnapshot.headZ * idleMotionScale,
-        'eye.x': idleSnapshot.eyeX * idleMotionScale,
-        'eye.y': idleSnapshot.eyeY * idleMotionScale,
-        'body.x': idleSnapshot.bodyX * idleMotionScale,
-        'body.y': idleSnapshot.bodyY * idleMotionScale,
+        'head.x': idleSnapshot.headX * idleMotionScale * idleLayerWeight,
+        'head.y': idleSnapshot.headY * idleMotionScale * idleLayerWeight,
+        'head.z': idleSnapshot.headZ * idleMotionScale * idleLayerWeight,
+        'eye.x': idleSnapshot.eyeX * idleMotionScale * idleLayerWeight,
+        'eye.y': idleSnapshot.eyeY * idleMotionScale * idleLayerWeight,
+        'body.x': idleSnapshot.bodyX * idleMotionScale * idleLayerWeight,
+        'body.y': idleSnapshot.bodyY * idleMotionScale * idleLayerWeight,
       }))
     }
 

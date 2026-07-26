@@ -1,4 +1,4 @@
-"""Production Regression Test Suite — validates real provider pipelines.
+﻿"""Production Regression Test Suite — validates real provider pipelines.
 
 These tests exercise the REAL provider stack (DeepSeek LLM, SQLiteMemory, etc.)
 and MUST pass after any architectural migration or provider refactoring.
@@ -68,8 +68,8 @@ class TestStartupRegression(unittest.TestCase):
             for k, v in cls._providers_raw.items()
         }
 
-        from app.runtime.runtime import CompanionRuntime
-        cls.runtime = CompanionRuntime()
+        from runtime_v3_adapter import EventFixtureRuntime
+        cls.runtime = EventFixtureRuntime()
 
     @classmethod
     def tearDownClass(cls):
@@ -95,7 +95,7 @@ class TestStartupRegression(unittest.TestCase):
         expected = [
             "ASRStep", "CharacterStep", "MemoryRetrieveStep",
             "DecisionStep", "EmotionStep", "MemorySaveStep",
-            "TTSStep", "Live2DStep", "HistorySaveStep",
+            "TTSStep", "Live2DStep",
         ]
         self.assertEqual(step_names, expected)
 
@@ -135,9 +135,9 @@ class TestLLMPipelineRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_llm.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from app.runtime.runtime import CompanionRuntime
+        from runtime_v3_adapter import EventFixtureRuntime
         from app.runtime.event import Event, EventType
-        cls.runtime = CompanionRuntime()
+        cls.runtime = EventFixtureRuntime()
         cls.Event = Event
         cls.EventType = EventType
 
@@ -158,7 +158,7 @@ class TestLLMPipelineRegression(unittest.TestCase):
         """Dispatching TEXT_RECEIVED produces a non-empty reply."""
         event = self.Event(self.EventType.TEXT_RECEIVED,
                            {"text": "Say exactly one word: hello"}, source="test")
-        ctx = self._run(self.runtime.dispatch(event))
+        ctx = self._run(self.runtime.dispatch_fixture(event))
         self.assertEqual(ctx.error, "", f"Pipeline error: {ctx.error}")
         self.assertTrue(ctx.reply_text, "Reply should not be empty")
 
@@ -169,12 +169,12 @@ class TestLLMPipelineRegression(unittest.TestCase):
         contains the extracted final_reply text, not the raw JSON envelope.
         Segments are available in ctx.segments.
         """
-        from app.runtime.runtime import CompanionRuntime
-        rt = CompanionRuntime()
+        from runtime_v3_adapter import EventFixtureRuntime
+        rt = EventFixtureRuntime()
         try:
             event = self.Event(self.EventType.TEXT_RECEIVED,
                                {"text": "Say exactly: ping"}, source="test")
-            ctx = self._run(rt.dispatch(event))
+            ctx = self._run(rt.dispatch_fixture(event))
             self.assertEqual(ctx.error, "")
             # reply_text is plain text (not JSON)
             self.assertFalse(ctx.reply_text.startswith("{"),
@@ -197,8 +197,8 @@ class TestMemoryRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_memory.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from app.runtime.runtime import CompanionRuntime
-        cls.runtime = CompanionRuntime()
+        from runtime_v3_adapter import EventFixtureRuntime
+        cls.runtime = EventFixtureRuntime()
         cls.memory = cls.runtime.providers.get("memory")
 
     @classmethod
@@ -254,9 +254,9 @@ class TestMultiTurnRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_multiturn.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from app.runtime.runtime import CompanionRuntime
+        from runtime_v3_adapter import EventFixtureRuntime
         from app.runtime.event import Event, EventType
-        cls.runtime = CompanionRuntime()
+        cls.runtime = EventFixtureRuntime()
         cls.Event = Event
         cls.EventType = EventType
         cls.memory = cls.runtime.providers.get("memory")
@@ -281,7 +281,7 @@ class TestMultiTurnRegression(unittest.TestCase):
                 self.EventType.TEXT_RECEIVED,
                 {"text": f"Turn {i}: say a single word"}, source="test_multi",
             )
-            ctx = self._run(self.runtime.dispatch(event))
+            ctx = self._run(self.runtime.dispatch_fixture(event))
             self.assertEqual(ctx.error, "",
                              f"Error on turn {i}: {ctx.error}")
 
@@ -291,8 +291,8 @@ class TestMultiTurnRegression(unittest.TestCase):
         Uses a fresh runtime to avoid cross-test conversation history
         contamination from tool_calls.
         """
-        from app.runtime.runtime import CompanionRuntime
-        rt = CompanionRuntime()
+        from runtime_v3_adapter import EventFixtureRuntime
+        rt = EventFixtureRuntime()
         memory = rt.providers.get("memory")
         try:
             # Store a distinctive turn
@@ -300,7 +300,7 @@ class TestMultiTurnRegression(unittest.TestCase):
                 self.EventType.TEXT_RECEIVED,
                 {"text": "My favorite number is 42"}, source="test_multi",
             )
-            ctx = self._run(rt.dispatch(event))
+            ctx = self._run(rt.dispatch_fixture(event))
             self.assertEqual(ctx.error, "")
 
             # Verify it's retrievable
@@ -326,8 +326,8 @@ class TestInitiativeRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_initiative.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from app.runtime.runtime import CompanionRuntime
-        cls.runtime = CompanionRuntime()
+        from runtime_v3_adapter import EventFixtureRuntime
+        cls.runtime = EventFixtureRuntime()
 
     @classmethod
     def tearDownClass(cls):
@@ -411,36 +411,6 @@ class TestToolProviderRegression(unittest.TestCase):
         self.assertIs(cls, LegacyToolProvider, f"Expected LegacyToolProvider, got {cls}")
 
 
-# ── Test: Live2D Provider ────────────────────────────────────────────────────
-
-@unittest.skipUnless(RUN_PRODUCTION, "SKIP_PRODUCTION_TESTS is set")
-class TestLive2DProviderRegression(unittest.TestCase):
-    """TC-7: BridgeLive2DProvider registers and resolves correctly."""
-
-    def test_live2d_provider_registered(self):
-        """Live2DInterface has a real (non-mock) default provider."""
-        from app.providers.registry import provider_registry
-        from app.interfaces.live2d import Live2DInterface
-        from app.providers.factory import ProviderFactory
-        ProviderFactory._discovered = False
-        ProviderFactory.discover()
-        names = [p.get("name") for p in provider_registry.list_providers(Live2DInterface)]
-        self.assertIn("default", names)
-
-    def test_live2d_default_is_bridge_not_mock(self):
-        """Default Live2D provider is BridgeLive2DProvider, not MockLive2D."""
-        from app.providers.registry import provider_registry
-        from app.interfaces.live2d import Live2DInterface
-        from app.providers.factory import ProviderFactory
-        from app.providers.live2d.bridge_provider import BridgeLive2DProvider
-        from app.interfaces.live2d import MockLive2D
-        ProviderFactory._discovered = False
-        ProviderFactory.discover()
-        cls = provider_registry.resolve(Live2DInterface, "default")
-        self.assertIsNotNone(cls)
-        self.assertIs(cls, BridgeLive2DProvider, f"Expected BridgeLive2DProvider, got {cls}")
-
-
 # ── Test: Provider Registry ─────────────────────────────────────────────────
 
 @unittest.skipUnless(RUN_PRODUCTION, "SKIP_PRODUCTION_TESTS is set")
@@ -488,8 +458,8 @@ class TestCharacterRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_char.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from app.runtime.runtime import CompanionRuntime
-        cls.runtime = CompanionRuntime()
+        from runtime_v3_adapter import EventFixtureRuntime
+        cls.runtime = EventFixtureRuntime()
 
     @classmethod
     def tearDownClass(cls):
@@ -524,9 +494,9 @@ class TestEventDispatchRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_event.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from app.runtime.runtime import CompanionRuntime
+        from runtime_v3_adapter import EventFixtureRuntime
         from app.runtime.event import Event, EventType
-        cls.runtime = CompanionRuntime()
+        cls.runtime = EventFixtureRuntime()
         cls.Event = Event
         cls.EventType = EventType
 
@@ -547,7 +517,7 @@ class TestEventDispatchRegression(unittest.TestCase):
         """TEXT_RECEIVED sets ctx.user_text."""
         event = self.Event(self.EventType.TEXT_RECEIVED,
                            {"text": "regression test"}, source="test")
-        ctx = self._run(self.runtime.dispatch(event))
+        ctx = self._run(self.runtime.dispatch_fixture(event))
         self.assertEqual(ctx.user_text, "regression test")
 
     def test_speech_received_does_not_crash(self):
@@ -555,14 +525,14 @@ class TestEventDispatchRegression(unittest.TestCase):
         event = self.Event(self.EventType.SPEECH_RECEIVED,
                            {"audio": b"\x00" * 160, "sample_rate": 16000},
                            source="test")
-        ctx = self._run(self.runtime.dispatch(event))
+        ctx = self._run(self.runtime.dispatch_fixture(event))
         self.assertEqual(ctx.error, "")
 
     def test_initiative_triggered_does_not_crash(self):
         """INITIATIVE_TRIGGERED processes without error."""
         event = self.Event(self.EventType.INITIATIVE_TRIGGERED,
                            {"text": "initiative test prompt"}, source="test")
-        ctx = self._run(self.runtime.dispatch(event))
+        ctx = self._run(self.runtime.dispatch_fixture(event))
         self.assertEqual(ctx.error, "")
 
     def test_turn_count_increments(self):
@@ -571,7 +541,7 @@ class TestEventDispatchRegression(unittest.TestCase):
         before = state_store.get("turn_count", 0)
         event = self.Event(self.EventType.TEXT_RECEIVED,
                            {"text": "turn count test"}, source="test")
-        self._run(self.runtime.dispatch(event))
+        self._run(self.runtime.dispatch_fixture(event))
         after = state_store.get("turn_count", 0)
         self.assertGreater(after, before)
 

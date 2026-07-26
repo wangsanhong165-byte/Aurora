@@ -8,6 +8,19 @@ export interface AssistantMessage {
   text: string
   reasoning?: string
   segments?: Array<{ text: string; tone: string; gesture: string }>
+  diagnostics?: {
+    llm_usage?: {
+      prompt_tokens?: number
+      completion_tokens?: number
+      total_tokens?: number
+      cached_tokens?: number
+      model?: string
+      estimated_cost_usd?: number
+    }
+    context_budget?: Record<string, unknown>
+    retrieved_memories?: Array<Record<string, unknown>>
+    learned_memories?: Array<Record<string, unknown>>
+  }
 }
 
 export interface AssistantChunk {
@@ -49,40 +62,19 @@ export interface ToolConfirmation {
   risk: string
 }
 
-export interface CharacterAction {
-  type: 'character_action'
-  emotion: string
-  intensity: number
-  gesture: string
-}
-
-export interface CharacterState {
-  type: 'character_state'
-  activity: string    // "idle" | "thinking" | "speaking" | "listening"
-  emotion: string     // emotion name
-  intensity: number   // emotion intensity 0-1
-  expression: string  // specific expression name
-  motion: string      // gesture/motion name
-  behavior?: string
-  attention?: 'user' | 'screen' | 'away' | 'neutral'
-  energy?: number
-  duration_ms?: number
-}
-
-/** Model-ready Live2D presentation update from V2 Runtime */
+/** Renderer-independent semantic presentation update from Runtime V3. */
 export interface CharacterUpdate {
   type: 'character_update'
-  model_id: string
   emotion: string      // semantic emotion (e.g. "happy")
   intensity: number     // 0-1
-  expression: string    // model-specific expression name (e.g. "zs1")
-  motion: string        // gesture/motion name
   speaking: boolean
   timestamp: number
   behavior?: string
   attention?: 'user' | 'screen' | 'away' | 'neutral'
   energy?: number
   duration_ms?: number
+  natural_vad?: { valence: number; arousal: number; dominance: number }
+  context_tags?: string[]
 }
 
 export interface SessionEvent {
@@ -170,8 +162,6 @@ export type InboundMessage =
   | TtsAudio
   | TtsEnd
   | RuntimeStatus
-  | CharacterAction
-  | CharacterState
   | CharacterUpdate
   | SessionEvent
   | Error

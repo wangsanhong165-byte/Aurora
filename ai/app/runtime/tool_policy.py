@@ -5,8 +5,12 @@ from __future__ import annotations
 
 class ToolPolicy:
     def filter_schemas(self, schemas: list[dict], input_origin: str = "user") -> list[dict]:
+        from app.runtime.tool_settings import tool_settings
         allowed = []
         for schema in schemas:
+            name = schema.get("function", {}).get("name", "")
+            if not tool_settings.is_enabled(name):
+                continue
             risk = schema.get("risk", "confirm")
             if input_origin == "initiative":
                 if risk != "read_only" or not schema.get("allowed_in_initiative", False):

@@ -1,126 +1,94 @@
-// Main layout — character area (center), chat (collapsible sidebar)
+import { useEffect, useState, type ReactNode } from 'react'
 
-import { useState } from 'react'
-import type { ReactNode } from 'react'
+export type WorkspaceSection = 'chat' | 'history' | 'system' | 'settings'
 
 export interface LayoutProps {
   statusBar: ReactNode
   characterArea: ReactNode
   chatArea: ReactNode
   inputBar: ReactNode
+  systemArea: ReactNode
+  activeSection: WorkspaceSection
+  onSectionChange: (section: WorkspaceSection) => void
 }
 
-export function Layout({ statusBar, characterArea, chatArea, inputBar }: LayoutProps) {
-  const [chatOpen, setChatOpen] = useState(false)
+const readCollapsed = (key: string) => localStorage.getItem(key) === 'true'
+
+export function Layout({
+  statusBar,
+  characterArea,
+  chatArea,
+  inputBar,
+  systemArea,
+  activeSection,
+  onSectionChange,
+}: LayoutProps) {
+  const [navCollapsed, setNavCollapsed] = useState(() => readCollapsed('ui.nav.collapsed'))
+  const [systemCollapsed, setSystemCollapsed] = useState(() => readCollapsed('ui.system.collapsed'))
+
+  useEffect(() => localStorage.setItem('ui.nav.collapsed', String(navCollapsed)), [navCollapsed])
+  useEffect(() => localStorage.setItem('ui.system.collapsed', String(systemCollapsed)), [systemCollapsed])
+
+  const navItems: Array<{ id: WorkspaceSection; label: string; short: string }> = [
+    { id: 'chat', label: '对话', short: '聊' },
+    { id: 'history', label: '记忆', short: '忆' },
+    { id: 'system', label: '系统', short: '状' },
+    { id: 'settings', label: '设置', short: '设' },
+  ]
 
   return (
-    <div style={styles.root}>
-      {statusBar}
-      <div style={styles.main}>
-        <div style={styles.characterArea}>
-          {characterArea}
-          {/* Chat toggle button — overlaid on character area */}
+    <div className="workspace-shell">
+      <div className="workspace-main">
+        <aside className={`nav-rail ${navCollapsed ? 'is-collapsed' : ''}`} aria-label="主导航">
+          <div className="brand">
+            <span className="brand-mark">S</span>
+            {!navCollapsed && <span className="brand-name">SoulLink</span>}
+          </div>
+          <nav className="nav-items">
+            {navItems.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                className={`nav-item ${activeSection === item.id ? 'is-active' : ''}`}
+                onClick={() => onSectionChange(item.id)}
+                title={navCollapsed ? item.label : undefined}
+              >
+                <span className="nav-item-mark">{item.short}</span>
+                {!navCollapsed && <span>{item.label}</span>}
+              </button>
+            ))}
+          </nav>
           <button
             type="button"
-            onClick={() => setChatOpen(o => !o)}
-            style={styles.chatToggle}
-            title={chatOpen ? 'Hide chat' : 'Show chat'}
+            className="rail-collapse"
+            onClick={() => setNavCollapsed(value => !value)}
+            aria-label={navCollapsed ? '展开导航' : '收起导航'}
           >
-            {chatOpen ? '▸' : '◂'}
+            {navCollapsed ? '展开' : '收起'}
           </button>
-        </div>
-        {chatOpen && (
-          <div style={styles.chatPanel}>
-            <div style={styles.chatHeader}>
-              <span style={styles.chatTitle}>Conversation</span>
-              <button
-                type="button"
-                onClick={() => setChatOpen(false)}
-                style={styles.chatCloseBtn}
-              >
-                ✕
-              </button>
-            </div>
+        </aside>
+
+        <main className="companion-stage">
+          <div className="character-stage">{characterArea}</div>
+          <section className="conversation-dock" aria-label="对话区">
             {chatArea}
-          </div>
-        )}
+            {inputBar}
+          </section>
+        </main>
+
+        <aside className={`system-rail ${systemCollapsed ? 'is-collapsed' : ''}`} aria-label="实时状态">
+          <button
+            type="button"
+            className="system-collapse"
+            onClick={() => setSystemCollapsed(value => !value)}
+            aria-label={systemCollapsed ? '展开实时状态' : '收起实时状态'}
+          >
+            {systemCollapsed ? '状态' : '收起'}
+          </button>
+          {!systemCollapsed && systemArea}
+        </aside>
       </div>
-      {inputBar}
+      {statusBar}
     </div>
   )
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  root: {
-    height: '100%',
-    display: 'flex',
-    flexDirection: 'column',
-    backgroundColor: '#1a1a1e',
-  },
-  main: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'row',
-    overflow: 'hidden',
-    minHeight: 0,
-  },
-  characterArea: {
-    flex: 1,
-    minWidth: 0,
-    position: 'relative',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  chatToggle: {
-    position: 'absolute',
-    right: 8,
-    top: '50%',
-    transform: 'translateY(-50%)',
-    width: 28,
-    height: 48,
-    borderRadius: '6px 0 0 6px',
-    border: '1px solid #2a2a2e',
-    borderRight: 'none',
-    backgroundColor: 'rgba(24, 24, 28, 0.7)',
-    color: '#888',
-    fontSize: '0.85rem',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-    transition: 'color 0.15s, background-color 0.15s',
-  },
-  chatPanel: {
-    width: 360,
-    flexShrink: 0,
-    display: 'flex',
-    flexDirection: 'column',
-    borderLeft: '1px solid #2a2a2e',
-    backgroundColor: '#18181c',
-  },
-  chatHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '8px 12px',
-    borderBottom: '1px solid #2a2a2e',
-    flexShrink: 0,
-  },
-  chatTitle: {
-    fontSize: '0.85rem',
-    fontWeight: 600,
-    color: '#ccc',
-    letterSpacing: '0.02em',
-  },
-  chatCloseBtn: {
-    background: 'none',
-    border: 'none',
-    color: '#888',
-    cursor: 'pointer',
-    fontSize: '0.9rem',
-    padding: '2px 4px',
-  },
 }

@@ -32,10 +32,11 @@ Monika Voice Companion 是一个运行在 Windows 上的本地 AI 语音陪伴�
 
 | 服务 | 端口 | 用途 |
 |------|------|------|
-| ASR | :8000 | Qwen3-ASR 语音识别 |
-| LLM | :8020 | DeepSeek v4-flash API |
-| TTS | :8030 / :8050 | GSVI v2Pro 语音合成 |
-| Memory | :8040 | SQLite+FTS5 记忆服务 |
+| ASR | :9101 | Qwen3-ASR 语音识别 |
+| LLM | :9102 | OpenAI-compatible LLM API |
+| TTS | :9103 | TTS 统一入口 |
+| Memory | :9104 | SQLite+FTS5 记忆服务 |
+| GSVI | :9105 | GPT-SoVITS v2Pro |
 | Bridge | :9528 | Web 服务 + WebSocket API |
 
 ---
@@ -148,6 +149,9 @@ ai/
 详细架构、模块职责、数据流说明请见：
 
 → **[ARCHITECTURE.md](ARCHITECTURE.md)**
+
+Runtime V3 的唯一交互入口是 `CharacterRuntime.handle_turn(TurnInput)`；
+前端只使用 V2 类型化协议 `/v2/ws`（`/client-ws` 是同一 session 的 URL 别名）。
 
 ---
 

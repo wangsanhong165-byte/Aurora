@@ -194,21 +194,21 @@ def parse_args() -> argparse.Namespace:
 
 
 def _runtime_main(args: argparse.Namespace) -> int:
-    """Run using v2 CompanionRuntime instead of legacy Brain pipeline."""
+    """Run using CharacterRuntime."""
     import asyncio
 
     import numpy as np
     import soundfile as sf
 
     from app.input.manager import InputManager
-    from app.runtime.event import Event, EventType
-    from app.runtime.runtime import CompanionRuntime
+    from app.runtime.character_turn import TurnInput
+    from app.runtime.runtime import CharacterRuntime
 
-    rt = CompanionRuntime()
+    rt = CharacterRuntime()
 
-    def _sync_dispatch(event: Event):
-        """Synchronous wrapper around rt.dispatch()."""
-        return asyncio.run(rt.dispatch(event))
+    def _sync_turn(turn_input: TurnInput):
+        """Synchronous wrapper around rt.handle_turn()."""
+        return asyncio.run(rt.handle_turn(turn_input))
 
     try:
         if args.text:
@@ -225,8 +225,7 @@ def _runtime_main(args: argparse.Namespace) -> int:
                 if user_text.lower() in ("exit", "quit", "/exit", "/quit"):
                     break
 
-                event = Event(EventType.TEXT_RECEIVED, {"text": user_text}, source="cli")
-                ctx = _sync_dispatch(event)
+                ctx = _sync_turn(TurnInput(text=user_text))
 
                 if ctx.error:
                     print(f"[Error] {ctx.error}")
@@ -253,12 +252,9 @@ def _runtime_main(args: argparse.Namespace) -> int:
             audio_data, sr = sf.read(str(path), dtype="float32")
             audio_bytes = audio_data.tobytes()
 
-            event = Event(
-                EventType.SPEECH_RECEIVED,
-                {"audio": audio_bytes, "sample_rate": sr},
-                source="cli",
+            ctx = _sync_turn(
+                TurnInput(audio=audio_bytes, sample_rate=int(sr))
             )
-            ctx = _sync_dispatch(event)
 
             if ctx.error:
                 print(f"[Error] {ctx.error}")
@@ -282,12 +278,9 @@ def _runtime_main(args: argparse.Namespace) -> int:
                     audio_data, sr = sf.read(audio_path, dtype="float32")
                     audio_bytes = audio_data.tobytes()
 
-                    event = Event(
-                        EventType.SPEECH_RECEIVED,
-                        {"audio": audio_bytes, "sample_rate": sr},
-                        source="cli",
+                    ctx = _sync_turn(
+                        TurnInput(audio=audio_bytes, sample_rate=int(sr))
                     )
-                    ctx = _sync_dispatch(event)
 
                     if ctx.error:
                         print(f"[Error] {ctx.error}")
@@ -410,7 +403,7 @@ def main() -> int:
                 bridge_proc.terminate()
                 return 0
 
-        # ---- CompanionRuntime (v2 Pipeline) ----
+        # ---- CharacterRuntime ----
         return _runtime_main(args)
     finally:
         print("Shutting down...")

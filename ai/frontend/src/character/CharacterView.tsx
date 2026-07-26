@@ -532,6 +532,7 @@ export function CharacterView() {
     petInitRef.current = true
 
     const petCtrl = new PetModeController()
+    let browserAudioActive = false
     console.log('[PET] Instance #%d created (windowMode=%s loadState=%s)',
       petCtrl.instanceId, settings.windowMode, loadState)
 
@@ -562,7 +563,7 @@ export function CharacterView() {
     const unsubState = eventBus.on('runtime:character_state', ({ activity }) => {
       if (activity === 'speaking') {
         petCtrl.onSpeakingStart()
-      } else if (activity === 'idle') {
+      } else if (activity === 'idle' && !browserAudioActive) {
         petCtrl.onSpeakingEnd()
       }
     })
@@ -571,9 +572,17 @@ export function CharacterView() {
     const unsubActivity = eventBus.on('character:activity', ({ activity }) => {
       if (activity === 'speaking') {
         petCtrl.onSpeakingStart()
-      } else if (activity === 'idle') {
+      } else if (activity === 'idle' && !browserAudioActive) {
         petCtrl.onSpeakingEnd()
       }
+    })
+    const unsubAudioStart = eventBus.on('audio:start', () => {
+      browserAudioActive = true
+      petCtrl.onSpeakingStart()
+    })
+    const unsubAudioEnd = eventBus.on('audio:end', () => {
+      browserAudioActive = false
+      petCtrl.onSpeakingEnd()
     })
 
     return () => {
@@ -584,9 +593,11 @@ export function CharacterView() {
       }
       unsubState()
       unsubActivity()
+      unsubAudioStart()
+      unsubAudioEnd()
       petInitRef.current = false
     }
-  }, [settings.windowMode, loadState])
+  }, [settings.windowMode])
 
   // Resize handler
   useEffect(() => {

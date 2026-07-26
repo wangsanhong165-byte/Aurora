@@ -1,5 +1,5 @@
 from app.runtime.pipeline import Step
-from app.runtime.context import Context
+from app.runtime.character_turn import CharacterTurn
 from app.runtime.character_intent import CharacterIntent
 
 
@@ -17,7 +17,7 @@ class Live2DStep(Step):
     set_expression calls on every pipeline run.
     """
 
-    async def run(self, ctx: Context) -> None:
+    async def run(self, ctx: CharacterTurn) -> None:
         segment = None
         if ctx.segments:
             last = ctx.segments[-1]
@@ -40,5 +40,7 @@ class Live2DStep(Step):
                 attention=intent.attention,
                 energy=intent.energy,
                 duration_ms=intent.duration_ms,
+                natural_vad=intent.natural_vad,
+                context_tags=intent.context_tags,
             )
         ctx.live2d_intent = {**intent.to_dict(), "gesture": intent.behavior, "speaking": bool(ctx.audio)}

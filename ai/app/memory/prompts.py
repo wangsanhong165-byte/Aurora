@@ -39,11 +39,13 @@ def system_fact_extraction() -> str:
 3. 每条事实必须是原子的（一条只记一件事）
 4. 标签用于后续检索，选择有辨识度的关键词，2~5个
 5. 如果摘要中没有值得提取的新内容，返回空数组 []
+6. type 只能是 fact、preference、recent_state、episode、relationship、open_loop
+7. predicate 表示可被后续事实替换的稳定属性，例如 city、favorite_food、current_project
+8. stable_key 使用“type:user:predicate”；同一属性发生变化时必须返回相同 stable_key
 
 输出格式（严格的 JSON 数组，不要 markdown 代码块）：
 [
-  {"fact": "...", "tags": ["tag1", "tag2"], "time": null},
-  {"fact": "...", "tags": ["tag1", "tag2"], "time": null}
+  {"fact": "...", "type": "fact", "subject": "user", "predicate": "...", "stable_key": "fact:user:...", "confidence": 0.8, "importance": 0.7, "tags": ["tag1", "tag2"], "time": null}
 ]"""
 
 

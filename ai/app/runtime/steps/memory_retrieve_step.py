@@ -1,5 +1,5 @@
 from app.runtime.pipeline import Step
-from app.runtime.context import Context
+from app.runtime.character_turn import CharacterTurn
 from app.interfaces.memory import MemoryInterface
 
 
@@ -9,11 +9,11 @@ class MemoryRetrieveStep(Step):
     def __init__(self, memory: MemoryInterface):
         self.memory = memory
 
-    async def run(self, ctx: Context) -> None:
+    async def run(self, ctx: CharacterTurn) -> None:
         query = ctx.user_text or ctx.event.payload.get("text", "")
         if not query:
             return
-        character = ctx.state.get("character")
+        character = ctx.character
         char_id = getattr(character, "id", "") if character is not None else ""
         memories = await self.memory.retrieve(
             query,
@@ -21,4 +21,4 @@ class MemoryRetrieveStep(Step):
             event_type=ctx.event.type,
             input_origin=ctx.input_origin,
         )
-        ctx.state["memories"] = memories
+        ctx.memories = memories

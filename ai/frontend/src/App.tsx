@@ -7,11 +7,12 @@ import { CharacterView } from './character/CharacterView'
 import { ChatView } from './conversation/ChatView'
 import { StatusBar } from './ui/StatusBar'
 import { InputBar } from './ui/InputBar'
-import { Layout } from './ui/Layout'
+import { Layout, type WorkspaceSection } from './ui/Layout'
 import { TitleBar } from './ui/TitleBar'
 import { SettingsPanel } from './ui/SettingsPanel'
 import { DebugPanel } from './ui/DebugPanel'
 import { ErrorBoundary } from './ui/ErrorBoundary'
+import { SystemCenter } from './ui/SystemCenter'
 import { HistoryPanel, type HistoryEntry } from './conversation/HistoryPanel'
 import type { AiActivity } from './core/types'
 import type { AppSettings } from './core/store'
@@ -30,6 +31,7 @@ function AppInner() {
   const [histories, setHistories] = useState<HistoryEntry[]>([])
   const [historyUid, setHistoryUid] = useState('')
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [activeSection, setActiveSection] = useState<WorkspaceSection>('chat')
   const [accessoryParts, setAccessoryParts] = useState<Record<string, string>>({})
   const [accessoryState, setAccessoryState] = useState<Record<string, boolean>>({})
   const settings = useSelector(selectSettings)
@@ -243,7 +245,7 @@ function AppInner() {
 
   return (
     <div style={styles.wrapper} onClick={handleUserGesture}>
-      <TitleBar onSettingsClick={handleSettingsOpen} onHistoryClick={() => setHistoryOpen(true)} />
+      <TitleBar />
       <Layout
         statusBar={<StatusBar />}
         characterArea={<CharacterView />}
@@ -255,6 +257,17 @@ function AppInner() {
         inputBar={
           <InputBar onSend={handleSend} onInterrupt={handleInterrupt} clientRef={clientRef} />
         }
+        systemArea={
+          <SystemCenter
+            sendCommand={(action, params = {}) => clientRef.current?.sendCommand(action, params)}
+          />
+        }
+        activeSection={activeSection}
+        onSectionChange={(section) => {
+          setActiveSection(section)
+          if (section === 'history') setHistoryOpen(true)
+          if (section === 'settings') handleSettingsOpen()
+        }}
       />
       <SettingsPanel
         open={settingsOpen}
@@ -269,7 +282,7 @@ function AppInner() {
         <div style={styles.overlay} onClick={() => setHistoryOpen(false)}>
           <div style={styles.overlayPanel} onClick={e => e.stopPropagation()}>
             <div style={styles.overlayHeader}>
-              <span style={{ fontWeight: 600 }}>Conversation History</span>
+              <span style={{ fontWeight: 600 }}>对话记忆</span>
               <button type="button" onClick={() => setHistoryOpen(false)}
                 style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '1.1rem' }}>
                 ✕

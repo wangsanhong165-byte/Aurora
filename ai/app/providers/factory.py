@@ -38,7 +38,6 @@ class ProviderFactory:
             "app.providers.asr",
             "app.providers.memory",
             "app.providers.tool",
-            "app.providers.live2d",
         ]
         for pkg in _PROVIDER_PACKAGES:
             try:
