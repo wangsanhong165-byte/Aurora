@@ -7,7 +7,7 @@ import secrets
 import sys
 from multiprocessing.connection import Client, Listener
 from pathlib import Path
-from threading import Thread
+from threading import Lock, Thread
 from uuid import uuid4
 
 from .protocol import SCHEMA_VERSION
@@ -34,6 +34,7 @@ class ControlPlane:
     def __init__(self, orchestrator, *, token: str):
         self.orchestrator = orchestrator
         self.token = token
+        self._mutation_lock = Lock()
 
     def handle(self, request: dict) -> dict:
         request_id = str(request.get("request_id") or uuid4().hex)
@@ -53,28 +54,32 @@ class ControlPlane:
             }
         try:
             command = request.get("command")
-            if command == "start":
-                result = self.orchestrator.start(
-                    request.get("profile", "backend"),
-                    launch_id=launch_id or uuid4().hex,
-                    owner_id=owner_id or uuid4().hex,
-                )
-            elif command == "restart":
-                if self.orchestrator.launch_id:
-                    self.orchestrator.stop_launch(self.orchestrator.launch_id)
-                result = self.orchestrator.start(
-                    request.get("profile", "backend"),
-                    launch_id=launch_id or uuid4().hex,
-                    owner_id=owner_id or uuid4().hex,
-                )
-            elif command == "stop":
-                result = (
-                    self.orchestrator.stop_all_registered()
-                    if request.get("all")
-                    else self.orchestrator.stop_launch(
-                        launch_id or self.orchestrator.launch_id or ""
-                    )
-                )
+            if command in {"start", "restart", "stop", "shutdown"}:
+                with self._mutation_lock:
+                    if command == "start":
+                        result = self.orchestrator.start(
+                            request.get("profile", "backend"),
+                            launch_id=launch_id or uuid4().hex,
+                            owner_id=owner_id or uuid4().hex,
+                        )
+                    elif command == "restart":
+                        if self.orchestrator.launch_id:
+                            self.orchestrator.stop_launch(self.orchestrator.launch_id)
+                        result = self.orchestrator.start(
+                            request.get("profile", "backend"),
+                            launch_id=launch_id or uuid4().hex,
+                            owner_id=owner_id or uuid4().hex,
+                        )
+                    elif command == "stop":
+                        result = (
+                            self.orchestrator.stop_all_registered()
+                            if request.get("all")
+                            else self.orchestrator.stop_launch(
+                                launch_id or self.orchestrator.launch_id or ""
+                            )
+                        )
+                    else:
+                        result = self.orchestrator.stop_all_registered()
             elif command == "status":
                 result = self.orchestrator.status()
             elif command == "events":
@@ -87,8 +92,6 @@ class ControlPlane:
                         if int(event.get("sequence", 0)) > after
                     ],
                 }
-            elif command == "shutdown":
-                result = self.orchestrator.stop_all_registered()
             elif command == "diagnostics":
                 result = {
                     "path": str(export_diagnostics(

@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -41,6 +42,27 @@ def test_registry_rejects_reused_pid_identity(tmp_path: Path):
     registry.put("llm", expected)
     reused = ProcessIdentity(10, 200.0, "other.exe", ("unrelated",), 9102)
     assert not registry.matches("llm", reused)
+
+
+def test_registry_serializes_concurrent_writers_without_losing_entries(tmp_path: Path):
+    path = tmp_path / "processes.json"
+    registries = [ProcessRegistry(path), ProcessRegistry(path)]
+
+    def write(index: int):
+        identity = ProcessIdentity(
+            1000 + index,
+            float(index),
+            "python.exe",
+            ("python", "-m", f"service{index}"),
+            10000 + index,
+        )
+        registries[index % 2].put(f"service{index}", identity, f"owner{index}")
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(write, range(40)))
+
+    stored = dict(ProcessRegistry(path).items())
+    assert set(stored) == {f"service{index}" for index in range(40)}
 
 
 def test_orchestrator_does_not_kill_unknown_port_owner(tmp_path: Path):

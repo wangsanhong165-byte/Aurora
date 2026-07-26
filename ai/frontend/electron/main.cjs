@@ -19,6 +19,7 @@ const {
   getPetBounds,
   selectRestorableBounds,
 } = require('./pet-window.cjs')
+const { canEnterCompanion } = require('./startup-policy.cjs')
 
 // ProcessManager — backend service lifecycle management
 const { ProcessManager } = require('../../electron/process-manager.cjs')
@@ -275,11 +276,11 @@ app.whenReady().then(async () => {
   statusTimer = setInterval(async () => {
     const status = await pm.refresh()
     mainWindow?.webContents.send('lifecycle:snapshot', status)
-    if (!mainUiLoaded && status.availability !== 'BLOCKED') loadAppUrl()
+    if (!mainUiLoaded && canEnterCompanion(status)) loadAppUrl()
   }, 500)
 
   pm.startAll().then(status => {
-    ready = status.availability !== 'BLOCKED'
+    ready = canEnterCompanion(status)
     mainWindow?.webContents.send('lifecycle:snapshot', status)
     if (!mainUiLoaded && ready) loadAppUrl()
   }).catch(err => {

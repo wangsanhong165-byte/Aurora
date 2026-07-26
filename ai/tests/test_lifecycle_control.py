@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, Lock
+from time import sleep
 
 from app.lifecycle.control import ControlPlane, workspace_endpoint
 
@@ -63,3 +66,43 @@ def test_workspace_endpoint_is_stable_and_does_not_expose_project_path(tmp_path:
     assert first == second
     assert str(tmp_path) not in first
     assert "soullink-lifecycle-" in first
+
+
+def test_control_plane_serializes_mutating_commands():
+    class ConcurrentOrchestrator(FakeOrchestrator):
+        def __init__(self):
+            super().__init__()
+            self.active = 0
+            self.maximum_active = 0
+            self.lock = Lock()
+            self.entered = Event()
+
+        def start(self, profile, *, launch_id, owner_id):
+            with self.lock:
+                self.active += 1
+                self.maximum_active = max(self.maximum_active, self.active)
+            self.entered.set()
+            sleep(0.05)
+            with self.lock:
+                self.active -= 1
+            return {"availability": "FULL_READY", "services": []}
+
+    orchestrator = ConcurrentOrchestrator()
+    control = ControlPlane(orchestrator, token="secret")
+    request = {
+        "schema_version": 1,
+        "token": "secret",
+        "command": "start",
+        "profile": "electron",
+        "launch_id": "launch-1",
+        "owner_id": "electron-1",
+    }
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(control.handle, {**request, "request_id": "first"})
+        orchestrator.entered.wait(timeout=1)
+        second = pool.submit(control.handle, {**request, "request_id": "second"})
+        assert first.result()["ok"] is True
+        assert second.result()["ok"] is True
+
+    assert orchestrator.maximum_active == 1
