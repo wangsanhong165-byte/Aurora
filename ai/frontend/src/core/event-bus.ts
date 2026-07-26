@@ -46,6 +46,12 @@ export interface EventMap {
   'runtime:command_response': { action: string; data: Record<string, unknown> }
   'runtime:session': { status: string; config: Record<string, unknown> }
   'runtime:user_message': { text: string }
+  'runtime:permission_requested': {
+    requestId: string
+    capability: string
+    args: Record<string, unknown>
+    risk: string
+  }
   'runtime:character_intent': { emotion: string; behavior: string; attention: string; energy: number; intensity: number; durationMs?: number; naturalVAD?: { valence: number; arousal: number; dominance: number }; contextTags?: string[] }
   'character:switch_model': { name: string }
   'accessory:loaded': { parts: Record<string, string>; state: Record<string, boolean> }

@@ -51,6 +51,7 @@ class CharacterRuntime:
         self._initiative_queue = InitiativeQueue()
         self._turn_lock = None
         self._runtime_idle = True
+        self._active_turn: CharacterTurn | None = None
         self._initiative_task: Any = None  # asyncio Task for draining
         self._proactive_handlers: list[Callable[[CharacterTurn], Awaitable[None]]] = []
         self._initiative_memory_selector = None
@@ -531,6 +532,7 @@ class CharacterRuntime:
                 )
             finally:
                 self._runtime_idle = True
+                self._active_turn = None
 
     async def _handle_turn_locked(
         self,
@@ -551,6 +553,7 @@ class CharacterRuntime:
             status_callback=status_callback,
             confirmation_callback=confirmation_callback,
         )
+        self._active_turn = turn
         turn.transition_to(TurnPhase.PROCESSING)
 
         if turn_input.origin is TurnOrigin.USER:
@@ -584,6 +587,11 @@ class CharacterRuntime:
         if not turn.error:
             turn.transition_to(TurnPhase.COMPLETED)
         turn.metrics["e2e_latency_ms"] = (time.perf_counter() - started_at) * 1000
+        try:
+            from app.runtime.turn_recorder import get_turn_recorder
+            get_turn_recorder().record(turn)
+        except Exception:
+            logger.exception("Turn trace persistence failed")
         return turn
 
 

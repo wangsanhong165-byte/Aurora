@@ -189,13 +189,11 @@ export class RuntimeClient {
         break
 
       case 'tool_confirmation': {
-        const approved = window.confirm(
-          `AI 请求调用工具“${data.tool}”\n风险级别：${data.risk}\n参数：${JSON.stringify(data.args, null, 2)}`
-        )
-        void fetch(`/api/tool-confirmations/${encodeURIComponent(data.request_id)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ approved }),
+        eventBus.emit('runtime:permission_requested', {
+          requestId: data.request_id,
+          capability: data.tool,
+          args: data.args,
+          risk: data.risk,
         })
         break
       }

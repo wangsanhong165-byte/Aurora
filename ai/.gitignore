@@ -36,5 +36,6 @@ data/avatar_state.json
 data/memory/*.db*
 data/memory/compiled/
 data/memory/histories/
+data/runtime/
 data/pids/
 .codex-*.png

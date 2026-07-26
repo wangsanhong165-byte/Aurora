@@ -109,15 +109,15 @@ class RuntimeManager:
         path = self._histories_dir / f"{uid}.json"
         if not path.exists():
             return []
+        try:
+            return json.loads(path.read_text("utf-8"))
+        except Exception:
+            return []
 
     def current_history_uid(self, *, create: bool = False) -> str:
         if not self._current_history_uid and create:
             self.create_history()
         return self._current_history_uid
-        try:
-            return json.loads(path.read_text("utf-8"))
-        except Exception:
-            return []
 
     def get_history_list(self) -> list[dict]:
         """Return histories sorted by timestamp desc."""
@@ -233,6 +233,117 @@ class RuntimeManager:
             active_only=not include_inactive,
             limit=max(1, min(500, int(limit))),
         )
+
+    def get_character_self_view(self) -> dict:
+        from app.runtime.user_views import build_character_self_view
+
+        aggregate = getattr(self._runtime, "character_self", None)
+        state = aggregate.snapshot() if aggregate is not None else {}
+        return build_character_self_view(state)
+
+    def get_memory_view(
+        self, *, query: str = "", category: str = "all", limit: int = 200
+    ) -> dict:
+        from app.runtime.user_views import build_memory_view
+
+        return build_memory_view(
+            self.get_memories(False, limit),
+            query=str(query),
+            category=str(category or "all"),
+        )
+
+    def update_memory_view(self, memory_ref: str, params: dict) -> dict:
+        from app.runtime.user_views import build_memory_view, parse_memory_ref
+
+        try:
+            memory_id = parse_memory_ref(memory_ref)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        update_params: dict[str, Any] = {}
+        if "content" in params:
+            update_params["content"] = params["content"]
+        if "pinned" in params:
+            update_params["importance"] = 1.0 if params["pinned"] else 0.5
+        result = self.update_memory(memory_id, update_params)
+        if "error" in result:
+            return result
+        return {"item": build_memory_view([result["memory"]])["items"][0]}
+
+    def forget_memory_view(self, memory_ref: str) -> dict:
+        from app.runtime.user_views import parse_memory_ref
+
+        try:
+            memory_id = parse_memory_ref(memory_ref)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        result = self.forget_memory(memory_id)
+        return {"forgotten": bool(result.get("forgotten")), "ref": memory_ref}
+
+    def get_voice_status_view(self) -> dict:
+        from app.runtime.user_views import build_voice_status_view
+
+        return build_voice_status_view(
+            self._runtime, self._runtime.get_character_info()
+        )
+
+    async def get_capability_view(self) -> dict:
+        from app.runtime.user_views import build_capability_view
+        from app.runtime.turn_recorder import get_turn_recorder
+
+        recent_use: dict[str, str] = {}
+        turn_recorder = get_turn_recorder()
+        for summary in turn_recorder.list_turns(limit=100):
+            detail = turn_recorder.get_turn(summary["turnId"]) or {}
+            for tool in detail.get("tools", []):
+                name = str(tool.get("tool", ""))
+                if name and name not in recent_use:
+                    recent_use[name] = summary["createdAt"]
+        return build_capability_view(
+            await self.get_tools(),
+            recent_use=recent_use,
+        )
+
+    def get_turns(self, limit: int = 100) -> list[dict]:
+        from app.runtime.turn_recorder import get_turn_recorder
+
+        return get_turn_recorder().list_turns(limit=limit)
+
+    def get_turn_detail(self, turn_id: str) -> dict:
+        from app.runtime.turn_recorder import get_turn_recorder
+
+        detail = get_turn_recorder().get_turn(turn_id)
+        return {"turn": detail} if detail else {"error": "turn not found"}
+
+    def get_runtime_diagnostics(self) -> dict:
+        from app.runtime.state_store import state_store
+
+        providers = getattr(self._runtime, "providers", {})
+        active_turn = getattr(self._runtime, "_active_turn", None)
+        return {
+            "readOnly": True,
+            "runtime": {
+                "idle": bool(getattr(self._runtime, "_runtime_idle", True)),
+                "turnCount": int(state_store.get("turn_count", 0)),
+                "characterId": self.get_character_id(),
+                "activeTurn": (
+                    {
+                        "turnId": active_turn.turn_id,
+                        "phase": active_turn.phase.value,
+                        "origin": active_turn.input_origin,
+                        "createdAt": datetime.fromtimestamp(
+                            active_turn.created_at, timezone.utc
+                        ).isoformat(),
+                    }
+                    if active_turn is not None else None
+                ),
+            },
+            "providers": [{
+                "name": name,
+                "status": "ready" if provider is not None else "unavailable",
+                "adapter": type(provider).__name__ if provider is not None else "",
+            } for name, provider in sorted(providers.items())],
+            "retention": {"turnDays": 30, "maximumTurns": 500},
+        }
 
     def update_memory(self, memory_id: int, params: dict) -> dict:
         store = self._memory_store()

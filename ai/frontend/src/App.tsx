@@ -12,6 +12,7 @@ import type { AppSettings } from './core/store'
 import type { ChatMessage } from './core/types'
 import { CompanionWorkspace } from './ui/CompanionWorkspace'
 import { resolveHistoryCommand } from './conversation/history-command'
+import { PermissionDialog } from './ui/PermissionDialog'
 import './styles/index.css'
 
 const WS_URL = `ws://${location.hostname}:9528/client-ws`
@@ -310,6 +311,7 @@ function AppInner() {
         onAccessoryToggle={handleAccessoryToggle}
       />
       {settings.windowMode !== 'pet' && <StatusBar />}
+      <PermissionDialog />
     </div>
   )
 }

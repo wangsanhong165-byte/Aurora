@@ -7,11 +7,17 @@ import { ChatView } from '../conversation/ChatView'
 import { HistoryPanel, type HistoryEntry } from '../conversation/HistoryPanel'
 import { InputBar } from './InputBar'
 import { SettingsPanel } from './SettingsPanel'
-import { SystemCenter } from './SystemCenter'
-import { DeferredDrawer, DrawerPanel } from './DrawerPanel'
+import { DrawerPanel } from './DrawerPanel'
 import { Layout, type DrawerItem } from './Layout'
 import { StageSubtitle } from './StageSubtitle'
 import type { DrawerSection } from './workspace-state'
+import {
+  CapabilityPanel,
+  CharacterSelfPanel,
+  MemoryPanel,
+  VoicePanel,
+} from './UserViewPanels'
+import { DeveloperWorkspace } from './DeveloperWorkspace'
 
 const DRAWER_ITEMS: DrawerItem[] = [
   { id: 'chat', label: '对话', mark: '聊' },
@@ -47,9 +53,6 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
   useEffect(() => {
     if (props.historyRevision > 0) setChatMode('conversation')
   }, [props.historyRevision])
-
-  const sendCommand = (action: string, params: Record<string, unknown> = {}) =>
-    props.clientRef.current?.sendCommand(action, params)
 
   const renderDrawer = (section: DrawerSection) => {
     if (section === 'chat') {
@@ -103,19 +106,12 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
       )
     }
     if (section === 'developer') {
-      return (
-        <DrawerPanel title="开发者">
-          <SystemCenter sendCommand={sendCommand} />
-        </DrawerPanel>
-      )
+      return <DeveloperWorkspace clientRef={props.clientRef} />
     }
-    const deferred = {
-      character: ['角色', '角色自我投影将在第二阶段接入；这里不会展示内部数据库对象。'],
-      memory: ['记忆', '面向用户的记忆搜索、分类和受控编辑将在第二阶段接入。'],
-      voice: ['语音', '设备、音量和语音服务状态将在第二阶段形成独立视图。'],
-      capabilities: ['能力', '工具与权限将通过面向用户的能力视图接入。'],
-    }[section]
-    return <DeferredDrawer title={deferred[0]} description={deferred[1]} />
+    if (section === 'character') return <CharacterSelfPanel clientRef={props.clientRef} />
+    if (section === 'memory') return <MemoryPanel clientRef={props.clientRef} />
+    if (section === 'voice') return <VoicePanel clientRef={props.clientRef} />
+    return <CapabilityPanel clientRef={props.clientRef} />
   }
 
   return (

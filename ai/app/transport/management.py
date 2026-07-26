@@ -70,6 +70,68 @@ class ManagementHandler:
                 )},
             )]
 
+        elif action == "get_character_self_view":
+            return [CommandResponse(
+                action=action,
+                data={"view": self._manager.get_character_self_view()},
+            )]
+
+        elif action == "get_memory_view":
+            return [CommandResponse(
+                action=action,
+                data={"view": self._manager.get_memory_view(
+                    query=str(params.get("query", "")),
+                    category=str(params.get("category", "all")),
+                    limit=int(params.get("limit", 200)),
+                )},
+            )]
+
+        elif action == "update_memory_view":
+            result = self._manager.update_memory_view(
+                str(params.get("ref", "")), params
+            )
+            if "error" in result:
+                return [Error(code="memory_update_failed", message=result["error"])]
+            return [CommandResponse(action=action, data=result)]
+
+        elif action == "forget_memory_view":
+            result = self._manager.forget_memory_view(str(params.get("ref", "")))
+            if "error" in result:
+                return [Error(code="memory_forget_failed", message=result["error"])]
+            return [CommandResponse(action=action, data=result)]
+
+        elif action == "get_voice_status_view":
+            return [CommandResponse(
+                action=action,
+                data={"view": self._manager.get_voice_status_view()},
+            )]
+
+        elif action == "get_capability_view":
+            return [CommandResponse(
+                action=action,
+                data={"view": await self._manager.get_capability_view()},
+            )]
+
+        elif action == "get_turns":
+            return [CommandResponse(
+                action=action,
+                data={"turns": self._manager.get_turns(
+                    int(params.get("limit", 100))
+                )},
+            )]
+
+        elif action == "get_turn_detail":
+            result = self._manager.get_turn_detail(str(params.get("turn_id", "")))
+            if "error" in result:
+                return [Error(code="turn_not_found", message=result["error"])]
+            return [CommandResponse(action=action, data=result)]
+
+        elif action == "get_runtime_diagnostics":
+            return [CommandResponse(
+                action=action,
+                data=self._manager.get_runtime_diagnostics(),
+            )]
+
         elif action == "update_memory":
             result = self._manager.update_memory(int(params.get("memory_id", 0)), params)
             if "error" in result:

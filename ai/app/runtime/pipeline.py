@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import time
 
 from app.runtime.character_turn import CharacterTurn
 
@@ -25,6 +26,7 @@ class Pipeline:
 
     async def run(self, turn: CharacterTurn) -> CharacterTurn:
         for step in self._steps:
+            started_at = time.perf_counter()
             try:
                 await step.run(turn)
             except Exception as exc:
@@ -32,7 +34,10 @@ class Pipeline:
                     f"pipeline.{step.__class__.__name__}",
                     str(exc),
                 )
-                break
+            finally:
+                turn.metrics[f"{step.__class__.__name__}_ms"] = (
+                    time.perf_counter() - started_at
+                ) * 1000
             if turn.error:
                 break
         return turn
