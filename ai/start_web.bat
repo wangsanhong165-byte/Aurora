@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 if not exist "logs" mkdir "logs"
-python scripts\launcher.py web 2>&1
+call scripts\launch.cmd web
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" (
     echo.

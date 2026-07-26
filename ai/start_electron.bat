@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 if not exist "logs" mkdir "logs"
-python scripts\launcher.py electron 2>&1
+call scripts\launch.cmd electron
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" (
     echo.
