@@ -12,6 +12,7 @@ import { PetModeController } from './PetModeController'
 import { AvatarController } from './AvatarController'
 import { ComponentManager } from './ComponentManager'
 import { Live2DModelAdapter } from './Live2DModelAdapter'
+import { observeElementResize } from './observe-resize'
 
 function modelUrl(name: string): string {
   return `/live2d-models/${name}/${name}.model3.json`
@@ -144,6 +145,7 @@ function _initComponents(compMgr: ComponentManager, ctrl: CharacterController,
 }
 
 export function CharacterView() {
+  const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ctrlRef = useRef<CharacterController | null>(null)
   const avatarRef = useRef<AvatarController | null>(null)
@@ -619,13 +621,19 @@ export function CharacterView() {
 
     doResize()
     window.addEventListener('resize', doResize)
-    return () => window.removeEventListener('resize', doResize)
+    const stopObserving = containerRef.current
+      ? observeElementResize(containerRef.current, doResize)
+      : () => {}
+    return () => {
+      window.removeEventListener('resize', doResize)
+      stopObserving()
+    }
   }, [])
 
   const showFallback = loadState === 'unavailable'
 
   return (
-    <div style={styles.container}>
+    <div ref={containerRef} style={styles.container}>
       <canvas ref={canvasRef} style={styles.canvas} />
       {showFallback && (
         <div style={styles.fallback}>

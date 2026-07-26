@@ -9,6 +9,7 @@
     "dev": "vite",
     "dev:electron": "NODE_ENV=development electron .",
     "build": "vite build",
+    "test": "node --test --experimental-strip-types src/ui/workspace-state.test.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "profile:inspect": "node ../scripts/inspect_live2d_profiles.mjs --json",

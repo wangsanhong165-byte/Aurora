@@ -15,12 +15,6 @@ function Message({ message }: { message: ChatMessage }) {
         })}</time>
       </div>
       <p>{message.text || (!isUser && !isSystem ? '正在组织语言…' : '')}</p>
-      {!isUser && !isSystem && message.reasoning && (
-        <details className="reasoning">
-          <summary>查看思考摘要</summary>
-          <p>{message.reasoning}</p>
-        </details>
-      )}
     </article>
   )
 }
@@ -28,7 +22,7 @@ function Message({ message }: { message: ChatMessage }) {
 export function ChatView() {
   const messages = useSelector(selectMessages)
   const listRef = useRef<HTMLDivElement>(null)
-  const visible = messages.slice(-4)
+  const visible = messages
   const lastText = visible.at(-1)?.text ?? ''
 
   useEffect(() => {

@@ -1,94 +1,116 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useReducer, useRef, type PointerEvent, type ReactNode } from 'react'
 
-export type WorkspaceSection = 'chat' | 'history' | 'system' | 'settings'
+import {
+  DEFAULT_DRAWER_WIDTH,
+  createInitialDrawerState,
+  reduceDrawerState,
+  type DrawerSection,
+} from './workspace-state'
 
-export interface LayoutProps {
-  statusBar: ReactNode
-  characterArea: ReactNode
-  chatArea: ReactNode
-  inputBar: ReactNode
-  systemArea: ReactNode
-  activeSection: WorkspaceSection
-  onSectionChange: (section: WorkspaceSection) => void
+export interface DrawerItem {
+  id: DrawerSection
+  label: string
+  mark: string
 }
 
-const readCollapsed = (key: string) => localStorage.getItem(key) === 'true'
+export interface LayoutProps {
+  characterArea: ReactNode
+  subtitle: ReactNode
+  drawerItems: DrawerItem[]
+  renderDrawer: (section: DrawerSection) => ReactNode
+  petMode?: boolean
+}
+
+const ACTIVE_KEY = 'ui.stage.drawer.active'
+const WIDTH_KEY = 'ui.stage.drawer.width'
+
+function initialDrawerState() {
+  const storedActive = localStorage.getItem(ACTIVE_KEY)
+  const storedWidth = Number(localStorage.getItem(WIDTH_KEY))
+  return createInitialDrawerState(storedActive, storedWidth || DEFAULT_DRAWER_WIDTH)
+}
 
 export function Layout({
-  statusBar,
   characterArea,
-  chatArea,
-  inputBar,
-  systemArea,
-  activeSection,
-  onSectionChange,
+  subtitle,
+  drawerItems,
+  renderDrawer,
+  petMode = false,
 }: LayoutProps) {
-  const [navCollapsed, setNavCollapsed] = useState(() => readCollapsed('ui.nav.collapsed'))
-  const [systemCollapsed, setSystemCollapsed] = useState(() => readCollapsed('ui.system.collapsed'))
+  const [drawer, dispatch] = useReducer(reduceDrawerState, undefined, initialDrawerState)
+  const stopResizeRef = useRef<(() => void) | null>(null)
 
-  useEffect(() => localStorage.setItem('ui.nav.collapsed', String(navCollapsed)), [navCollapsed])
-  useEffect(() => localStorage.setItem('ui.system.collapsed', String(systemCollapsed)), [systemCollapsed])
+  useEffect(() => {
+    if (drawer.active) localStorage.setItem(ACTIVE_KEY, drawer.active)
+    else localStorage.setItem(ACTIVE_KEY, 'closed')
+    localStorage.setItem(WIDTH_KEY, String(drawer.width))
+  }, [drawer])
 
-  const navItems: Array<{ id: WorkspaceSection; label: string; short: string }> = [
-    { id: 'chat', label: '对话', short: '聊' },
-    { id: 'history', label: '记忆', short: '忆' },
-    { id: 'system', label: '系统', short: '状' },
-    { id: 'settings', label: '设置', short: '设' },
-  ]
+  useEffect(() => () => stopResizeRef.current?.(), [])
+
+  const beginResize = (event: PointerEvent<HTMLDivElement>) => {
+    stopResizeRef.current?.()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const startX = event.clientX
+    const startWidth = drawer.width
+    const onMove = (moveEvent: globalThis.PointerEvent) => {
+      dispatch({ type: 'resize', width: startWidth + startX - moveEvent.clientX })
+    }
+    const onEnd = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onEnd)
+      window.removeEventListener('pointercancel', onEnd)
+      stopResizeRef.current = null
+    }
+    stopResizeRef.current = onEnd
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onEnd)
+    window.addEventListener('pointercancel', onEnd)
+  }
 
   return (
-    <div className="workspace-shell">
-      <div className="workspace-main">
-        <aside className={`nav-rail ${navCollapsed ? 'is-collapsed' : ''}`} aria-label="主导航">
-          <div className="brand">
-            <span className="brand-mark">S</span>
-            {!navCollapsed && <span className="brand-name">SoulLink</span>}
-          </div>
-          <nav className="nav-items">
-            {navItems.map(item => (
+    <div className={`workspace-shell ${petMode ? 'is-pet-mode' : ''}`}>
+      <main className="companion-stage">
+        <div className="character-stage">{characterArea}</div>
+        {subtitle}
+      </main>
+
+      {!petMode && drawer.active && (
+        <aside
+          className="stage-drawer"
+          style={{ width: drawer.width, flexBasis: drawer.width }}
+          aria-label={`${drawerItems.find(item => item.id === drawer.active)?.label ?? ''}面板`}
+        >
+          <div
+            className="drawer-resize-handle"
+            onPointerDown={beginResize}
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="调整面板宽度"
+          />
+          {renderDrawer(drawer.active)}
+        </aside>
+      )}
+
+      {!petMode && (
+        <aside className="stage-rail" aria-label="功能导航">
+          <nav>
+            {drawerItems.map(item => (
               <button
                 key={item.id}
                 type="button"
-                className={`nav-item ${activeSection === item.id ? 'is-active' : ''}`}
-                onClick={() => onSectionChange(item.id)}
-                title={navCollapsed ? item.label : undefined}
+                className={drawer.active === item.id ? 'is-active' : ''}
+                onClick={() => dispatch({ type: 'select', section: item.id })}
+                title={item.label}
+                aria-label={item.label}
+                aria-pressed={drawer.active === item.id}
               >
-                <span className="nav-item-mark">{item.short}</span>
-                {!navCollapsed && <span>{item.label}</span>}
+                <span aria-hidden="true">{item.mark}</span>
               </button>
             ))}
           </nav>
-          <button
-            type="button"
-            className="rail-collapse"
-            onClick={() => setNavCollapsed(value => !value)}
-            aria-label={navCollapsed ? '展开导航' : '收起导航'}
-          >
-            {navCollapsed ? '展开' : '收起'}
-          </button>
         </aside>
-
-        <main className="companion-stage">
-          <div className="character-stage">{characterArea}</div>
-          <section className="conversation-dock" aria-label="对话区">
-            {chatArea}
-            {inputBar}
-          </section>
-        </main>
-
-        <aside className={`system-rail ${systemCollapsed ? 'is-collapsed' : ''}`} aria-label="实时状态">
-          <button
-            type="button"
-            className="system-collapse"
-            onClick={() => setSystemCollapsed(value => !value)}
-            aria-label={systemCollapsed ? '展开实时状态' : '收起实时状态'}
-          >
-            {systemCollapsed ? '状态' : '收起'}
-          </button>
-          {!systemCollapsed && systemArea}
-        </aside>
-      </div>
-      {statusBar}
+      )}
     </div>
   )
 }

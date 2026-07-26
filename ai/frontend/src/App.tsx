@@ -3,19 +3,15 @@ import { StoreProvider, useActions, useSelector, selectSettings } from './core/s
 import { eventBus } from './core/event-bus'
 import { RuntimeAdapter } from './runtime/adapter'
 import { AudioPlayer } from './audio/player'
-import { CharacterView } from './character/CharacterView'
-import { ChatView } from './conversation/ChatView'
 import { StatusBar } from './ui/StatusBar'
-import { InputBar } from './ui/InputBar'
-import { Layout, type WorkspaceSection } from './ui/Layout'
 import { TitleBar } from './ui/TitleBar'
-import { SettingsPanel } from './ui/SettingsPanel'
-import { DebugPanel } from './ui/DebugPanel'
 import { ErrorBoundary } from './ui/ErrorBoundary'
-import { SystemCenter } from './ui/SystemCenter'
-import { HistoryPanel, type HistoryEntry } from './conversation/HistoryPanel'
+import type { HistoryEntry } from './conversation/HistoryPanel'
 import type { AiActivity } from './core/types'
 import type { AppSettings } from './core/store'
+import type { ChatMessage } from './core/types'
+import { CompanionWorkspace } from './ui/CompanionWorkspace'
+import { resolveHistoryCommand } from './conversation/history-command'
 import './styles/index.css'
 
 const WS_URL = `ws://${location.hostname}:9528/client-ws`
@@ -26,12 +22,11 @@ function AppInner() {
   const actions = useActions()
   const clientRef = useRef<RuntimeAdapter | null>(null)
   const audioRef = useRef<AudioPlayer | null>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [historyOpen, setHistoryOpen] = useState(false)
   const [histories, setHistories] = useState<HistoryEntry[]>([])
   const [historyUid, setHistoryUid] = useState('')
   const [historyLoading, setHistoryLoading] = useState(false)
-  const [activeSection, setActiveSection] = useState<WorkspaceSection>('chat')
+  const [historyRevision, setHistoryRevision] = useState(0)
+  const [subtitleText, setSubtitleText] = useState('')
   const [accessoryParts, setAccessoryParts] = useState<Record<string, string>>({})
   const [accessoryState, setAccessoryState] = useState<Record<string, boolean>>({})
   const settings = useSelector(selectSettings)
@@ -68,11 +63,13 @@ function AppInner() {
     const unsub3 = eventBus.on('runtime:message', ({ text, reasoning }) => {
       actions.setStatusMessage('')
       actions.updateLastAssistant(text, reasoning)
+      setSubtitleText(text)
     })
 
     const unsub4 = eventBus.on('runtime:chunk', ({ text }) => {
       actions.setActivity('speaking')
       actions.updateLastAssistant(text)
+      setSubtitleText(text)
     })
 
     const unsub5 = eventBus.on('audio:play', ({ audio: b64, format }) => {
@@ -113,9 +110,47 @@ function AppInner() {
       if (action === 'get_histories' && Array.isArray((data as any)?.histories)) {
         const h = (data as any).histories as HistoryEntry[]
         setHistories(h)
-        if (h.length > 0 && !historyUid) {
-          setHistoryUid(h[0].uid)
+        setHistoryUid(current =>
+          h.some(entry => entry.uid === current) ? current : h[0]?.uid || ''
+        )
+        setHistoryLoading(false)
+        return
+      }
+
+      const effect = resolveHistoryCommand(action, data)
+      if (effect) {
+        setHistoryUid(effect.activeUid)
+        setHistoryLoading(false)
+        if (effect.clearMessages) actions.clearMessages()
+        if (effect.messages) {
+          const messages = effect.messages.flatMap((item, index): ChatMessage[] => {
+            if (!item || typeof item !== 'object') return []
+            const record = item as Record<string, unknown>
+            const role = record.role
+            const content = record.content
+            if ((role !== 'user' && role !== 'assistant' && role !== 'system') || typeof content !== 'string') {
+              return []
+            }
+            return [{
+              id: `history_${effect.activeUid}_${index}`,
+              role,
+              text: content,
+              timestamp: typeof record.timestamp === 'number' ? record.timestamp : Date.now() + index,
+            }]
+          })
+          actions.setMessages(messages)
         }
+        if (effect.refreshHistories) client.sendCommand('get_histories', {})
+        setHistoryRevision(current => current + 1)
+      } else if (action === 'delete_history') {
+        setHistoryLoading(false)
+        const deletedUid = String(data.history_uid ?? '')
+        setHistoryUid(current => {
+          if (current !== deletedUid) return current
+          actions.clearMessages()
+          return ''
+        })
+        client.sendCommand('get_histories', {})
       }
     })
 
@@ -188,11 +223,6 @@ function AppInner() {
     eventBus.emit('accessory:toggle', { label })
   }, [])
 
-  const handleSettingsOpen = useCallback(() => {
-    setSettingsOpen(true)
-    eventBus.emit('accessory:refresh', undefined)
-  }, [])
-
   const handleSettingChange = useCallback((key: string, value: unknown) => {
     const client = clientRef.current
     actions.setSetting(key as keyof AppSettings, value)
@@ -245,77 +275,35 @@ function AppInner() {
 
   return (
     <div style={styles.wrapper} onClick={handleUserGesture}>
-      <TitleBar />
-      <Layout
-        statusBar={<StatusBar />}
-        characterArea={<CharacterView />}
-        chatArea={
-          <div style={{ display: 'flex', height: '100%', flexDirection: 'column' }}>
-            <ChatView />
-          </div>
-        }
-        inputBar={
-          <InputBar onSend={handleSend} onInterrupt={handleInterrupt} clientRef={clientRef} />
-        }
-        systemArea={
-          <SystemCenter
-            sendCommand={(action, params = {}) => clientRef.current?.sendCommand(action, params)}
-          />
-        }
-        activeSection={activeSection}
-        onSectionChange={(section) => {
-          setActiveSection(section)
-          if (section === 'history') setHistoryOpen(true)
-          if (section === 'settings') handleSettingsOpen()
-        }}
-      />
-      <SettingsPanel
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+      {settings.windowMode !== 'pet' && <TitleBar />}
+      <CompanionWorkspace
         settings={settings}
-        onSettingChange={handleSettingChange}
+        clientRef={clientRef}
+        histories={histories}
+        historyUid={historyUid}
+        historyLoading={historyLoading}
+        historyRevision={historyRevision}
+        subtitleText={subtitleText}
         accessoryParts={accessoryParts}
         accessoryState={accessoryState}
+        onSend={handleSend}
+        onInterrupt={handleInterrupt}
+        onLoadHistory={(uid) => {
+          setHistoryLoading(true)
+          clientRef.current?.sendCommand('load_history', { history_uid: uid })
+        }}
+        onDeleteHistory={(uid) => {
+          setHistoryLoading(true)
+          clientRef.current?.sendCommand('delete_history', { history_uid: uid })
+        }}
+        onCreateHistory={() => {
+          setHistoryLoading(true)
+          clientRef.current?.sendCommand('create_history', {})
+        }}
+        onSettingChange={handleSettingChange}
         onAccessoryToggle={handleAccessoryToggle}
       />
-      {historyOpen && (
-        <div style={styles.overlay} onClick={() => setHistoryOpen(false)}>
-          <div style={styles.overlayPanel} onClick={e => e.stopPropagation()}>
-            <div style={styles.overlayHeader}>
-              <span style={{ fontWeight: 600 }}>对话记忆</span>
-              <button type="button" onClick={() => setHistoryOpen(false)}
-                style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '1.1rem' }}>
-                ✕
-              </button>
-            </div>
-            <HistoryPanel
-              histories={histories}
-              activeUid={historyUid}
-              loading={historyLoading}
-              onLoad={(uid) => {
-                setHistoryUid(uid)
-                setHistoryLoading(true)
-                clientRef.current?.sendCommand('load_history', { uid })
-                setTimeout(() => { setHistoryLoading(false); setHistoryOpen(false) }, 500)
-              }}
-              onDelete={(uid) => {
-                clientRef.current?.sendCommand('delete_history', { uid })
-                setHistories(prev => prev.filter(h => h.uid !== uid))
-              }}
-              onCreate={() => {
-                clientRef.current?.sendCommand('create_history', {})
-                setHistoryLoading(true)
-                setTimeout(() => {
-                  clientRef.current?.sendCommand('get_histories', {})
-                  setHistoryLoading(false)
-                  setHistoryOpen(false)
-                }, 500)
-              }}
-            />
-          </div>
-        </div>
-      )}
-      <DebugPanel />
+      {settings.windowMode !== 'pet' && <StatusBar />}
     </div>
   )
 }
@@ -332,19 +320,4 @@ export default function App() {
 
 const styles: Record<string, React.CSSProperties> = {
   wrapper: { height: '100%', display: 'flex', flexDirection: 'column' },
-  overlay: {
-    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex',
-    alignItems: 'center', justifyContent: 'center',
-  },
-  overlayPanel: {
-    backgroundColor: '#18181c', borderRadius: '8px', padding: '16px',
-    maxWidth: '400px', width: '90%', maxHeight: '80vh', overflow: 'hidden',
-    display: 'flex', flexDirection: 'column',
-  },
-  overlayHeader: {
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    paddingBottom: '8px', marginBottom: '8px', borderBottom: '1px solid #333',
-    color: '#e0e0e0',
-  },
 }

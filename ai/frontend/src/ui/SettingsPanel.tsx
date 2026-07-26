@@ -5,6 +5,7 @@ import type { AppSettings } from '../core/store'
 export interface SettingsPanelProps {
   open: boolean
   onClose: () => void
+  embedded?: boolean
   settings: AppSettings
   onSettingChange: (key: string, value: unknown) => void
   /** Accessory parts: label -> partId */
@@ -55,6 +56,7 @@ const isElectron = typeof window !== 'undefined' && !!window.electronAPI
 export function SettingsPanel({
   open,
   onClose,
+  embedded = false,
   settings,
   onSettingChange,
   accessoryParts,
@@ -71,12 +73,11 @@ export function SettingsPanel({
     }
   }
 
-  return (
-    <div style={styles.overlay} onClick={handleOverlayClick}>
-      <div style={styles.modal}>
+  const panel = (
+      <div style={embedded ? styles.embedded : styles.modal}>
         <div style={styles.header}>
           <span style={styles.title}>Settings</span>
-          <button type="button" style={styles.closeBtn} onClick={onClose}>&times;</button>
+          {!embedded && <button type="button" style={styles.closeBtn} onClick={onClose}>&times;</button>}
         </div>
 
         <div style={styles.body}>
@@ -118,6 +119,13 @@ export function SettingsPanel({
           </div>
         </div>
       </div>
+  )
+
+  if (embedded) return panel
+
+  return (
+    <div style={styles.overlay} onClick={handleOverlayClick}>
+      {panel}
     </div>
   )
 }
@@ -385,6 +393,14 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: theme.colors.bg.root, border: `1px solid ${theme.colors.border}`,
     borderRadius: theme.radius.lg, display: 'flex', flexDirection: 'column', overflow: 'hidden',
     boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
+  },
+  embedded: {
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+    backgroundColor: theme.colors.bg.root,
   },
   header: {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
