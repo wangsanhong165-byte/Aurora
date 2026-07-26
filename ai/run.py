@@ -38,8 +38,7 @@ def env_bool(name: str, default: bool) -> bool:
     return v.strip().lower() in {"1", "true", "yes", "on"} if v else default
 
 
-def start_services(args: argparse.Namespace, log_dir: Path) -> tuple[list[subprocess.Popen], list]:
-    del args, log_dir
+def start_lifecycle() -> None:
     global _lifecycle_started
     subprocess.run(
         ["cmd.exe", "/c", str(BASE_DIR / "soulctl.cmd"), "start"],
@@ -47,19 +46,31 @@ def start_services(args: argparse.Namespace, log_dir: Path) -> tuple[list[subpro
         check=True,
     )
     _lifecycle_started = True
-    return [], []
 
 
-def wait_services() -> bool:
+def wait_lifecycle() -> bool:
     try:
         response = send_request(BASE_DIR, {
             "schema_version": 1,
             "command": "status",
             "request_id": "run-py-status",
         })
-        return bool(response.get("ok") and response["result"].get("ready"))
+        return bool(
+            response.get("ok")
+            and response["result"].get("availability") == "FULL_READY"
+        )
     except (OSError, ValueError):
         return False
+
+
+def stop_lifecycle() -> None:
+    if not _lifecycle_started:
+        return
+    subprocess.run(
+        ["cmd.exe", "/c", str(BASE_DIR / "soulctl.cmd"), "stop"],
+        cwd=BASE_DIR,
+        check=False,
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -234,20 +245,12 @@ def main() -> int:
         except Exception as exc:
             print(f"[persona] Load failed: {exc}")
 
-    # Setup logging
-    from datetime import datetime
-    log_dir = BASE_DIR / "data" / "logs" / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_dir.mkdir(parents=True, exist_ok=True)
-    print(f"\n[log] {log_dir}")
-
     print("\nStarting services...")
-    procs, log_files = start_services(args, log_dir)
+    start_lifecycle()
     try:
         print("\nWaiting for services...")
-        if not wait_services():
+        if not wait_lifecycle():
             return 1
-
-        print("\n[warmup] TTS was loaded before ASR startup")
 
         # ---- Web UI mode (bridge server) ----
         if args.web:
@@ -268,21 +271,7 @@ def main() -> int:
         return _runtime_main(args)
     finally:
         print("Shutting down...")
-        if _lifecycle_started:
-            subprocess.run(
-                ["cmd.exe", "/c", str(BASE_DIR / "soulctl.cmd"), "stop"],
-                cwd=BASE_DIR,
-                check=False,
-            )
-        for p in procs:
-            try:
-                p.terminate()
-                print(f"[stop] pid={p.pid} terminated")
-            except Exception as exc:
-                print(f"[stop] pid={p.pid} error: {exc}")
-        for f in log_files:
-            try: f.close()
-            except Exception: pass
+        stop_lifecycle()
         print("All services stopped.")
 
 

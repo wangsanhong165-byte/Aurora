@@ -54,3 +54,13 @@ def test_process_manager_is_a_thin_supervisor_adapter():
     assert "SERVICE_DEFINITIONS" not in manager
     assert "taskkill" not in manager
     assert "netstat" not in manager
+
+
+def test_run_py_is_only_a_thin_lifecycle_client():
+    launcher = (ROOT / "run.py").read_text(encoding="utf-8")
+
+    assert 'get("availability") == "FULL_READY"' in launcher
+    assert "procs, log_files" not in launcher
+    assert "for p in procs" not in launcher
+    assert "for f in log_files" not in launcher
+    assert "TTS was loaded before ASR startup" not in launcher
