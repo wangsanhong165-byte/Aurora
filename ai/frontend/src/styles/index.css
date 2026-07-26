@@ -988,9 +988,61 @@ aside {
   width: min(520px, calc(100% - 40px));
 }
 
-body:has(.workspace-shell.is-pet-mode) {
+.pet-window-controls {
+  position: absolute;
+  z-index: 8;
+  top: 10px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transform: translateX(-50%);
+  opacity: 0.22;
+  transition: opacity 160ms ease;
+}
+
+.pet-window-controls:hover {
+  opacity: 1;
+}
+
+.pet-window-controls:focus-within {
+  opacity: 1;
+}
+
+.pet-drag-handle,
+.pet-window-controls button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 7px;
+  background: rgba(15, 16, 20, 0.76);
+  color: #cbc9d1;
+  font-size: 11px;
+}
+
+.pet-drag-handle {
+  display: grid;
+  place-items: center;
+  cursor: move;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.pet-window-controls button {
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.pet-window-controls button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+html:has(.workspace-shell.is-pet-mode),
+html:has(.workspace-shell.is-pet-mode) body,
+html:has(.workspace-shell.is-pet-mode) #root {
   min-width: 0;
-  background: transparent;
+  background: transparent !important;
 }
 
 @media (max-width: 900px) {

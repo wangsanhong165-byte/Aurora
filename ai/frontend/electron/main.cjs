@@ -11,9 +11,14 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
   process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, screen } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const {
+  fitBoundsToWorkArea,
+  getPetBounds,
+  selectRestorableBounds,
+} = require('./pet-window.cjs')
 
 // ProcessManager — backend service lifecycle management
 const { ProcessManager } = require('../../electron/process-manager.cjs')
@@ -34,6 +39,8 @@ const pm = new ProcessManager()
 let mainWindow = null
 let tray = null
 let alwaysOnTop = false
+let petMode = false
+let normalWindowState = null
 let forceQuit = false
 let ready = false
 
@@ -114,7 +121,7 @@ function createTray() {
       click: (menuItem) => {
         alwaysOnTop = menuItem.checked
         if (mainWindow) {
-          mainWindow.setAlwaysOnTop(alwaysOnTop)
+          mainWindow.setAlwaysOnTop(petMode || alwaysOnTop)
         }
       },
     },
@@ -144,19 +151,56 @@ function setupIPC() {
   ipcMain.handle('window:setAlwaysOnTop', (_event, value) => {
     alwaysOnTop = value
     if (mainWindow) {
-      mainWindow.setAlwaysOnTop(value)
+      mainWindow.setAlwaysOnTop(petMode || value)
     }
     return alwaysOnTop
   })
 
   ipcMain.handle('window:setPetMode', (_event, enabled) => {
-    if (!mainWindow) return
-    if (enabled) {
-      mainWindow.setIgnoreMouseEvents(true, { forward: true })
-    } else {
+    if (!mainWindow) return { enabled: false }
+    if (enabled && !petMode) {
+      const currentBounds = mainWindow.getBounds()
+      const maximized = mainWindow.isMaximized()
+      const fullScreen = mainWindow.isFullScreen()
+      const bounds = selectRestorableBounds({
+        current: currentBounds,
+        normal: mainWindow.getNormalBounds(),
+        maximized,
+        fullScreen,
+      })
+      normalWindowState = {
+        bounds,
+        maximized,
+        fullScreen,
+      }
+      if (normalWindowState.fullScreen) mainWindow.setFullScreen(false)
+      if (normalWindowState.maximized) mainWindow.unmaximize()
+      const display = screen.getDisplayMatching(bounds)
+      const petBounds = getPetBounds(display.workArea)
+      mainWindow.setMinimumSize(
+        Math.min(320, petBounds.width),
+        Math.min(480, petBounds.height),
+      )
+      mainWindow.setBounds(petBounds, true)
       mainWindow.setIgnoreMouseEvents(false)
+      mainWindow.setAlwaysOnTop(true)
+      petMode = true
+    } else if (!enabled && petMode) {
+      mainWindow.setIgnoreMouseEvents(false)
+      mainWindow.setMinimumSize(800, 600)
+      if (normalWindowState) {
+        const display = screen.getDisplayMatching(normalWindowState.bounds)
+        mainWindow.setBounds(
+          fitBoundsToWorkArea(normalWindowState.bounds, display.workArea),
+          true,
+        )
+        if (normalWindowState.maximized) mainWindow.maximize()
+        if (normalWindowState.fullScreen) mainWindow.setFullScreen(true)
+      }
       mainWindow.setAlwaysOnTop(alwaysOnTop)
+      petMode = false
     }
+    return { enabled: petMode, bounds: mainWindow.getBounds() }
   })
 
   ipcMain.handle('app:getSettings', () => {

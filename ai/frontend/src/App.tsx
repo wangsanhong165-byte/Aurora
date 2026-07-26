@@ -175,6 +175,12 @@ function AppInner() {
           clientRef.current.sendCommand('set_proactive_idle', { seconds: s.proactiveIdleTime })
         }
       }
+      if ('alwaysOnTop' in s) {
+        window.electronAPI?.setAlwaysOnTop(Boolean(s.alwaysOnTop))
+      }
+      if ('windowMode' in s) {
+        window.electronAPI?.setPetMode(s.windowMode === 'pet')
+      }
     }).catch(() => {})
 
     client.connect()

@@ -19,6 +19,7 @@ export interface LayoutProps {
   drawerItems: DrawerItem[]
   renderDrawer: (section: DrawerSection) => ReactNode
   petMode?: boolean
+  onExitPetMode?: () => void
 }
 
 const ACTIVE_KEY = 'ui.stage.drawer.active'
@@ -36,6 +37,7 @@ export function Layout({
   drawerItems,
   renderDrawer,
   petMode = false,
+  onExitPetMode,
 }: LayoutProps) {
   const [drawer, dispatch] = useReducer(reduceDrawerState, undefined, initialDrawerState)
   const stopResizeRef = useRef<(() => void) | null>(null)
@@ -70,9 +72,19 @@ export function Layout({
 
   return (
     <div className={`workspace-shell ${petMode ? 'is-pet-mode' : ''}`}>
-      <main className="companion-stage">
+      <main
+        className="companion-stage"
+        onDoubleClick={petMode ? onExitPetMode : undefined}
+        title={petMode ? '双击返回舞台模式' : undefined}
+      >
         <div className="character-stage">{characterArea}</div>
         {subtitle}
+        {petMode && (
+          <div className="pet-window-controls">
+            <span className="pet-drag-handle" title="拖动桌宠窗口">拖动</span>
+            <button type="button" onClick={onExitPetMode}>返回舞台</button>
+          </div>
+        )}
       </main>
 
       {!petMode && drawer.active && (

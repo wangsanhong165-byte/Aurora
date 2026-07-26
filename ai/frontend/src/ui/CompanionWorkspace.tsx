@@ -125,6 +125,7 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
       drawerItems={DRAWER_ITEMS}
       renderDrawer={renderDrawer}
       petMode={props.settings.windowMode === 'pet'}
+      onExitPetMode={() => props.onSettingChange('windowMode', 'window')}
     />
   )
 }
