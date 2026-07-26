@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -125,10 +126,19 @@ def main() -> int:
         )
         return 0
     except (OSError, subprocess.CalledProcessError, RuntimeError) as error:
+        log_dir = ROOT / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "launcher-error.log").write_text(
+            traceback.format_exc(), encoding="utf-8"
+        )
         print(f"\n[启动失败] {error}", file=sys.stderr)
         print(f"[诊断] {config.python} {Path(__file__)} doctor", file=sys.stderr)
-        if args.pause_on_error and sys.stdin.isatty():
-            input("按 Enter 键关闭窗口……")
+        print(f"[日志] {log_dir / 'launcher-error.log'}", file=sys.stderr)
+        if args.pause_on_error:
+            try:
+                input("按 Enter 键关闭窗口……")
+            except EOFError:
+                pass
         return 1
 
 
