@@ -7,12 +7,18 @@ config/characters/*/model/*.ckpt
 config/characters/*/model/*.pth
 __pycache__/
 .idea/
+.claude/settings.local.json
+.pytest_cache/
+.uv_cache/
+.uv_tools/
+.vite/
 *.pyc
 
 /models/
 *.safetensors
 *.safetensors.index.json
 logs/
+debug.log
 temp_audio/
 tts_outputs/
 .vscode/
