@@ -9,6 +9,8 @@ from .health import HealthProbe
 from .manifest import Service, ServiceManifest
 from .platform import PlatformProcessAdapter
 from .registry import ProcessIdentity, ProcessRegistry
+from .protocol import AvailabilityLevel, EventStream
+from .diagnostics import prune_launch_logs, rotate_log
 
 
 class LifecycleError(RuntimeError):
@@ -35,13 +37,31 @@ class LifecycleOrchestrator:
         self.started: list[str] = []
         self.owner = uuid4().hex
         self.active_profile: str | None = None
+        self.launch_id: str | None = None
+        self.events: list[dict] = []
+        self.stream: EventStream | None = None
 
-    def start(self, profile: str = "backend") -> dict:
+    def start(
+        self,
+        profile: str = "backend",
+        *,
+        launch_id: str | None = None,
+        owner_id: str | None = None,
+    ) -> dict:
+        if self.launch_id and self.started:
+            current = self.status()
+            if current["ready"]:
+                return current
         self.active_profile = profile
+        self.launch_id = launch_id or self.launch_id or uuid4().hex
+        self.owner = owner_id or self.owner
+        self.stream = EventStream(self.launch_id, self.owner)
+        prune_launch_logs(self.root)
         rollback_from = len(self.started)
         try:
             for service in self.manifest.for_profile(profile):
                 self._start_service(service)
+            self._emit("availability", availability=self.status()["availability"])
             return self.status()
         except Exception:
             self._stop_names(self.started[rollback_from:])
@@ -52,13 +72,20 @@ class LifecycleOrchestrator:
         if owner:
             actual = self.platform.identity(owner, service.port)
             if actual and self.registry.matches(service.name, actual) and self.probe.ready(service):
+                self.registry.put(service.name, actual, self.owner)
+                if service.name not in self.started:
+                    self.started.append(service.name)
+                self._emit("service_state", service_id=service.name, state="ready")
                 return
             raise LifecycleError(
                 f"{service.name}: port {service.port} is occupied by an external or unverified process"
             )
-        log_dir = self.root / "logs"
+        log_dir = self.root / "logs" / "launches" / (self.launch_id or "legacy") / "services"
         log_dir.mkdir(parents=True, exist_ok=True)
-        log = (log_dir / f"{service.name}.log").open("a", encoding="utf-8")
+        log_path = log_dir / f"{service.name}.log"
+        rotate_log(log_path)
+        log = log_path.open("a", encoding="utf-8")
+        self._emit("service_state", service_id=service.name, state="spawning")
         env = os.environ.copy()
         env.update({
             key: value.replace("{root}", str(self.root)).replace(
@@ -79,10 +106,13 @@ class LifecycleOrchestrator:
         self.logs[service.name] = log
         self.registry.put(service.name, identity, self.owner)
         self.started.append(service.name)
+        self._emit("service_state", service_id=service.name, state="running")
         if not self.probe.wait(service, process):
             raise LifecycleError(f"{service.name}: readiness timeout")
         if service.warmup:
+            self._emit("service_state", service_id=service.name, state="warming")
             self._warmup(service)
+        self._emit("service_state", service_id=service.name, state="ready")
 
     def _warmup(self, service: Service) -> None:
         warmup = service.warmup or {}
@@ -102,6 +132,13 @@ class LifecycleOrchestrator:
         self.started.clear()
         self.processes.clear()
         return self.status()
+
+    def stop_launch(self, launch_id: str) -> dict:
+        if not launch_id:
+            raise LifecycleError("launch_id is required; use --all explicitly to stop all launches")
+        if self.launch_id and launch_id != self.launch_id:
+            return self.status()
+        return self.stop()
 
     def stop_all_registered(self) -> dict:
         self._stop_names([name for name, _entry in self.registry.items()])
@@ -137,14 +174,47 @@ class LifecycleOrchestrator:
             state = "stopped"
             if owner:
                 actual = self.platform.identity(owner, service.port)
-                state = "running" if actual and self.registry.matches(name, actual) else "blocked_external"
-            services.append({"name": name, "port": service.port, "status": state, "pid": owner})
+                if actual and self.registry.matches(name, actual):
+                    state = "ready" if self.probe.ready(service) else "running"
+                else:
+                    state = "blocked_external"
+            services.append({
+                "id": name,
+                "name": name,
+                "display_name": service.display_name or name,
+                "category": service.category,
+                "provider": service.provider,
+                "required": any(name in item.required_services for item in self.manifest.capabilities.values()),
+                "status": state,
+                "port": service.port,
+                "pid": owner,
+            })
         expected = {
             service.name for service in self.manifest.for_profile(self.active_profile)
         } if self.active_profile else set()
-        return {
-            "ready": bool(expected) and all(
-                item["status"] == "running" for item in services if item["name"] in expected
+        state_map = {item["name"]: item["status"] for item in services}
+        availability = self.manifest.availability(state_map)
+        capabilities = [{
+            "id": capability.name,
+            "display_name": capability.display_name,
+            "minimum_level": capability.minimum_level.value,
+            "state": (
+                "ready"
+                if all(state_map.get(name) in {"ready", "degraded"} for name in capability.required_services)
+                else "warming"
             ),
+        } for capability in self.manifest.capabilities.values()]
+        return {
+            "schema_version": 1,
+            "launch_id": self.launch_id,
+            "owner_id": self.owner,
+            "availability": availability.value,
+            "ready": availability != AvailabilityLevel.BLOCKED,
             "services": services,
+            "capabilities": capabilities,
+            "events": self.events[-200:],
         }
+
+    def _emit(self, event_type: str, **payload) -> None:
+        if self.stream:
+            self.events.append(self.stream.event(event_type, **payload))

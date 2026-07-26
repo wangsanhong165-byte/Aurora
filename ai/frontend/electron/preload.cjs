@@ -19,4 +19,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   restartServices: () => ipcRenderer.invoke('restart-services'),
   getLogsDir: () => ipcRenderer.invoke('get-logs-dir'),
   getServiceLog: (serviceName) => ipcRenderer.invoke('get-service-log', serviceName),
+  getLifecycleSnapshot: () => ipcRenderer.invoke('lifecycle:getSnapshot'),
+  lifecycleCommand: (command) => ipcRenderer.invoke('lifecycle:command', command),
+  openLogs: () => ipcRenderer.invoke('lifecycle:openLogs'),
+  onLifecycleSnapshot: (callback) => {
+    const listener = (_event, snapshot) => callback(snapshot)
+    ipcRenderer.on('lifecycle:snapshot', listener)
+    return () => ipcRenderer.removeListener('lifecycle:snapshot', listener)
+  },
+  onLifecycleError: (callback) => {
+    const listener = (_event, message) => callback(message)
+    ipcRenderer.on('lifecycle:error', listener)
+    return () => ipcRenderer.removeListener('lifecycle:error', listener)
+  },
 })

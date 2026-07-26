@@ -1,0 +1,54 @@
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const test = require('node:test')
+
+const {
+  computeBuildFingerprint,
+  readRuntimeConfig,
+  selectPython,
+  npmInvocation,
+} = require('./soulctl.cjs')
+
+test('runtime config supports default and per-service Python', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soullink-config-'))
+  fs.mkdirSync(path.join(root, 'config'))
+  fs.writeFileSync(path.join(root, 'config', 'runtime.local.json'), JSON.stringify({
+    python: { default: 'runtime-python', services: { asr: 'asr-python' } },
+  }))
+  const config = readRuntimeConfig(root)
+  assert.equal(config.python.default, 'runtime-python')
+  assert.equal(config.python.services.asr, 'asr-python')
+})
+
+test('explicit Python has priority over local configuration', () => {
+  const selected = selectPython({
+    cliPython: 'cli-python',
+    config: { python: { default: 'config-python' } },
+    environment: { MAIN_PYTHON: 'env-python' },
+    exists: () => true,
+    which: () => 'path-python',
+  })
+  assert.equal(selected, 'cli-python')
+})
+
+test('build fingerprint changes when a tracked input changes', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'soullink-build-'))
+  const frontend = path.join(root, 'frontend')
+  fs.mkdirSync(path.join(frontend, 'src'), { recursive: true })
+  fs.writeFileSync(path.join(frontend, 'src', 'main.tsx'), 'one')
+  fs.writeFileSync(path.join(frontend, 'package.json'), '{}')
+  const first = computeBuildFingerprint(frontend, 'v20.0.0')
+  fs.writeFileSync(path.join(frontend, 'src', 'main.tsx'), 'two')
+  const second = computeBuildFingerprint(frontend, 'v20.0.0')
+  assert.notEqual(first.sourceHash, second.sourceHash)
+})
+
+test('Windows npm commands use ComSpec instead of spawning npm.cmd directly', () => {
+  const invocation = npmInvocation(['run', 'build'])
+  if (process.platform === 'win32') {
+    assert.match(invocation.command.toLowerCase(), /cmd\.exe$/)
+    assert.deepEqual(invocation.args.slice(0, 3), ['/d', '/s', '/c'])
+  }
+})

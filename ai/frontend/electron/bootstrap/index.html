@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SoulLink 启动控制台</title>
+  <link rel="stylesheet" href="bootstrap.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">SOULLINK</p>
+        <h1>正在唤醒角色</h1>
+        <p id="summary">启动控制台已就绪，正在连接生命周期服务。</p>
+      </div>
+      <span id="availability">BLOCKED</span>
+    </header>
+    <section id="capabilities" aria-label="能力状态"></section>
+    <details>
+      <summary>开发详情</summary>
+      <section id="services"></section>
+    </details>
+    <footer>
+      <button id="retry">重试</button>
+      <button id="logs">打开日志</button>
+      <pre id="error"></pre>
+    </footer>
+  </main>
+  <script src="bootstrap.js"></script>
+</body>
+</html>

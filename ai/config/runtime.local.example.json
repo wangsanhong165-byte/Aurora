@@ -1,3 +1,10 @@
 {
-  "python": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe"
+  "python": {
+    "default": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+    "services": {
+      "asr": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe"
+    }
+  },
+  "preferredMode": "electron",
+  "hotReload": false
 }

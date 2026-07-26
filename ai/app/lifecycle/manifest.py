@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping
 
+from .protocol import AvailabilityLevel
+
 
 class ManifestError(ValueError):
     pass
@@ -26,12 +28,17 @@ class Service:
     readiness: bool = False
     warmup: Mapping[str, object] | None = None
     env: Mapping[str, str] = field(default_factory=dict)
+    display_name: str = ""
+    category: str = "system"
+    provider: str | None = None
+    python: str | None = None
+    startup_priority: int = 100
 
     def argv(self, root: Path) -> list[str]:
         command = self.command
         executable = (
             str(command.get("executable", "{python}"))
-            .replace("{python}", sys.executable)
+            .replace("{python}", self.python or sys.executable)
             .replace("{root}", str(root))
         )
         if "module" in command:
@@ -49,9 +56,20 @@ class Service:
         return argv
 
 
+@dataclass(frozen=True)
+class Capability:
+    name: str
+    display_name: str
+    minimum_level: AvailabilityLevel
+    required_services: tuple[str, ...]
+    optional_services: tuple[str, ...] = ()
+    degraded_without: tuple[str, ...] = ()
+
+
 class ServiceManifest:
-    def __init__(self, services: dict[str, Service]):
+    def __init__(self, services: dict[str, Service], capabilities: dict[str, Capability] | None = None):
         self.services = services
+        self.capabilities = capabilities or {}
         self._validate()
 
     @classmethod
@@ -62,9 +80,16 @@ class ServiceManifest:
         env: Mapping[str, str] | None = None,
         overrides: Mapping[str, Mapping[str, object]] | None = None,
         cli_overrides: Mapping[str, Mapping[str, object]] | None = None,
+        runtime_config: Mapping[str, object] | None = None,
     ) -> "ServiceManifest":
         raw = json.loads(path.read_text(encoding="utf-8"))
+        metadata = raw.get("_meta", {})
         environment = env if env is not None else os.environ
+        python_config = (runtime_config or {}).get("python", {})
+        if isinstance(python_config, str):
+            python_config = {"default": python_config}
+        python_default = str(python_config.get("default", sys.executable))
+        python_services = python_config.get("services", {})
         services: dict[str, Service] = {}
         for name, value in raw.items():
             if name.startswith("_"):
@@ -90,8 +115,24 @@ class ServiceManifest:
                 readiness=bool(merged.get("readiness", False)),
                 warmup=merged.get("warmup"),
                 env=merged.get("env", {}),
+                display_name=str(merged.get("display_name", name)),
+                category=str(merged.get("category", "system")),
+                provider=merged.get("provider"),
+                python=str(python_services.get(name, python_default)),
+                startup_priority=int(merged.get("startup_priority", 100)),
             )
-        return cls(services)
+        capabilities = {
+            name: Capability(
+                name=name,
+                display_name=str(value.get("display_name", name)),
+                minimum_level=AvailabilityLevel(value.get("minimum_level", "FULL_READY")),
+                required_services=tuple(value.get("required_services", [])),
+                optional_services=tuple(value.get("optional_services", [])),
+                degraded_without=tuple(value.get("degraded_without", [])),
+            )
+            for name, value in metadata.get("capabilities", {}).items()
+        }
+        return cls(services, capabilities)
 
     def get(self, name: str) -> Service:
         return self.services[name]
@@ -117,6 +158,38 @@ class ServiceManifest:
             if missing:
                 raise ManifestError(f"{service.name}: missing dependencies {sorted(missing)}")
         self._topological_order()
+        for capability in self.capabilities.values():
+            missing = (
+                set(capability.required_services)
+                | set(capability.optional_services)
+                | set(capability.degraded_without)
+            ) - self.services.keys()
+            if missing:
+                raise ManifestError(
+                    f"{capability.name}: missing capability services {sorted(missing)}"
+                )
+
+    def availability(self, states: Mapping[str, str]) -> AvailabilityLevel:
+        ready_levels: set[AvailabilityLevel] = set()
+        for capability in self.capabilities.values():
+            if all(states.get(name) in {"ready", "degraded"} for name in capability.required_services):
+                ready_levels.add(capability.minimum_level)
+        if AvailabilityLevel.VOICE_READY in ready_levels:
+            declared = {
+                name
+                for capability in self.capabilities.values()
+                for name in (
+                    capability.required_services
+                    + capability.optional_services
+                )
+            }
+            all_declared_ready = all(
+                states.get(name) in {"ready", "degraded"} for name in declared
+            )
+            return AvailabilityLevel.FULL_READY if all_declared_ready else AvailabilityLevel.VOICE_READY
+        if AvailabilityLevel.TEXT_READY in ready_levels:
+            return AvailabilityLevel.TEXT_READY
+        return AvailabilityLevel.BLOCKED
 
     def _topological_order(self) -> list[str]:
         visiting: set[str] = set()
@@ -135,6 +208,9 @@ class ServiceManifest:
             visited.add(name)
             result.append(name)
 
-        for name in self.services:
+        for name in sorted(
+            self.services,
+            key=lambda item: (self.services[item].startup_priority, item),
+        ):
             visit(name)
         return result

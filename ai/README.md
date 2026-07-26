@@ -73,8 +73,7 @@ python run.py --no-vad
 python run.py --ui tui
 
 # Web/Live2D 全功能模式
-python scripts/start_bridge.py
-# 或双击 start_web.bat
+soulctl.cmd web
 # 打开 http://127.0.0.1:9528
 ```
 
@@ -102,7 +101,7 @@ python run.py --text
 ### Web/Live2D 模式
 
 ```powershell
-python scripts/start_bridge.py
+soulctl.cmd web
 ```
 
 在浏览器打开 `http://127.0.0.1:9528`，使用带 Live2D 动画的图形界面。
@@ -140,7 +139,7 @@ ai/
 ├── config/                        # 角色配置、模型映射
 ├── models/                        # Live2D 模型文件
 ├── data/                          # 运行时数据 (记忆、历史)
-├── start_web.bat                  # Windows 一键启动
+├── soulctl.cmd                    # Windows 源码统一启动入口
 └── requirements.txt
 ```
 

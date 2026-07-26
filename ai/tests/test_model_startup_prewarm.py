@@ -32,25 +32,25 @@ def test_manifest_declares_gpu_service_dependency_order():
     assert manifest["gsvi"]["readiness"] is True
 
 
-def test_python_lifecycle_cli_delegates_to_core():
-    lifecycle = (ROOT / "scripts/lifecycle.py").read_text(encoding="utf-8")
-    assert "LifecycleOrchestrator" in lifecycle
-    assert "subprocess.Popen" not in lifecycle
+def test_python_supervisor_owns_lifecycle_core():
+    supervisor = (ROOT / "app/lifecycle/supervisor.py").read_text(encoding="utf-8")
+    assert "LifecycleOrchestrator" in supervisor
+    assert "ControlServer" in supervisor
 
 
-def test_electron_bat_is_a_thin_entry_and_main_owns_shutdown():
-    bat = (ROOT / "start_electron.bat").read_text(encoding="utf-8")
+def test_soulctl_is_the_entry_and_electron_main_owns_its_launch_shutdown():
+    entry = (ROOT / "soulctl.cmd").read_text(encoding="utf-8")
     main = (ROOT / "frontend/electron/main.cjs").read_text(encoding="utf-8")
 
-    assert "scripts\\launch.cmd electron" in bat
+    assert "scripts\\soulctl.cjs" in entry
     assert "electron.pid" in main
-    assert "taskkill" not in bat
+    assert "taskkill" not in entry
     assert "shutdownStarted" in main
 
 
 def test_process_manager_is_a_thin_supervisor_adapter():
     manager = (ROOT / "electron/process-manager.cjs").read_text(encoding="utf-8")
-    assert "app.lifecycle.supervisor" in manager
+    assert "app.lifecycle.client" in manager
     assert "SERVICE_DEFINITIONS" not in manager
     assert "taskkill" not in manager
     assert "netstat" not in manager

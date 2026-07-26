@@ -11,7 +11,7 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
   process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, screen } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, screen, shell } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const {
@@ -25,12 +25,12 @@ const { ProcessManager } = require('../../electron/process-manager.cjs')
 
 // ── Constants ────────────────────────────────────────────────────────
 
-const isDev = process.env.NODE_ENV !== 'production' && (process.env.NODE_ENV === 'development' || !app.isPackaged)
+const isDev = process.env.SOULLINK_HOT === '1'
 const CONSOLE_LOG = path.join(__dirname, '..', 'console.log')
 const ELECTRON_PID_FILE = path.join(__dirname, '..', '..', 'data', 'pids', 'electron.pid')
 // Both dev and prod load from Bridge (9528) — it serves frontend dist/ AND
 // Live2D model files. Vite (5173) doesn't have the /live2d-models/ mount.
-const DEV_URL = process.env.BRIDGE_URL || 'http://127.0.0.1:9528'
+const DEV_URL = process.env.VITE_URL || 'http://127.0.0.1:5173'
 const PROD_URL = process.env.BRIDGE_URL || 'http://127.0.0.1:9528'
 
 // ── State ────────────────────────────────────────────────────────────
@@ -44,6 +44,8 @@ let normalWindowState = null
 let forceQuit = false
 let ready = false
 let shutdownStarted = false
+let statusTimer = null
+let mainUiLoaded = false
 
 // ── Window creation ──
 
@@ -90,9 +92,11 @@ function createWindow() {
 function loadAppUrl() {
   // Load the app URL (only call AFTER services are ready)
   const targetUrl = isDev ? DEV_URL : PROD_URL
-  mainWindow.loadURL(targetUrl)
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show()
+  mainUiLoaded = true
+  mainWindow.loadURL(targetUrl).catch(error => {
+    mainUiLoaded = false
+    mainWindow.loadFile(path.join(__dirname, 'bootstrap', 'index.html'))
+    mainWindow.webContents.send('lifecycle:error', `角色界面加载失败：${error.message}`)
   })
 }
 
@@ -215,6 +219,13 @@ function setupIPC() {
   ipcMain.handle('get-status', () => {
     return pm.getStatus()
   })
+  ipcMain.handle('lifecycle:getSnapshot', () => pm.refresh())
+  ipcMain.handle('lifecycle:command', async (_event, command) => {
+    if (command === 'restart') return pm.restartAll()
+    if (command === 'stop') return pm.stopAll()
+    throw new Error(`unsupported lifecycle command: ${command}`)
+  })
+  ipcMain.handle('lifecycle:openLogs', () => shell.openPath(pm.getLogsDir()))
 
   ipcMain.handle('get-logs-dir', () => {
     return pm.getLogsDir()
@@ -250,7 +261,9 @@ app.whenReady().then(async () => {
   try { fs.unlinkSync(CONSOLE_LOG) } catch (_) {}
 
   setupIPC()
-  createWindow()       // Create frameless window (hidden, no URL loaded)
+  createWindow()
+  await mainWindow.loadFile(path.join(__dirname, 'bootstrap', 'index.html'))
+  mainWindow.show()
   createTray()
 
   if (isDev) {
@@ -259,22 +272,20 @@ app.whenReady().then(async () => {
 
   // Start all backend services before loading the frontend,
   // so the page never sees ERR_CONNECTION_REFUSED
-  try {
-    await pm.startAll()
-    ready = true
+  statusTimer = setInterval(async () => {
+    const status = await pm.refresh()
+    mainWindow?.webContents.send('lifecycle:snapshot', status)
+    if (!mainUiLoaded && status.availability !== 'BLOCKED') loadAppUrl()
+  }, 500)
 
-    if (isDev) {
-      const status = pm.getStatus()
-      console.log('[Electron] Service status:', JSON.stringify(status, null, 2))
-    }
-
-    // Now that services are ready, load the app
-    loadAppUrl()
-  } catch (err) {
+  pm.startAll().then(status => {
+    ready = status.availability !== 'BLOCKED'
+    mainWindow?.webContents.send('lifecycle:snapshot', status)
+    if (!mainUiLoaded && ready) loadAppUrl()
+  }).catch(err => {
     console.error('[Electron] Failed to start services:', err)
-    // Still try to load the page (bridge might be running despite error)
-    loadAppUrl()
-  }
+    mainWindow?.webContents.send('lifecycle:error', err.message)
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -293,6 +304,7 @@ app.on('before-quit', async (event) => {
   if (shutdownStarted) return
   event.preventDefault()
   shutdownStarted = true
+  if (statusTimer) clearInterval(statusTimer)
   if (isDev) {
     console.log('[Electron] Shutting down all services...')
   }

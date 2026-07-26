@@ -1,0 +1,17 @@
+:root { color-scheme: dark; font-family: Inter, "Microsoft YaHei", sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; color: #edf4ff;
+  background: radial-gradient(circle at 30% 10%, #243a55, #10151e 55%); }
+main { width: min(760px, 92vw); padding: 36px; border: 1px solid #ffffff20; border-radius: 24px;
+  background: #111923e8; box-shadow: 0 30px 80px #0008; }
+header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+.eyebrow { color: #81c7ff; letter-spacing: .22em; font-size: 12px; }
+h1 { margin: 6px 0; font-size: 32px; }
+#summary { color: #aab8c9; }
+#availability { padding: 8px 12px; border-radius: 999px; background: #ffffff12; color: #8fd4ff; }
+#capabilities, #services { display: grid; gap: 10px; margin: 24px 0; }
+.card { display: flex; justify-content: space-between; padding: 14px 16px; border-radius: 14px; background: #ffffff0b; }
+.state-ready { color: #79e6ae; } .state-failed, .state-blocked_external { color: #ff8e9d; }
+details { color: #b7c5d5; }
+button { border: 0; border-radius: 10px; padding: 10px 16px; margin-right: 8px; color: #eaf4ff; background: #2c78ba; cursor: pointer; }
+footer { margin-top: 22px; } #error { color: #ff9dab; white-space: pre-wrap; }

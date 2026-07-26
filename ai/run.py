@@ -26,11 +26,11 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 from app.config_manager.service_config import service_config
-from app.lifecycle import LifecycleOrchestrator, ServiceManifest
+from app.lifecycle.control import send_request
 from app.core.config import DEFAULT_ENV_PATH, load_env_file
 
 
-_lifecycle: LifecycleOrchestrator | None = None
+_lifecycle_started = False
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -40,16 +40,26 @@ def env_bool(name: str, default: bool) -> bool:
 
 def start_services(args: argparse.Namespace, log_dir: Path) -> tuple[list[subprocess.Popen], list]:
     del args, log_dir
-    global _lifecycle
-    _lifecycle = LifecycleOrchestrator(
-        BASE_DIR, ServiceManifest.load(BASE_DIR / "config/services.json")
+    global _lifecycle_started
+    subprocess.run(
+        ["cmd.exe", "/c", str(BASE_DIR / "soulctl.cmd"), "start"],
+        cwd=BASE_DIR,
+        check=True,
     )
-    _lifecycle.start("backend")
+    _lifecycle_started = True
     return [], []
 
 
 def wait_services() -> bool:
-    return bool(_lifecycle and _lifecycle.status()["ready"])
+    try:
+        response = send_request(BASE_DIR, {
+            "schema_version": 1,
+            "command": "status",
+            "request_id": "run-py-status",
+        })
+        return bool(response.get("ok") and response["result"].get("ready"))
+    except (OSError, ValueError):
+        return False
 
 
 def parse_args() -> argparse.Namespace:
@@ -258,8 +268,12 @@ def main() -> int:
         return _runtime_main(args)
     finally:
         print("Shutting down...")
-        if _lifecycle is not None:
-            _lifecycle.stop()
+        if _lifecycle_started:
+            subprocess.run(
+                ["cmd.exe", "/c", str(BASE_DIR / "soulctl.cmd"), "stop"],
+                cwd=BASE_DIR,
+                check=False,
+            )
         for p in procs:
             try:
                 p.terminate()

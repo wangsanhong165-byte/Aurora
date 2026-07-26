@@ -1,9 +1,25 @@
 {
   "_meta": {
     "description": "Canonical lifecycle service manifest",
-    "priority": "manifest < user overrides < environment < CLI"
+    "priority": "manifest < user overrides < environment < CLI",
+    "capabilities": {
+      "text": {
+        "display_name": "文本交流",
+        "minimum_level": "TEXT_READY",
+        "required_services": ["llm", "bridge"],
+        "optional_services": ["memory"],
+        "degraded_without": ["memory"]
+      },
+      "voice": {
+        "display_name": "语音交流",
+        "minimum_level": "VOICE_READY",
+        "required_services": ["asr", "tts"],
+        "optional_services": ["gsvi"]
+      }
+    }
   },
   "gsvi": {
+    "display_name": "语音模型", "category": "voice", "provider": "GPT-SoVITS", "startup_priority": 100,
     "host": "127.0.0.1", "port": 9105, "health": "/ready", "timeout": 180,
     "readiness": true, "profiles": ["backend", "electron", "full"],
     "env": {"BROWSER": "none", "PATH": "{root}/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/runtime;{PATH}"},
@@ -15,38 +31,44 @@
     }
   },
   "tts": {
+    "display_name": "语音合成", "category": "voice", "startup_priority": 110,
     "host": "127.0.0.1", "port": 9103, "health": "/health", "timeout": 120,
     "readiness": true, "depends_on": ["gsvi"], "profiles": ["backend", "electron", "full"],
     "command": {"module": "app.modules.tts.api", "args": ["--env-file", "{root}/config/.env", "--host", "{host}", "--port", "{port}"]},
     "warmup": {"url": "http://{host}:{port}/warmup", "body": "{}", "timeout": 180}
   },
   "asr": {
+    "display_name": "语音识别", "category": "voice", "startup_priority": 120,
     "host": "127.0.0.1", "port": 9101, "health": "/health", "timeout": 60,
     "readiness": true, "depends_on": ["tts"], "profiles": ["backend", "electron", "full"],
     "command": {"module": "app.modules.asr.api", "args": ["--host", "{host}", "--port", "{port}"]}
   },
   "llm": {
+    "display_name": "文本智能", "category": "text", "startup_priority": 10,
     "host": "127.0.0.1", "port": 9102, "health": "/health", "timeout": 30,
-    "depends_on": ["tts"], "profiles": ["backend", "electron", "full"],
+    "profiles": ["backend", "electron", "full"],
     "command": {"module": "app.modules.llm.api", "args": ["--env-file", "{root}/config/.env", "--host", "{host}", "--port", "{port}"]}
   },
   "memory": {
+    "display_name": "角色记忆", "category": "text", "startup_priority": 20,
     "host": "127.0.0.1", "port": 9104, "health": "/health", "timeout": 15,
-    "depends_on": ["tts"], "profiles": ["backend", "electron", "full"],
+    "profiles": ["backend", "electron", "full"],
     "command": {"module": "app.modules.memory.api", "args": ["--host", "{host}", "--port", "{port}"]}
   },
   "bridge": {
+    "display_name": "角色连接", "category": "text", "startup_priority": 30,
     "host": "127.0.0.1", "port": 9528, "health": null, "timeout": 15,
-    "depends_on": ["asr", "llm", "memory"], "profiles": ["web", "backend", "electron", "full"],
+    "depends_on": ["llm", "memory"], "profiles": ["web", "backend", "electron", "full"],
     "command": {"module": "app.bridge.server", "args": []}
   },
   "frontend": {
+    "display_name": "开发界面", "category": "interface",
     "host": "127.0.0.1", "port": 5173, "health": null, "timeout": 15,
     "depends_on": ["bridge"], "profiles": ["full"], "cwd": "frontend",
     "command": {
       "executable": "node",
       "script": "{root}/frontend/node_modules/vite/bin/vite.js",
-      "args": ["--host", "{host}", "--port", "{port}"]
+      "args": ["--host", "{host}", "--port", "{port}", "--strictPort"]
     }
   }
 }
