@@ -1,50 +1,52 @@
 {
   "_meta": {
-    "description": "Service configuration — single source of truth for all service ports/hosts/URLs",
-    "priority": "env var > services.json > hard-coded default",
-    "last_updated": "2026-07-18"
-  },
-
-  "asr": {
-    "host": "127.0.0.1",
-    "port": 9101,
-    "health": "/health",
-    "timeout": 60
-  },
-  "llm": {
-    "host": "127.0.0.1",
-    "port": 9102,
-    "health": "/health",
-    "timeout": 30
-  },
-  "tts": {
-    "host": "127.0.0.1",
-    "port": 9103,
-    "health": "/health",
-    "timeout": 120
-  },
-  "memory": {
-    "host": "127.0.0.1",
-    "port": 9104,
-    "health": "/health",
-    "timeout": 15
+    "description": "Canonical lifecycle service manifest",
+    "priority": "manifest < user overrides < environment < CLI"
   },
   "gsvi": {
-    "host": "127.0.0.1",
-    "port": 9105,
-    "health": "/ready",
-    "timeout": 180
+    "host": "127.0.0.1", "port": 9105, "health": "/ready", "timeout": 180,
+    "readiness": true, "profiles": ["backend", "electron", "full"],
+    "env": {"BROWSER": "none", "PATH": "{root}/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/runtime;{PATH}"},
+    "cwd": "models/tts/GPT-SoVITS-v2pro-20250604-nvidia50",
+    "command": {
+      "executable": "{root}/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/runtime/python.exe",
+      "script": "{root}/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/api_v2.py",
+      "args": ["-a", "{host}", "-p", "{port}", "-c", "{root}/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/configs/tts_infer.yaml"]
+    }
+  },
+  "tts": {
+    "host": "127.0.0.1", "port": 9103, "health": "/health", "timeout": 120,
+    "readiness": true, "depends_on": ["gsvi"], "profiles": ["backend", "electron", "full"],
+    "command": {"module": "app.modules.tts.api", "args": ["--env-file", "{root}/config/.env", "--host", "{host}", "--port", "{port}"]},
+    "warmup": {"url": "http://{host}:{port}/warmup", "body": "{}", "timeout": 180}
+  },
+  "asr": {
+    "host": "127.0.0.1", "port": 9101, "health": "/health", "timeout": 60,
+    "readiness": true, "depends_on": ["tts"], "profiles": ["backend", "electron", "full"],
+    "command": {"module": "app.modules.asr.api", "args": ["--host", "{host}", "--port", "{port}"]}
+  },
+  "llm": {
+    "host": "127.0.0.1", "port": 9102, "health": "/health", "timeout": 30,
+    "depends_on": ["tts"], "profiles": ["backend", "electron", "full"],
+    "command": {"module": "app.modules.llm.api", "args": ["--env-file", "{root}/config/.env", "--host", "{host}", "--port", "{port}"]}
+  },
+  "memory": {
+    "host": "127.0.0.1", "port": 9104, "health": "/health", "timeout": 15,
+    "depends_on": ["tts"], "profiles": ["backend", "electron", "full"],
+    "command": {"module": "app.modules.memory.api", "args": ["--host", "{host}", "--port", "{port}"]}
   },
   "bridge": {
-    "host": "127.0.0.1",
-    "port": 9528,
-    "health": null,
-    "timeout": 15
+    "host": "127.0.0.1", "port": 9528, "health": null, "timeout": 15,
+    "depends_on": ["asr", "llm", "memory"], "profiles": ["web", "backend", "electron", "full"],
+    "command": {"module": "app.bridge.server", "args": []}
   },
   "frontend": {
-    "host": "localhost",
-    "port": 5173,
-    "health": null,
-    "timeout": 15
+    "host": "127.0.0.1", "port": 5173, "health": null, "timeout": 15,
+    "depends_on": ["bridge"], "profiles": ["full"], "cwd": "frontend",
+    "command": {
+      "executable": "node",
+      "script": "{root}/frontend/node_modules/vite/bin/vite.js",
+      "args": ["--host", "{host}", "--port", "{port}"]
+    }
   }
 }

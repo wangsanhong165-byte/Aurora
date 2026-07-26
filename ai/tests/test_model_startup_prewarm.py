@@ -23,43 +23,34 @@ def test_tts_exposes_real_synthesis_warmup_and_ready_state():
     assert '"warm": _engine_warm' in api
 
 
-def test_electron_starts_gpu_services_in_dependency_order():
-    manager = (ROOT / "electron/process-manager.cjs").read_text(encoding="utf-8")
-
-    gsvi = manager.index("await this._startAndWait('gsvi')")
-    tts = manager.index("await this._startAndWait('tts')")
-    warmup = manager.index("await this._warmupTTS()")
-    asr = manager.index("await this._startAndWait('asr')")
-    assert gsvi < tts < warmup < asr
-    assert "payload.ready === false" in manager
+def test_manifest_declares_gpu_service_dependency_order():
+    import json
+    manifest = json.loads((ROOT / "config/services.json").read_text(encoding="utf-8"))
+    assert manifest["tts"]["depends_on"] == ["gsvi"]
+    assert "warmup" in manifest["tts"]
+    assert manifest["asr"]["depends_on"] == ["tts"]
+    assert manifest["gsvi"]["readiness"] is True
 
 
-def test_python_lifecycle_uses_model_ready_checks_and_tts_warmup():
+def test_python_lifecycle_cli_delegates_to_core():
     lifecycle = (ROOT / "scripts/lifecycle.py").read_text(encoding="utf-8")
-
-    assert "require_ready" in lifecycle
-    assert "warmup_tts" in lifecycle
-    assert "/warmup" in lifecycle
+    assert "LifecycleOrchestrator" in lifecycle
+    assert "subprocess.Popen" not in lifecycle
 
 
-def test_electron_bat_replaces_only_the_previous_companion_instance():
+def test_electron_bat_is_a_thin_entry_and_main_owns_shutdown():
     bat = (ROOT / "start_electron.bat").read_text(encoding="utf-8")
     main = (ROOT / "frontend/electron/main.cjs").read_text(encoding="utf-8")
 
-    assert "electron.pid" in bat
+    assert "npm.cmd run electron:start" in bat
     assert "electron.pid" in main
-    assert "taskkill /F /T /PID" in bat
-    assert "taskkill /IM electron.exe" not in bat
+    assert "taskkill" not in bat
+    assert "shutdownStarted" in main
 
 
-def test_process_manager_has_bounded_health_recovery():
+def test_process_manager_is_a_thin_supervisor_adapter():
     manager = (ROOT / "electron/process-manager.cjs").read_text(encoding="utf-8")
-
-    assert "_startHealthMonitor" in manager
-    assert "_stopHealthMonitor" in manager
-    assert "consecutiveHealthFailures" in manager
-    assert "restartHistory" in manager
-    assert "MAX_RESTARTS_PER_WINDOW" in manager
-    assert "restart_suppressed" in manager
-    assert "MAX_LOG_BYTES" in manager
-    assert "_rotateLog" in manager
+    assert "app.lifecycle.supervisor" in manager
+    assert "SERVICE_DEFINITIONS" not in manager
+    assert "taskkill" not in manager
+    assert "netstat" not in manager

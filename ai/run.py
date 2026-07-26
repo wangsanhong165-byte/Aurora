@@ -26,23 +26,11 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 from app.config_manager.service_config import service_config
+from app.lifecycle import LifecycleOrchestrator, ServiceManifest
 from app.core.config import DEFAULT_ENV_PATH, load_env_file
 
 
-SERVICES = [
-    ("asr",    "app.modules.asr.api",    str(service_config.port("asr"))),
-    ("llm",    "app.modules.llm.api",    str(service_config.port("llm"))),
-    ("tts",    "app.modules.tts.api",    str(service_config.port("tts"))),
-    ("memory", "app.modules.memory.api", str(service_config.port("memory"))),
-]
-
-
-# ---- GSVI v2Pro (nvidia50) via api_v2.py ----
-GSVI_DIR = BASE_DIR / "models" / "tts" / "GPT-SoVITS-v2pro-20250604-nvidia50"
-GSVI_PYTHON = GSVI_DIR / "runtime" / "python.exe"
-GSVI_CONFIG = GSVI_DIR / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
-
-SERVICE_TIMEOUTS = {"asr": 60.0, "gsvi-v2pro": 180.0, "tts": 120.0}
+_lifecycle: LifecycleOrchestrator | None = None
 
 
 def env_bool(name: str, default: bool) -> bool:
@@ -51,128 +39,17 @@ def env_bool(name: str, default: bool) -> bool:
 
 
 def start_services(args: argparse.Namespace, log_dir: Path) -> tuple[list[subprocess.Popen], list]:
-    procs: list[subprocess.Popen] = []
-    log_files = []
-    child_env = os.environ.copy()
-    child_env.setdefault("PYTHONIOENCODING", "utf-8")
-    child_env.setdefault("PYTHONUTF8", "1")
-
-    def start_module(name: str, module: str, port: str) -> None:
-        cmd = [sys.executable, "-m", module]
-        if module in {"app.modules.llm.api", "app.modules.tts.api"}:
-            cmd.extend(["--env-file", str(args.env_file)])
-        cmd.extend(["--host", "127.0.0.1", "--port", port])
-        svc_log = open(str(log_dir / f"{name}.log"), "w", encoding="utf-8")
-        log_files.append(svc_log)
-        print(f"[start] {name} cmd: {sys.executable} -m {module} --port {port}")
-        p = subprocess.Popen(cmd, cwd=BASE_DIR, stdout=svc_log, stderr=svc_log, env=child_env)
-        procs.append(p)
-        print(f"[start] {name} ->:{port} pid={p.pid}")
-
-    if env_bool("START_GSVI", True):
-        os.environ.setdefault("GSVI_PORT", str(service_config.port("gsvi")))
-        os.environ.setdefault("GSVI_URL", service_config.url("gsvi"))
-        env = child_env.copy()
-        env["PATH"] = f"{GSVI_DIR / 'runtime'};{env.get('PATH', '')}"
-        env["BROWSER"] = "none"
-        cmd = [str(GSVI_PYTHON), str(GSVI_DIR / "api_v2.py"),
-               "-a", service_config.host("gsvi"), "-p", str(service_config.port("gsvi")),
-               "-c", str(GSVI_CONFIG)]
-        print(f"[start] GSVI-v2pro cmd: {' '.join(cmd)}")
-        print(f"[start] GSVI-v2pro cwd: {GSVI_DIR}")
-        gsvi_log = open(str(log_dir / "gsvi.log"), "w", encoding="utf-8")
-        log_files.append(gsvi_log)
-        p = subprocess.Popen(cmd, cwd=GSVI_DIR, env=env, stdout=gsvi_log, stderr=gsvi_log)
-        procs.append(p)
-        print(f"[start] GSVI-v2pro ->:{service_config.port('gsvi')}")
-
-        gsvi_url = f"http://127.0.0.1:{service_config.port('gsvi')}/health"
-        deadline = time.time() + SERVICE_TIMEOUTS["gsvi-v2pro"]
-        while time.time() < deadline:
-            try:
-                # GSVI versions may not expose /health; an HTTP response is
-                # sufficient proof that the process is accepting requests.
-                if requests.get(gsvi_url, timeout=2).status_code < 500:
-                    print("[ready] GSVI-v2pro accepts requests")
-                    break
-            except requests.RequestException:
-                pass
-            time.sleep(0.5)
-        else:
-            print("[FAIL] GSVI-v2pro did not become reachable before TTS warmup")
-
-    # GPU services are deliberately staged: GSVI weights are loaded and
-    # exercised before the ASR process is allowed to allocate GPU memory.
-    tts = next(service for service in SERVICES if service[0] == "tts")
-    start_module(*tts)
-
-    tts_url = f"http://127.0.0.1:{tts[2]}/health"
-    deadline = time.time() + SERVICE_TIMEOUTS["tts"]
-    while time.time() < deadline:
-        try:
-            if requests.get(tts_url, timeout=2).status_code == 200:
-                break
-        except requests.RequestException:
-            pass
-        time.sleep(0.5)
-    else:
-        print("[FAIL] TTS adapter did not become ready; ASR will still start")
-
-    print("[warmup] Loading TTS weights into GPU before starting ASR...")
-    try:
-        r = requests.post(
-            f"http://127.0.0.1:{tts[2]}/v1/tts/synthesize",
-            json={"text": "你好", "language": "zh"},
-            timeout=180,
-        )
-        r.raise_for_status()
-        print("[warmup] TTS synthesis complete; GPU weights are warm")
-    except requests.RequestException as exc:
-        print(f"[warmup] TTS GPU warmup failed: {exc}")
-
-    for service in SERVICES:
-        if service[0] not in {"tts", "asr"}:
-            start_module(*service)
-
-    asr = next(service for service in SERVICES if service[0] == "asr")
-    print("[start] Starting ASR after TTS warmup")
-    start_module(*asr)
-    return procs, log_files
+    del args, log_dir
+    global _lifecycle
+    _lifecycle = LifecycleOrchestrator(
+        BASE_DIR, ServiceManifest.load(BASE_DIR / "config/services.json")
+    )
+    _lifecycle.start("backend")
+    return [], []
 
 
 def wait_services() -> bool:
-    all_services = [(s[0], s[2]) for s in SERVICES]
-    if env_bool("START_GSVI", True):
-        all_services.insert(0, ("gsvi-v2pro", str(service_config.port("gsvi"))))
-    ok = True
-    for name, port in all_services:
-        timeout = SERVICE_TIMEOUTS.get(name, 15.0)
-        url = f"http://127.0.0.1:{port}/health"
-        start = time.time()
-        ready = False
-        while time.time() - start < timeout:
-            try:
-                r = requests.get(url, timeout=2)
-                # Some services (gsvi-v2pro) does not expose /health;
-                # any HTTP response (including 404) means the server is alive.
-                if r.status_code in (200, 404):
-                    ready = True
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
-        if ready:
-            print(f"[ready] {name} ({time.time() - start:.1f}s)")
-            try:
-                from app.core.event_bus import bus
-                svc_name = "tts" if name.startswith("gsvi") else name
-                bus.emit("service_status", {"name": svc_name, "status": "READY"})
-            except Exception:
-                pass
-        else:
-            print(f"[FAIL]  {name} not ready")
-            ok = False
-    return ok
+    return bool(_lifecycle and _lifecycle.status()["ready"])
 
 
 def parse_args() -> argparse.Namespace:
@@ -362,34 +239,10 @@ def main() -> int:
 
         print("\n[warmup] TTS was loaded before ASR startup")
 
-        # Warmup ASR
-        print("\nWarming up ASR...")
-        import tempfile
-        import numpy as np
-        import soundfile as sf
-        warmup_audio = np.zeros(16000, dtype=np.float32)
-        warmup_path = Path(tempfile.gettempdir()) / "_asr_warmup.wav"
-        sf.write(str(warmup_path), warmup_audio, 16000)
-        try:
-            asr_port = str(service_config.port("asr"))
-            r = requests.post(f"http://127.0.0.1:{asr_port}/v1/asr/transcribe",
-                             json={"audio_path": str(warmup_path), "language": None},
-                             timeout=120)
-            r.raise_for_status()
-            print("[warmup] ASR model loaded")
-        except Exception:
-            print("[warmup] ASR warmup skipped (will load on first utterance)")
-        finally:
-            warmup_path.unlink(missing_ok=True)
-
         # ---- Web UI mode (bridge server) ----
         if args.web:
             bridge_port = str(service_config.port("bridge"))
-            print(f"\nStarting Live2D Bridge on http://127.0.0.1:{bridge_port} ...")
-            bridge_proc = subprocess.Popen(
-                [sys.executable, "-m", "app.bridge.server"],
-                cwd=BASE_DIR,
-            )
+            print(f"\nLive2D Bridge ready on http://127.0.0.1:{bridge_port} ...")
             import webbrowser
             webbrowser.open(f"http://127.0.0.1:{bridge_port}")
             print(f"\n=== Monika Live2D ready! http://127.0.0.1:{bridge_port} ===")
@@ -399,14 +252,14 @@ def main() -> int:
                     time.sleep(1)
             except KeyboardInterrupt:
                 print("\nShutting down...")
-            finally:
-                bridge_proc.terminate()
-                return 0
+            return 0
 
         # ---- CharacterRuntime ----
         return _runtime_main(args)
     finally:
         print("Shutting down...")
+        if _lifecycle is not None:
+            _lifecycle.stop()
         for p in procs:
             try:
                 p.terminate()

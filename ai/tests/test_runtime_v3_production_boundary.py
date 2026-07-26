@@ -77,7 +77,9 @@ def test_core_runtime_tests_do_not_recreate_legacy_dispatch():
 
 
 def test_frontend_connects_only_to_canonical_client_ws():
-    app_source = (ROOT / "frontend" / "src" / "App.tsx").read_text("utf-8")
+    app_source = (
+        ROOT / "frontend" / "src" / "session" / "DesktopSessionProvider.tsx"
+    ).read_text("utf-8")
     debug_source = (
         ROOT / "frontend" / "src" / "ui" / "DebugPanel.tsx"
     ).read_text("utf-8")

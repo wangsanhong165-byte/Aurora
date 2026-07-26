@@ -43,6 +43,7 @@ let petMode = false
 let normalWindowState = null
 let forceQuit = false
 let ready = false
+let shutdownStarted = false
 
 // ── Window creation ──
 
@@ -289,12 +290,19 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', async (event) => {
+  if (shutdownStarted) return
   event.preventDefault()
+  shutdownStarted = true
   if (isDev) {
     console.log('[Electron] Shutting down all services...')
   }
 
-  await pm.stopAll()
-  try { fs.unlinkSync(ELECTRON_PID_FILE) } catch (_) {}
-  app.exit(0)
+  try {
+    await pm.stopAll()
+  } catch (err) {
+    console.error('[Electron] Lifecycle shutdown failed:', err)
+  } finally {
+    try { fs.unlinkSync(ELECTRON_PID_FILE) } catch (_) {}
+    app.exit(0)
+  }
 })
