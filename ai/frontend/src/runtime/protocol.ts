@@ -87,6 +87,7 @@ export interface Error {
   type: 'error'
   code: string
   message: string
+  request_id?: string
 }
 
 export interface Pong {
@@ -106,6 +107,7 @@ export interface CommandResponse {
   type: 'command_response'
   action: string
   data: Record<string, unknown>
+  request_id?: string
 }
 
 // ── Avatar Protocol: Server → Frontend ──
@@ -206,6 +208,7 @@ export interface Command {
   type: 'command'
   action: string
   params: Record<string, unknown>
+  request_id?: string
 }
 
 // ── Avatar Protocol: Frontend → Server ──

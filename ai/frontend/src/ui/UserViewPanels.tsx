@@ -1,10 +1,9 @@
-import { useEffect, useState, type MutableRefObject } from 'react'
+import { useEffect, useState } from 'react'
 
 import { eventBus } from '../core/event-bus'
-import type { RuntimeAdapter } from '../runtime/adapter'
 import { DrawerPanel } from './DrawerPanel'
 
-type ClientRef = MutableRefObject<RuntimeAdapter | null>
+type RequestCommand = (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
 
 type CharacterSelfView = {
   currentState: string
@@ -60,18 +59,14 @@ function EmptyState({ children }: { children: string }) {
   return <p className="empty-copy user-view-empty">{children}</p>
 }
 
-export function CharacterSelfPanel({ clientRef }: { clientRef: ClientRef }) {
+export function CharacterSelfPanel({ requestCommand }: { requestCommand: RequestCommand }) {
   const [view, setView] = useState<CharacterSelfView | null>(null)
   useEffect(() => {
-    const unsub = eventBus.on('runtime:command_response', ({ action, data }) => {
-      if (action === 'get_character_self_view') setView((data as any).view)
-    })
     const unsubMessage = eventBus.on('runtime:message', () =>
-      clientRef.current?.sendCommand('get_character_self_view', {})
+      void requestCommand('get_character_self_view', {}).then(data => setView((data as any).view))
     )
-    clientRef.current?.sendCommand('get_character_self_view', {})
+    void requestCommand('get_character_self_view', {}).then(data => setView((data as any).view))
     return () => {
-      unsub()
       unsubMessage()
     }
   }, [])
@@ -92,7 +87,7 @@ export function CharacterSelfPanel({ clientRef }: { clientRef: ClientRef }) {
   )
 }
 
-export function MemoryPanel({ clientRef }: { clientRef: ClientRef }) {
+export function MemoryPanel({ requestCommand }: { requestCommand: RequestCommand }) {
   const [view, setView] = useState<MemoryView>(EMPTY_MEMORY)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<MemoryItem | null>(null)
@@ -100,19 +95,11 @@ export function MemoryPanel({ clientRef }: { clientRef: ClientRef }) {
   const [confirmForget, setConfirmForget] = useState(false)
 
   const refresh = (category = view.selectedCategory || 'all', search = query) =>
-    clientRef.current?.sendCommand('get_memory_view', { category, query: search })
+    requestCommand('get_memory_view', { category, query: search })
+      .then(data => setView((data as any).view ?? EMPTY_MEMORY))
 
   useEffect(() => {
-    const unsub = eventBus.on('runtime:command_response', ({ action, data }) => {
-      if (action === 'get_memory_view') setView((data as any).view ?? EMPTY_MEMORY)
-      if (action === 'update_memory_view' || action === 'forget_memory_view') {
-        setSelected(null)
-        setConfirmForget(false)
-        refresh()
-      }
-    })
-    clientRef.current?.sendCommand('get_memory_view', { category: 'all', query: '' })
-    return unsub
+    void refresh('all', '')
   }, [])
 
   const choose = (item: MemoryItem) => {
@@ -158,17 +145,17 @@ export function MemoryPanel({ clientRef }: { clientRef: ClientRef }) {
               <div><dt>形成原因</dt><dd>{selected.formationReason || '从相关对话中形成'}</dd></div>
             </dl>
             <div className="memory-editor-actions">
-              <button type="button" onClick={() => clientRef.current?.sendCommand(
+              <button type="button" onClick={() => void requestCommand(
                 'update_memory_view', { ref: selected.ref, content: draft }
               )}>保存修改</button>
-              <button type="button" onClick={() => clientRef.current?.sendCommand(
+              <button type="button" onClick={() => void requestCommand(
                 'update_memory_view', { ref: selected.ref, pinned: !selected.pinned }
               )}>{selected.pinned ? '取消置顶' : '置顶'}</button>
               {!confirmForget ? (
                 <button type="button" onClick={() => setConfirmForget(true)}>遗忘…</button>
               ) : (
                 <button type="button" className="danger" onClick={() =>
-                  clientRef.current?.sendCommand('forget_memory_view', { ref: selected.ref })
+                  void requestCommand('forget_memory_view', { ref: selected.ref })
                 }>确认遗忘</button>
               )}
             </div>
@@ -179,14 +166,10 @@ export function MemoryPanel({ clientRef }: { clientRef: ClientRef }) {
   )
 }
 
-export function VoicePanel({ clientRef }: { clientRef: ClientRef }) {
+export function VoicePanel({ requestCommand }: { requestCommand: RequestCommand }) {
   const [view, setView] = useState<VoiceStatusView | null>(null)
   useEffect(() => {
-    const unsub = eventBus.on('runtime:command_response', ({ action, data }) => {
-      if (action === 'get_voice_status_view') setView((data as any).view)
-    })
-    clientRef.current?.sendCommand('get_voice_status_view', {})
-    return unsub
+    void requestCommand('get_voice_status_view', {}).then(data => setView((data as any).view))
   }, [])
   return (
     <DrawerPanel title="语音">
@@ -203,16 +186,12 @@ export function VoicePanel({ clientRef }: { clientRef: ClientRef }) {
   )
 }
 
-export function CapabilityPanel({ clientRef }: { clientRef: ClientRef }) {
+export function CapabilityPanel({ requestCommand }: { requestCommand: RequestCommand }) {
   const [items, setItems] = useState<CapabilityItem[]>([])
-  const refresh = () => clientRef.current?.sendCommand('get_capability_view', {})
+  const refresh = () => requestCommand('get_capability_view', {})
+    .then(data => setItems((data as any).view?.items ?? []))
   useEffect(() => {
-    const unsub = eventBus.on('runtime:command_response', ({ action, data }) => {
-      if (action === 'get_capability_view') setItems((data as any).view?.items ?? [])
-      if (action === 'set_tool_enabled') refresh()
-    })
-    refresh()
-    return unsub
+    void refresh()
   }, [])
   return (
     <DrawerPanel title="能力">
@@ -233,7 +212,7 @@ export function CapabilityPanel({ clientRef }: { clientRef: ClientRef }) {
             <button
               type="button"
               className={item.status === 'available' ? 'is-active' : ''}
-              onClick={() => clientRef.current?.sendCommand('set_tool_enabled', {
+              onClick={() => void requestCommand('set_tool_enabled', {
                 name: item.name,
                 enabled: item.status !== 'available',
               })}

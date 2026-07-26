@@ -95,7 +95,11 @@ class RuntimeEventHandler:
 
         # ── Management commands ──
         elif msg_type == "command":
-            return await self.management.handle_command(message)
+            responses = await self.management.handle_command(message)
+            for response in responses:
+                if hasattr(response, "request_id"):
+                    response.request_id = message.request_id
+            return responses
 
         # ── Avatar control messages ──
         elif msg_type == "avatar_request":

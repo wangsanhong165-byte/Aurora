@@ -57,6 +57,7 @@ class Command:
     type: str = "command"
     action: str = ""       # e.g. "get_histories", "switch_character", "set_pinned"
     params: dict[str, Any] = field(default_factory=dict)
+    request_id: str = ""
 
 
 # Avatar protocol types (inbound)
@@ -165,6 +166,7 @@ class Error:
     type: str = "error"
     code: str = ""
     message: str = ""
+    request_id: str = ""
 
 
 @dataclass
@@ -182,6 +184,7 @@ class CommandResponse:
     type: str = "command_response"
     action: str = ""           # echoes the request action
     data: dict[str, Any] = field(default_factory=dict)
+    request_id: str = ""
 
 
 OutboundMessage = (

@@ -1,8 +1,8 @@
-import { useEffect, useState, type MutableRefObject } from 'react'
+import { useEffect, useState } from 'react'
 
 import { eventBus } from '../core/event-bus'
 import { selectConnection, useSelector } from '../core/store'
-import type { RuntimeAdapter } from '../runtime/adapter'
+import { electronWindowBridge } from '../session/electron-window-bridge'
 import { DrawerPanel } from './DrawerPanel'
 
 type TurnSummary = {
@@ -33,9 +33,9 @@ type TurnDetail = {
 }
 
 export function DeveloperWorkspace({
-  clientRef,
+  requestCommand,
 }: {
-  clientRef: MutableRefObject<RuntimeAdapter | null>
+  requestCommand: (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
 }) {
   const [turns, setTurns] = useState<TurnSummary[]>([])
   const [detail, setDetail] = useState<TurnDetail | null>(null)
@@ -45,34 +45,27 @@ export function DeveloperWorkspace({
   const [services, setServices] = useState<any[]>([])
 
   const refresh = () => {
-    clientRef.current?.sendCommand('get_turns', { limit: 100 })
-    clientRef.current?.sendCommand('get_runtime_diagnostics', {})
-    window.electronAPI?.getStatus?.()
+    void requestCommand('get_turns', { limit: 100 }).then(data => {
+      const next = Array.isArray((data as any).turns) ? (data as any).turns : []
+      setTurns(next)
+      if (!detail && next[0]) {
+        void requestCommand('get_turn_detail', { turn_id: next[0].turnId })
+          .then(turnData => setDetail((turnData as any).turn ?? null))
+      }
+    })
+    void requestCommand('get_runtime_diagnostics', {}).then(setDiagnostics)
+    electronWindowBridge.getStatus()
       .then((result: any) => setServices(result?.services ?? []))
       .catch(() => setServices([]))
   }
 
   useEffect(() => {
-    const unsubCommand = eventBus.on('runtime:command_response', ({ action, data }) => {
-      if (action === 'get_turns') {
-        const next = Array.isArray((data as any).turns) ? (data as any).turns : []
-        setTurns(next)
-        if (!detail && next[0]) {
-          clientRef.current?.sendCommand('get_turn_detail', { turn_id: next[0].turnId })
-        }
-      } else if (action === 'get_turn_detail') {
-        setDetail((data as any).turn ?? null)
-      } else if (action === 'get_runtime_diagnostics') {
-        setDiagnostics(data)
-      }
-    })
     const unsubError = eventBus.on('runtime:error', error =>
       setErrors(items => [error, ...items].slice(0, 20))
     )
     refresh()
     const timer = window.setInterval(refresh, 10000)
     return () => {
-      unsubCommand()
       unsubError()
       window.clearInterval(timer)
     }
@@ -104,7 +97,8 @@ export function DeveloperWorkspace({
                 type="button"
                 key={turn.turnId}
                 className={detail?.turnId === turn.turnId ? 'is-active' : ''}
-                onClick={() => clientRef.current?.sendCommand('get_turn_detail', { turn_id: turn.turnId })}
+                onClick={() => void requestCommand('get_turn_detail', { turn_id: turn.turnId })
+                  .then(data => setDetail((data as any).turn ?? null))}
               >
                 <span>{turn.phase} · {turn.origin}</span>
                 <strong>{turn.summary || '语音输入'}</strong>

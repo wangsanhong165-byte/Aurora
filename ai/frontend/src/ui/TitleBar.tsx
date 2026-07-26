@@ -1,3 +1,5 @@
+import { electronWindowBridge } from '../session/electron-window-bridge'
+
 declare global {
   interface Window {
     electronAPI?: {
@@ -13,7 +15,7 @@ declare global {
 }
 
 export function TitleBar() {
-  const api = window.electronAPI
+  const api = electronWindowBridge
 
   return (
     <header className="title-bar">

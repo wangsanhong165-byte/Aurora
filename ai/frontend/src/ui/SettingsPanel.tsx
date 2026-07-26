@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { theme } from '../core/theme'
 import type { AppSettings } from '../core/store'
+import { electronWindowBridge } from '../session/electron-window-bridge'
 
 export interface SettingsPanelProps {
   open: boolean
@@ -51,7 +52,7 @@ const TABS: TabDef[] = [
   { id: 'about', label: 'About', icon: 'ℹ' },
 ]
 
-const isElectron = typeof window !== 'undefined' && !!window.electronAPI
+const isElectron = electronWindowBridge.available
 
 export function SettingsPanel({
   open,

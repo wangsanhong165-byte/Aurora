@@ -25,9 +25,11 @@ export class RuntimeClient {
     this.intentionalClose = false
 
     // Listen for avatar send requests from AvatarController
-    this._unsubAvatarSend = eventBus.on('avatar:send', (data) => {
-      this.send(data as unknown as OutboundMessage)
-    })
+    if (!this._unsubAvatarSend) {
+      this._unsubAvatarSend = eventBus.on('avatar:send', (data) => {
+        this.send(data as unknown as OutboundMessage)
+      })
+    }
 
     eventBus.emit('connection:change', { connected: false })
 
@@ -93,8 +95,8 @@ export class RuntimeClient {
     this.send({ type: 'interrupt' })
   }
 
-  sendCommand(action: string, params: Record<string, unknown> = {}): void {
-    this.send({ type: 'command', action, params })
+  sendCommand(action: string, params: Record<string, unknown> = {}, requestId?: string): void {
+    this.send({ type: 'command', action, params, request_id: requestId })
   }
 
   sendAudioSamples(samples: Float32Array, sampleRate: number): void {
@@ -185,6 +187,7 @@ export class RuntimeClient {
         eventBus.emit('runtime:command_response', {
           action: data.action,
           data: data.data,
+          requestId: data.request_id,
         })
         break
 
@@ -200,7 +203,7 @@ export class RuntimeClient {
 
       // Errors
       case 'error':
-        eventBus.emit('runtime:error', { code: data.code, message: data.message })
+        eventBus.emit('runtime:error', { code: data.code, message: data.message, requestId: data.request_id })
         break
 
       // Avatar control messages

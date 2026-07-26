@@ -37,13 +37,13 @@ export interface EventMap {
   'audio:end': void
   'connection:change': { connected: boolean }
   'runtime:status': { status: string; message?: string }
-  'runtime:error': { code: string; message: string }
+  'runtime:error': { code: string; message: string; requestId?: string }
   'runtime:message': { text: string; reasoning?: string; segments?: Array<{ text: string; tone: string; gesture: string }>; diagnostics?: Record<string, unknown> }
   'runtime:chunk': { text: string; delta: string }
   'runtime:tts_start': { format: string; sequence: number }
   'runtime:tts_end': { reason: string }
   'runtime:character_state': { activity: string; emotion: string; intensity: number; expression: string; motion: string; behavior?: string; attention?: string; energy?: number; durationMs?: number; naturalVAD?: { valence: number; arousal: number; dominance: number }; contextTags?: string[] }
-  'runtime:command_response': { action: string; data: Record<string, unknown> }
+  'runtime:command_response': { action: string; data: Record<string, unknown>; requestId?: string }
   'runtime:session': { status: string; config: Record<string, unknown> }
   'runtime:user_message': { text: string }
   'runtime:permission_requested': {

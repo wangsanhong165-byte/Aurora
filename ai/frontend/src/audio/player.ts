@@ -51,19 +51,22 @@ export class AudioPlayer {
   }
 
   private stopCurrent(): void {
-    if (this.currentSource) {
+    const source = this.currentSource
+    const wasActive = this._isPlaying || Boolean(source)
+    this.currentSource = null
+    if (source) {
+      source.onended = null
       try {
-        this.currentSource.stop()
+        source.stop()
       } catch {
         // Already stopped
       }
-      this.currentSource.disconnect()
-      this.currentSource = null
+      source.disconnect()
     }
     this.analyserNode = null
     this._isPlaying = false
     this.stopVolumeAnalysis()
-    this.handlers.onEnd?.()
+    if (wasActive) this.handlers.onEnd?.()
   }
 
   private async playNext(): Promise<void> {
@@ -94,6 +97,8 @@ export class AudioPlayer {
       this.analyserNode = analyser
 
       source.onended = () => {
+        if (generation !== this.playbackGeneration || this.currentSource !== source) return
+        this.currentSource = null
         this.stopVolumeAnalysis()
         this._isPlaying = false
 
@@ -140,6 +145,14 @@ export class AudioPlayer {
     if (this.audioContext.state === 'suspended') {
       await this.audioContext.resume()
     }
+  }
+
+  async dispose(): Promise<void> {
+    this.stop()
+    this.handlers = {}
+    const context = this.audioContext
+    this.audioContext = null
+    if (context && context.state !== 'closed') await context.close()
   }
 
   private getContext(): AudioContext {

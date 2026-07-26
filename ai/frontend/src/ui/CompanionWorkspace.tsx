@@ -1,6 +1,5 @@
-import { useEffect, useState, type MutableRefObject } from 'react'
-
-import type { RuntimeAdapter } from '../runtime/adapter'
+import { useEffect, useState } from 'react'
+import type { RecorderState } from '../audio/recorder'
 import type { AppSettings } from '../core/store'
 import { CharacterView } from '../character/CharacterView'
 import { ChatView } from '../conversation/ChatView'
@@ -31,7 +30,10 @@ const DRAWER_ITEMS: DrawerItem[] = [
 
 export interface CompanionWorkspaceProps {
   settings: AppSettings
-  clientRef: MutableRefObject<RuntimeAdapter | null>
+  requestCommand: (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
+  recorderState: RecorderState
+  recordingSupported: boolean
+  onToggleRecording: () => void | Promise<void>
   histories: HistoryEntry[]
   historyUid: string
   historyLoading: boolean
@@ -75,7 +77,9 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
               <InputBar
                 onSend={props.onSend}
                 onInterrupt={props.onInterrupt}
-                clientRef={props.clientRef}
+                recorderState={props.recorderState}
+                recordingSupported={props.recordingSupported}
+                onToggleRecording={props.onToggleRecording}
               />
             </div>
           ) : (
@@ -106,12 +110,12 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
       )
     }
     if (section === 'developer') {
-      return <DeveloperWorkspace clientRef={props.clientRef} />
+      return <DeveloperWorkspace requestCommand={props.requestCommand} />
     }
-    if (section === 'character') return <CharacterSelfPanel clientRef={props.clientRef} />
-    if (section === 'memory') return <MemoryPanel clientRef={props.clientRef} />
-    if (section === 'voice') return <VoicePanel clientRef={props.clientRef} />
-    return <CapabilityPanel clientRef={props.clientRef} />
+    if (section === 'character') return <CharacterSelfPanel requestCommand={props.requestCommand} />
+    if (section === 'memory') return <MemoryPanel requestCommand={props.requestCommand} />
+    if (section === 'voice') return <VoicePanel requestCommand={props.requestCommand} />
+    return <CapabilityPanel requestCommand={props.requestCommand} />
   }
 
   return (
