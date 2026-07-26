@@ -55,7 +55,7 @@ class WebSocketSession:
 
         # Send init event
         config = {
-            "protocol_version": "1.0",
+            "protocol_version": "2.0",
             "capabilities": ["text", "audio", "character_update", "tts", "pet_mode"],
         }
         if self.init_config_provider:

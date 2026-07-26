@@ -3,8 +3,7 @@
 Thin protocol layer: receives Command messages, calls RuntimeManager,
 wraps results in CommandResponse/Error. Zero business logic.
 
-This is the SOLE transport entry point for management operations.
-The legacy bridge/server.py also delegates here for its inline handlers.
+This is the sole WebSocket transport entry point for management operations.
 """
 
 from __future__ import annotations

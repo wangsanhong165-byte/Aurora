@@ -19,6 +19,9 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from app.runtime.runtime import CharacterRuntime
+from turn_input_fixtures import turn_input_from_event
+
 # ── CWD guard ──────────────────────────────────────────────────────────────────
 # Tool and Live2D providers use Path("config/...") relative paths, so we must
 # ensure the working directory is the project root.
@@ -68,8 +71,7 @@ class TestStartupRegression(unittest.TestCase):
             for k, v in cls._providers_raw.items()
         }
 
-        from runtime_v3_adapter import EventFixtureRuntime
-        cls.runtime = EventFixtureRuntime()
+        cls.runtime = CharacterRuntime()
 
     @classmethod
     def tearDownClass(cls):
@@ -135,9 +137,8 @@ class TestLLMPipelineRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_llm.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from runtime_v3_adapter import EventFixtureRuntime
         from app.runtime.event import Event, EventType
-        cls.runtime = EventFixtureRuntime()
+        cls.runtime = CharacterRuntime()
         cls.Event = Event
         cls.EventType = EventType
 
@@ -158,7 +159,7 @@ class TestLLMPipelineRegression(unittest.TestCase):
         """Dispatching TEXT_RECEIVED produces a non-empty reply."""
         event = self.Event(self.EventType.TEXT_RECEIVED,
                            {"text": "Say exactly one word: hello"}, source="test")
-        ctx = self._run(self.runtime.dispatch_fixture(event))
+        ctx = self._run(self.runtime.handle_turn(turn_input_from_event(event)))
         self.assertEqual(ctx.error, "", f"Pipeline error: {ctx.error}")
         self.assertTrue(ctx.reply_text, "Reply should not be empty")
 
@@ -169,12 +170,11 @@ class TestLLMPipelineRegression(unittest.TestCase):
         contains the extracted final_reply text, not the raw JSON envelope.
         Segments are available in ctx.segments.
         """
-        from runtime_v3_adapter import EventFixtureRuntime
-        rt = EventFixtureRuntime()
+        rt = CharacterRuntime()
         try:
             event = self.Event(self.EventType.TEXT_RECEIVED,
                                {"text": "Say exactly: ping"}, source="test")
-            ctx = self._run(rt.dispatch_fixture(event))
+            ctx = self._run(rt.handle_turn(turn_input_from_event(event)))
             self.assertEqual(ctx.error, "")
             # reply_text is plain text (not JSON)
             self.assertFalse(ctx.reply_text.startswith("{"),
@@ -197,8 +197,7 @@ class TestMemoryRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_memory.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from runtime_v3_adapter import EventFixtureRuntime
-        cls.runtime = EventFixtureRuntime()
+        cls.runtime = CharacterRuntime()
         cls.memory = cls.runtime.providers.get("memory")
 
     @classmethod
@@ -254,9 +253,8 @@ class TestMultiTurnRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_multiturn.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from runtime_v3_adapter import EventFixtureRuntime
         from app.runtime.event import Event, EventType
-        cls.runtime = EventFixtureRuntime()
+        cls.runtime = CharacterRuntime()
         cls.Event = Event
         cls.EventType = EventType
         cls.memory = cls.runtime.providers.get("memory")
@@ -281,7 +279,9 @@ class TestMultiTurnRegression(unittest.TestCase):
                 self.EventType.TEXT_RECEIVED,
                 {"text": f"Turn {i}: say a single word"}, source="test_multi",
             )
-            ctx = self._run(self.runtime.dispatch_fixture(event))
+            ctx = self._run(
+                self.runtime.handle_turn(turn_input_from_event(event))
+            )
             self.assertEqual(ctx.error, "",
                              f"Error on turn {i}: {ctx.error}")
 
@@ -291,8 +291,7 @@ class TestMultiTurnRegression(unittest.TestCase):
         Uses a fresh runtime to avoid cross-test conversation history
         contamination from tool_calls.
         """
-        from runtime_v3_adapter import EventFixtureRuntime
-        rt = EventFixtureRuntime()
+        rt = CharacterRuntime()
         memory = rt.providers.get("memory")
         try:
             # Store a distinctive turn
@@ -300,7 +299,7 @@ class TestMultiTurnRegression(unittest.TestCase):
                 self.EventType.TEXT_RECEIVED,
                 {"text": "My favorite number is 42"}, source="test_multi",
             )
-            ctx = self._run(rt.dispatch_fixture(event))
+            ctx = self._run(rt.handle_turn(turn_input_from_event(event)))
             self.assertEqual(ctx.error, "")
 
             # Verify it's retrievable
@@ -326,8 +325,7 @@ class TestInitiativeRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_initiative.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from runtime_v3_adapter import EventFixtureRuntime
-        cls.runtime = EventFixtureRuntime()
+        cls.runtime = CharacterRuntime()
 
     @classmethod
     def tearDownClass(cls):
@@ -458,8 +456,7 @@ class TestCharacterRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_char.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from runtime_v3_adapter import EventFixtureRuntime
-        cls.runtime = EventFixtureRuntime()
+        cls.runtime = CharacterRuntime()
 
     @classmethod
     def tearDownClass(cls):
@@ -485,8 +482,8 @@ class TestCharacterRegression(unittest.TestCase):
 # ── Test: Event Dispatch ────────────────────────────────────────────────────
 
 @unittest.skipUnless(RUN_PRODUCTION, "SKIP_PRODUCTION_TESTS is set")
-class TestEventDispatchRegression(unittest.TestCase):
-    """Event dispatch mechanics with real providers."""
+class TestTurnHandlingRegression(unittest.TestCase):
+    """Typed turn handling with real providers."""
 
     @classmethod
     def setUpClass(cls):
@@ -494,9 +491,8 @@ class TestEventDispatchRegression(unittest.TestCase):
             tempfile.gettempdir(), "prod_regression_event.db"
         )
         os.environ["MEMORY_DB_PATH"] = cls._db_path
-        from runtime_v3_adapter import EventFixtureRuntime
         from app.runtime.event import Event, EventType
-        cls.runtime = EventFixtureRuntime()
+        cls.runtime = CharacterRuntime()
         cls.Event = Event
         cls.EventType = EventType
 
@@ -517,7 +513,7 @@ class TestEventDispatchRegression(unittest.TestCase):
         """TEXT_RECEIVED sets ctx.user_text."""
         event = self.Event(self.EventType.TEXT_RECEIVED,
                            {"text": "regression test"}, source="test")
-        ctx = self._run(self.runtime.dispatch_fixture(event))
+        ctx = self._run(self.runtime.handle_turn(turn_input_from_event(event)))
         self.assertEqual(ctx.user_text, "regression test")
 
     def test_speech_received_does_not_crash(self):
@@ -525,14 +521,14 @@ class TestEventDispatchRegression(unittest.TestCase):
         event = self.Event(self.EventType.SPEECH_RECEIVED,
                            {"audio": b"\x00" * 160, "sample_rate": 16000},
                            source="test")
-        ctx = self._run(self.runtime.dispatch_fixture(event))
+        ctx = self._run(self.runtime.handle_turn(turn_input_from_event(event)))
         self.assertEqual(ctx.error, "")
 
     def test_initiative_triggered_does_not_crash(self):
         """INITIATIVE_TRIGGERED processes without error."""
         event = self.Event(self.EventType.INITIATIVE_TRIGGERED,
                            {"text": "initiative test prompt"}, source="test")
-        ctx = self._run(self.runtime.dispatch_fixture(event))
+        ctx = self._run(self.runtime.handle_turn(turn_input_from_event(event)))
         self.assertEqual(ctx.error, "")
 
     def test_turn_count_increments(self):
@@ -541,7 +537,7 @@ class TestEventDispatchRegression(unittest.TestCase):
         before = state_store.get("turn_count", 0)
         event = self.Event(self.EventType.TEXT_RECEIVED,
                            {"text": "turn count test"}, source="test")
-        self._run(self.runtime.dispatch_fixture(event))
+        self._run(self.runtime.handle_turn(turn_input_from_event(event)))
         after = state_store.get("turn_count", 0)
         self.assertGreater(after, before)
 

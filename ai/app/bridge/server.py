@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.responses import FileResponse
@@ -310,134 +310,6 @@ def _elapsed_s(t0: float) -> str:
     return f"{time.perf_counter() - t0:.3f}s"
 
 
-# ── WebSocket Client Manager ────────────────────────────────────────────
-_ws_clients: set[WebSocket] = set()
-
-
-async def _heartbeat_loop() -> None:
-    """Background task: periodically prune dead WebSocket relay clients."""
-    while True:
-        await asyncio.sleep(30)
-        if not _ws_clients:
-            continue
-        dead: list[WebSocket] = []
-        for ws in list(_ws_clients):
-            try:
-                # Send a lightweight heartbeat — raises if client is gone
-                await ws.send_text(json.dumps({"type": "heartbeat"}))
-            except Exception:
-                dead.append(ws)
-        for ws in dead:
-            _ws_clients.discard(ws)
-        if dead:
-            logger.info("[WS Heartbeat] Pruned %d dead client(s) (remaining=%d)", len(dead), len(_ws_clients))
-
-
-class ExpressionCommand(BaseModel):
-    """Request body for POST /live2d/expression"""
-    expression: str
-    intensity: float = 0.5
-
-
-class GestureCommand(BaseModel):
-    """Request body for POST /live2d/gesture"""
-    gesture: str
-
-
-class AccessoryToggle(BaseModel):
-    """Request body for POST /live2d/accessory"""
-    name: str
-    active: bool = True
-
-
-@app.post("/live2d/accessory")
-async def live2d_accessory(cmd: AccessoryToggle):
-    """Toggle a Live2D accessory on/off. Relays to all WS clients."""
-    payload = json.dumps({
-        "type": "accessory",
-        "name": cmd.name,
-        "active": cmd.active,
-    }, ensure_ascii=False)
-    dead: list[WebSocket] = []
-    for ws in _ws_clients:
-        try:
-            await ws.send_text(payload)
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        _ws_clients.discard(ws)
-    logger.info("Accessory '%s' %s relayed to %d client(s)", cmd.name, "ON" if cmd.active else "OFF", len(_ws_clients))
-    return {"ok": True}
-
-
-@app.websocket("/ws")
-async def ws_endpoint(websocket: WebSocket):
-    """WebSocket for Live2D control and real-time events."""
-    await websocket.accept()
-    _ws_clients.add(websocket)
-    logger.info("WS client connected: %s (total=%d)", websocket.client, len(_ws_clients))
-    try:
-        while True:
-            try:
-                data = await asyncio.wait_for(websocket.receive_text(), timeout=60)
-                if data == "ping":
-                    await websocket.send_text(json.dumps({"type": "pong"}))
-            except asyncio.TimeoutError:
-                # No message for 60s — probe the connection
-                try:
-                    await websocket.send_text("ping")
-                except Exception:
-                    break
-    except WebSocketDisconnect:
-        pass
-    except Exception:
-        pass
-    finally:
-        _ws_clients.discard(websocket)
-        logger.info("WS client disconnected (total=%d)", len(_ws_clients))
-
-
-@app.post("/live2d/expression")
-async def live2d_expression(cmd: ExpressionCommand):
-    """Relay Live2D expression command to all connected WebSocket clients.
-
-    Uses the emotion_map from live2d_models.json to translate raw emotion
-    names to frontend expression names. Falls back to the first available
-    expression if the emotion is not mapped.
-    """
-    payload = json.dumps({
-        "type": "expression",
-        "name": cmd.expression,
-        "intensity": cmd.intensity,
-    }, ensure_ascii=False)
-    dead: list[WebSocket] = []
-    for ws in _ws_clients:
-        try:
-            await ws.send_text(payload)
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        _ws_clients.discard(ws)
-    logger.info("Expression '%s' sent to %d client(s)", cmd.expression, len(_ws_clients))
-    return {"ok": True, "sent": len(_ws_clients)}
-
-
-@app.post("/live2d/gesture")
-async def live2d_gesture(cmd: GestureCommand):
-    """Relay Live2D gesture command to all connected WebSocket clients."""
-    payload = json.dumps({"type": "gesture", "name": cmd.gesture}, ensure_ascii=False)
-    dead: list[WebSocket] = []
-    for ws in _ws_clients:
-        try:
-            await ws.send_text(payload)
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        _ws_clients.discard(ws)
-    logger.info("Gesture '%s' sent to %d client(s)", cmd.gesture, len(_ws_clients))
-    return {"ok": True, "sent": len(_ws_clients)}
-
-
 # ── Pinned Memories API ─────────────────────────────────────────
 
 class PinnedBody(BaseModel):
@@ -491,8 +363,6 @@ def _get_model_switcher_script():
 async def _startup():
     """Initialize background services on server start."""
     logger.info("Server starting")
-    # Start background heartbeat to prune dead WS relay clients
-    asyncio.create_task(_heartbeat_loop())
 
 
 @app.get("/health")
@@ -517,26 +387,6 @@ async def list_models():
             model3 = d / f"{d.name}.model3.json"
             models.append({"name": d.name, "hasModel3": model3.exists()})
     return {"models": models}
-
-
-# ── V2 Protocol WebSocket ─────────────────────────────────────────────
-@app.websocket("/v2/ws")
-async def v2_websocket_endpoint(websocket: WebSocket):
-    """V2 Runtime Protocol WebSocket.
-
-    Uses the new transport layer with formal protocol types.
-    Coexists with legacy /client-ws and /ws endpoints.
-    """
-    from app.transport.websocket.handler import RuntimeEventHandler
-    from app.transport.session import WebSocketSession
-
-    avatar_ctrl = _get_avatar_controller()
-    handler = RuntimeEventHandler(avatar_controller=avatar_ctrl)
-    session = WebSocketSession(websocket, handler.handle)
-    handler.send_message = session.send  # enable assistant_chunk streaming
-    handler.enable_proactive_push()       # receive proactive LLM responses
-    await session.run()
-    handler.disable_proactive_push()      # cleanup on disconnect
 
 
 # ── Set Model Endpoint ─────────────────────────────────────────────────
@@ -668,12 +518,22 @@ async def _send_init_conf(websocket: WebSocket) -> None:
     })
 
 
-# ── Canonical V3 WebSocket alias ───────────────────────────────────────
+# ── Canonical Runtime V3 WebSocket ─────────────────────────────────────
 
 @app.websocket("/client-ws")
 async def client_websocket_endpoint(websocket: WebSocket):
-    """Route the historical public URL through the canonical V3 session."""
-    return await v2_websocket_endpoint(websocket)
+    """Serve the V2 Transport contract through the sole Runtime V3 entrypoint."""
+    from app.transport.websocket.handler import RuntimeEventHandler
+    from app.transport.session import WebSocketSession
+
+    handler = RuntimeEventHandler(avatar_controller=_get_avatar_controller())
+    session = WebSocketSession(websocket, handler.handle)
+    handler.send_message = session.send
+    handler.enable_proactive_push()
+    try:
+        await session.run()
+    finally:
+        handler.disable_proactive_push()
 
 @app.get("/libs/{rest:path}")
 async def serve_libs(rest: str):

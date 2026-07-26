@@ -18,7 +18,7 @@ import type { AiActivity } from './core/types'
 import type { AppSettings } from './core/store'
 import './styles/index.css'
 
-const WS_URL = `ws://${location.hostname}:9528/v2/ws`
+const WS_URL = `ws://${location.hostname}:9528/client-ws`
 let idCounter = 0
 const nextId = () => `msg_${++idCounter}`
 

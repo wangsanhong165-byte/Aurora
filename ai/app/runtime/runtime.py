@@ -258,7 +258,7 @@ class CharacterRuntime:
     def _start_initiative_drain(self):
         """Schedule the initiative drain loop on the current event loop.
 
-        Called during __init__ and also lazily retried on first dispatch()
+        Called during __init__ and also lazily retried on first handle_turn()
         in case the event loop wasn't running at import time.
         """
         import asyncio
@@ -274,10 +274,10 @@ class CharacterRuntime:
             return None
 
     async def _drain_initiatives(self):
-        """Periodically drain pending initiative prompts and dispatch them.
+        """Periodically drain pending initiative prompts into typed turns.
 
         Runs as a background asyncio Task on the main event loop, so
-        dispatch() has a proper event loop context.
+        handle_turn() has a proper event loop context.
         """
         import asyncio
         while True:

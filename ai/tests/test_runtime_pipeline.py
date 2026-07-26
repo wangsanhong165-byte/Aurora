@@ -1,4 +1,4 @@
-"""Tests for CompanionRuntime v2 Pipeline.
+"""Tests for the CharacterRuntime V3 pipeline.
 
 Run with: python -m unittest tests/test_runtime_pipeline.py
 """
@@ -36,24 +36,19 @@ from app.runtime.character_turn import CharacterTurn, TurnInput, TurnOrigin
 from app.runtime.runtime import CharacterRuntime
 
 
-class CompanionRuntime(CharacterRuntime):
-    """Test-only adapter for exercising the preserved event fixtures."""
-
-    async def dispatch(self, event):
-        if event.type == EventType.SPEECH_RECEIVED:
-            turn_input = TurnInput(
-                audio=event.payload["audio"],
-                sample_rate=event.payload.get("sample_rate", 16000),
-            )
-        elif event.type == EventType.INITIATIVE_TRIGGERED:
-            turn_input = TurnInput(
-                text=event.payload.get("display_text", event.payload.get("text", "")),
-                origin=TurnOrigin.INITIATIVE,
-                metadata={"initiative": event.payload.get("initiative", {})},
-            )
-        else:
-            turn_input = TurnInput(text=event.payload.get("text", ""))
-        return await self.handle_turn(turn_input)
+def _turn_input(event: Event) -> TurnInput:
+    if event.type == EventType.SPEECH_RECEIVED:
+        return TurnInput(
+            audio=event.payload["audio"],
+            sample_rate=event.payload.get("sample_rate", 16000),
+        )
+    if event.type == EventType.INITIATIVE_TRIGGERED:
+        return TurnInput(
+            text=event.payload.get("display_text", event.payload.get("text", "")),
+            origin=TurnOrigin.INITIATIVE,
+            metadata={"initiative": event.payload.get("initiative", {})},
+        )
+    return TurnInput(text=event.payload.get("text", ""))
 from app.runtime.state_store import state_store
 
 
@@ -136,8 +131,8 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(c.order, [])
 
 
-class TestCompanionRuntime(unittest.TestCase):
-    """CompanionRuntime dispatch mechanics."""
+class TestCharacterRuntime(unittest.TestCase):
+    """CharacterRuntime turn mechanics."""
 
     def setUp(self):
         provider_registry.register(LLMInterface, "default", MockLLM)
@@ -146,31 +141,31 @@ class TestCompanionRuntime(unittest.TestCase):
         provider_registry.register(MemoryInterface, "default", MockMemory)
         # Reset turn count for each test
         state_store._state.clear()
-        self.runtime = CompanionRuntime()
+        self.runtime = CharacterRuntime()
 
     def test_dispatch_text_event_returns_context(self):
         """Dispatching a TEXT_RECEIVED event should return a Context."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
-        ctx = _run(self.runtime.dispatch(event))
+        ctx = _run(self.runtime.handle_turn(_turn_input(event)))
         self.assertIsNotNone(ctx)
         self.assertIsNone(ctx.error)
 
     def test_dispatch_populates_user_text(self):
         """TEXT_RECEIVED should populate ctx.user_text."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hi there"}, source="test")
-        ctx = _run(self.runtime.dispatch(event))
+        ctx = _run(self.runtime.handle_turn(_turn_input(event)))
         self.assertEqual(ctx.user_text, "hi there")
 
     def test_dispatch_increments_turn_count(self):
         """Each dispatch should increment the turn count."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "turn 1"}, source="test")
-        _run(self.runtime.dispatch(event))
+        _run(self.runtime.handle_turn(_turn_input(event)))
         self.assertGreaterEqual(state_store.get("turn_count", 0), 1)
 
     def test_dispatch_injects_character(self):
         """Context should have a character after dispatch."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
-        ctx = _run(self.runtime.dispatch(event))
+        ctx = _run(self.runtime.handle_turn(_turn_input(event)))
         self.assertIsNotNone(ctx.character)
 
     def test_dispatch_speech_event(self):
@@ -178,7 +173,7 @@ class TestCompanionRuntime(unittest.TestCase):
         audio_bytes = b"\x00\x00\x00\x00" * 160
         event = Event(EventType.SPEECH_RECEIVED,
                       {"audio": audio_bytes, "sample_rate": 16000}, source="test")
-        ctx = _run(self.runtime.dispatch(event))
+        ctx = _run(self.runtime.handle_turn(_turn_input(event)))
         self.assertIsNotNone(ctx)
 
     def test_providers_available(self):
@@ -189,9 +184,9 @@ class TestCompanionRuntime(unittest.TestCase):
     def test_conversation_history(self):
         """Conversation should be available and track turns."""
         event1 = Event(EventType.TEXT_RECEIVED, {"text": "first"}, source="test")
-        _run(self.runtime.dispatch(event1))
+        _run(self.runtime.handle_turn(_turn_input(event1)))
         event2 = Event(EventType.TEXT_RECEIVED, {"text": "second"}, source="test")
-        _run(self.runtime.dispatch(event2))
+        _run(self.runtime.handle_turn(_turn_input(event2)))
 
         conv = self.runtime.conversation
         self.assertIsNotNone(conv)
@@ -205,12 +200,12 @@ class TestDecisionStep(unittest.TestCase):
     def setUp(self):
         provider_registry.register(LLMInterface, "default", MockLLM)
         provider_registry.register(MemoryInterface, "default", MockMemory)
-        self.runtime = CompanionRuntime()
+        self.runtime = CharacterRuntime()
 
     def test_decision_step_produces_reply(self):
         """DecisionStep should produce a reply_text in the context."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "Hello!"}, source="test")
-        ctx = _run(self.runtime.dispatch(event))
+        ctx = _run(self.runtime.handle_turn(_turn_input(event)))
         self.assertIsNone(ctx.error)
 
     def test_pipeline_includes_all_steps(self):
@@ -309,7 +304,7 @@ class TestMemorySteps(unittest.TestCase):
     def setUp(self):
         self.memory = MockMemory()
         provider_registry.register(MemoryInterface, "default", MockMemory)
-        self.runtime = CompanionRuntime()
+        self.runtime = CharacterRuntime()
 
     def test_memory_retrieve(self):
         """MemoryRetrieveStep should store results in the typed turn field."""
@@ -343,7 +338,7 @@ class TestCharacterStep(unittest.TestCase):
     def test_character_injected(self):
         """CharacterStep should inject character into context."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
-        ctx = _run(CompanionRuntime().dispatch(event))
+        ctx = _run(CharacterRuntime().handle_turn(_turn_input(event)))
         self.assertIsNotNone(ctx.character)
         self.assertTrue(ctx.emotion)
 
@@ -358,7 +353,7 @@ class TestEmotionStep(unittest.TestCase):
     def test_emotion_set(self):
         """EmotionStep should set a default emotion."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
-        ctx = _run(CompanionRuntime().dispatch(event))
+        ctx = _run(CharacterRuntime().handle_turn(_turn_input(event)))
         self.assertTrue(ctx.emotion)
 
 
@@ -369,12 +364,12 @@ class TestTTSStep(unittest.TestCase):
         provider_registry.register(LLMInterface, "default", MockLLM)
         provider_registry.register(MemoryInterface, "default", MockMemory)
         provider_registry.register(TTSInterface, "default", MockTTS)
-        self.runtime = CompanionRuntime()
+        self.runtime = CharacterRuntime()
 
     def test_tts_step_does_not_crash(self):
         """TTSStep should not crash when reply_text is empty."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
-        ctx = _run(self.runtime.dispatch(event))
+        ctx = _run(self.runtime.handle_turn(_turn_input(event)))
         self.assertIsNone(ctx.error)
 
 
@@ -387,12 +382,12 @@ class TestFullEventFlow(unittest.TestCase):
         provider_registry.register(ASRInterface, "default", MockASR)
         provider_registry.register(TTSInterface, "default", MockTTS)
         state_store._state.clear()
-        self.runtime = CompanionRuntime()
+        self.runtime = CharacterRuntime()
 
     def test_text_input_round_trip(self):
         """Text input → dispatch → reply context."""
         event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
-        ctx = _run(self.runtime.dispatch(event))
+        ctx = _run(self.runtime.handle_turn(_turn_input(event)))
         self.assertIsNone(ctx.error)
         self.assertEqual(ctx.user_text, "hello")
 
@@ -401,7 +396,7 @@ class TestFullEventFlow(unittest.TestCase):
         for i in range(3):
             event = Event(EventType.TEXT_RECEIVED,
                           {"text": f"message {i}"}, source="test")
-            ctx = _run(self.runtime.dispatch(event))
+            ctx = _run(self.runtime.handle_turn(_turn_input(event)))
             self.assertIsNone(ctx.error)
 
     def test_speech_then_text(self):
@@ -409,11 +404,11 @@ class TestFullEventFlow(unittest.TestCase):
         audio_event = Event(EventType.SPEECH_RECEIVED,
                             {"audio": b"\x00" * 160, "sample_rate": 16000},
                             source="test")
-        _run(self.runtime.dispatch(audio_event))
+        _run(self.runtime.handle_turn(_turn_input(audio_event)))
 
         text_event = Event(EventType.TEXT_RECEIVED,
                            {"text": "hello"}, source="test")
-        ctx = _run(self.runtime.dispatch(text_event))
+        ctx = _run(self.runtime.handle_turn(_turn_input(text_event)))
         self.assertIsNone(ctx.error)
 
 

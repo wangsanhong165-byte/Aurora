@@ -4,8 +4,8 @@ All history CRUD, pinned memories, character switching, and prompt
 reloading logic lives here. The Transport layer calls into this module
 through thin dispatchers — it never duplicates this logic.
 
-This is the SINGLE SOURCE OF TRUTH for management operations.
-Both the Transport server and the legacy Bridge server delegate here.
+This is the single source of truth for management operations used by the
+typed Transport handler and the HTTP management endpoints.
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ logger = logging.getLogger("runtime.management")
 
 
 class RuntimeManager:
-    """Manages auxiliary operations on behalf of the Companion Runtime.
+    """Manages auxiliary operations on behalf of CharacterRuntime.
 
-    Provides a clean API that both Transport and legacy Bridge can call.
+    Provides a clean API shared by typed Transport and HTTP endpoints.
     All state is file-backed (persisted across server restarts).
     """
 

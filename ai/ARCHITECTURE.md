@@ -54,9 +54,9 @@ or model identifiers as part of a Runtime presentation update.
 ## Transport
 
 `app/transport/protocol.py` is the server-side V2 protocol source. Both
-`/v2/ws` and `/client-ws` run the same `WebSocketSession` and
-`RuntimeEventHandler`. The old bridge Runtime handler and `/runtime-ws` were
-removed.
+`/client-ws` is the only WebSocket route. It runs `WebSocketSession` and
+`RuntimeEventHandler`, then maps every interaction to `CharacterRuntime.handle_turn()`.
+The old bridge Runtime handler and all duplicate WebSocket routes were removed.
 
 `TransportEmitter` is the only normal turn-to-wire emitter:
 

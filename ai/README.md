@@ -151,7 +151,7 @@ ai/
 → **[ARCHITECTURE.md](ARCHITECTURE.md)**
 
 Runtime V3 的唯一交互入口是 `CharacterRuntime.handle_turn(TurnInput)`；
-前端只使用 V2 类型化协议 `/v2/ws`（`/client-ws` 是同一 session 的 URL 别名）。
+前端只通过 `/client-ws` 使用 V2 类型化 Transport 协议，并统一进入 Runtime V3。
 
 ---
 

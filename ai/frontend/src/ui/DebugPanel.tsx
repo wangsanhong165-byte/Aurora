@@ -57,7 +57,7 @@ export function DebugPanel() {
     const unsubs: (() => void)[] = []
 
     unsubs.push(eventBus.on('connection:change', ({ connected }) => {
-      setState(s => ({ ...s, connected, wsProtocol: connected ? '/v2/ws' : '—' }))
+      setState(s => ({ ...s, connected, wsProtocol: connected ? '/client-ws' : '—' }))
     }))
 
     unsubs.push(eventBus.on('runtime:status', ({ status, message }) => {
