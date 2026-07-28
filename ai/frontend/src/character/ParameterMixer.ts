@@ -231,24 +231,34 @@ export class ParameterMixer {
     const additions = values.filter(v => v.mode === 'add')
     const multipliers = values.filter(v => v.mode === 'multiply')
 
-    // Rule 2: Priority-weighted override blend.
-    let totalWeight = 0
-    let weightedSum = 0
-
-    for (const v of overrides) {
-      const w = v.priority * v.weight
-      weightedSum += v.value * w
-      totalWeight += w
+    // Rule 2: Highest priority wins for body/head/motion/arm parameters.
+    //   Weighted average produces "ghost" positions (four arms) when two
+    //   controllers write opposing override values — the arm appears in-between.
+    if (overrides.length > 0) {
+      overrides.sort((a, b) => b.priority - a.priority || b.weight - a.weight)
+      let resolved = overrides[0].value
+      for (const addition of additions) {
+        resolved += addition.value * addition.weight
+      }
+      for (const multiplier of multipliers) {
+        resolved *= multiplier.value
+      }
+      return resolved
     }
 
-    let resolved = totalWeight === 0 ? 0 : weightedSum / totalWeight
+    // Pure additive/multiply: weighted average.
+    let blended = 0
+    let weightSum = 0
     for (const addition of additions) {
-      resolved += addition.value * addition.weight
+      const w = addition.priority * addition.weight
+      blended += addition.value * w
+      weightSum += w
     }
+    let result = weightSum === 0 ? 0 : blended / weightSum
     for (const multiplier of multipliers) {
-      resolved *= multiplier.value
+      result *= multiplier.value
     }
-    return resolved
+    return result
   }
 
   // ── Apply resolved values to adapter ─────────────────────────

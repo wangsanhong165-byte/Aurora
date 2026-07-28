@@ -41,7 +41,23 @@ export function disposeCubismFramework(): void {
   }
 }
 
+// Global mutex: prevents Cubism Core WASM conflicts from concurrent model loads.
+let _modelLoadMutex = false
+
 export function loadModelFromBuffer(buffer: ArrayBuffer): CubismModelHandle | null {
+  if (_modelLoadMutex) {
+    console.warn('[Cubism] loadModelFromBuffer: concurrent call prevented (mutex)')
+    return null
+  }
+  _modelLoadMutex = true
+  try {
+    return _loadModelFromBufferUnsafe(buffer)
+  } finally {
+    _modelLoadMutex = false
+  }
+}
+
+function _loadModelFromBufferUnsafe(buffer: ArrayBuffer): CubismModelHandle | null {
   // Validate Core API
   if (!Live2DCubismCore.Moc.fromArrayBuffer) {
     console.error('[Cubism] Core not initialized')

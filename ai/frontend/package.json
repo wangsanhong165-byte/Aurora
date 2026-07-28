@@ -9,7 +9,7 @@
     "dev": "vite",
     "dev:electron": "NODE_ENV=development electron .",
     "build": "vite build",
-    "test": "node --test --experimental-strip-types src/ui/workspace-state.test.ts src/ui/frame-coalescer.test.ts src/session/command-broker.test.ts src/character/performance-policy.test.ts electron/pet-window.test.cjs electron/startup-policy.test.cjs",
+    "test": "node --test --experimental-strip-types src/ui/workspace-state.test.ts src/ui/frame-coalescer.test.ts src/session/command-broker.test.ts src/character/performance-policy.test.ts electron/pet-window.test.cjs electron/startup-policy.test.cjs ../electron/process-manager.test.cjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "profile:inspect": "node ../scripts/inspect_live2d_profiles.mjs --json",

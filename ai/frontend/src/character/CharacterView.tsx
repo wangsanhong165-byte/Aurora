@@ -1,7 +1,7 @@
 // Character View — Live2D model display component with ModelManager
 // Uses CubismWebFramework for rendering
 
-import { useRef, useEffect, useState, useCallback } from 'react'
+import { memo, useRef, useEffect, useState, useCallback } from 'react'
 import { useSelector, selectCharacter, selectSettings } from '../core/store'
 import { eventBus } from '../core/event-bus'
 import { initRenderer, resizeRenderer, destroyRenderer, render, setViewOffset, setViewScale, resetView, getViewTransform } from './live2d/renderer'
@@ -144,7 +144,7 @@ function _initComponents(compMgr: ComponentManager, ctrl: CharacterController,
   } catch (_) {}
 }
 
-export function CharacterView() {
+export const CharacterView = memo(function CharacterView() {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ctrlRef = useRef<CharacterController | null>(null)
@@ -659,7 +659,7 @@ export function CharacterView() {
       )}
     </div>
   )
-}
+})
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
@@ -678,7 +678,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     height: '100%',
     touchAction: 'none',
-    backgroundColor: '#1a1a1e',
+    backgroundColor: '#0d0e12',
   },
   fallback: {
     display: 'flex',
@@ -696,23 +696,23 @@ const styles: Record<string, React.CSSProperties> = {
   emotionLabel: {
     fontSize: '1.1rem',
     fontWeight: 600,
-    color: '#e0c080',
+    color: '#c47a5a',
     textTransform: 'uppercase',
     letterSpacing: '0.1em',
     textShadow: '0 2px 8px rgba(0,0,0,0.5)',
   },
   activityLabel: {
     fontSize: '0.85rem',
-    color: '#888',
+    color: '#8a8b94',
     fontStyle: 'italic',
   },
   hint: {
     fontSize: '0.75rem',
-    color: '#555',
+    color: '#5a5b64',
     marginTop: 8,
   },
   loading: {
-    color: '#888',
+    color: '#8a8b94',
     fontSize: '0.9rem',
     zIndex: 1,
   },

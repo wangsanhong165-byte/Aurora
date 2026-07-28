@@ -315,7 +315,7 @@ class MemoryStore:
     ) -> dict | None:
         clauses, params = ["id = ?"], [int(memory_id)]
         if character_id:
-            clauses.append("character_id = ?")
+            clauses.append("(character_id = ? OR character_id = '')")
             params.append(character_id)
         row = self._get_conn().execute(
             "SELECT * FROM memories WHERE " + " AND ".join(clauses), params
@@ -348,7 +348,7 @@ class MemoryStore:
     def forget_memory(self, memory_id: int, *, character_id: str = "") -> bool:
         clauses, params = ["id = ?"], [int(memory_id)]
         if character_id:
-            clauses.append("character_id = ?")
+            clauses.append("(character_id = ? OR character_id = '')")
             params.append(character_id)
         cursor = self._get_conn().execute(
             "UPDATE memories SET active = 0, updated_at = ? WHERE "

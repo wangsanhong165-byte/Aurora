@@ -1,38 +1,87 @@
-const capabilityHost = document.querySelector('#capabilities')
-const serviceHost = document.querySelector('#services')
 const summary = document.querySelector('#summary')
-const availability = document.querySelector('#availability')
+const progressBar = document.querySelector('#progress-bar')
 const errorHost = document.querySelector('#error')
+const actions = document.querySelector('#actions')
+const detail = document.querySelector('#detail')
+const detailBody = document.querySelector('#detail-body')
 
-function renderCards (host, items, detail = false) {
-  host.replaceChildren(...items.map(item => {
-    const card = document.createElement('div')
-    card.className = 'card'
-    const label = document.createElement('span')
-    label.textContent = item.display_name || item.id || item.name
+const svcLabel = { ready: '就绪', warming: '启动中', failed: '失败', blocked: '等待', unavailable: '不可用' }
+const svcClass = s => `s-${s}`
+
+function renderServiceRows(services) {
+  detailBody.replaceChildren(...(services || []).map(svc => {
+    const row = document.createElement('div')
+    row.className = 'svc-row ' + svcClass(svc.state)
+    const name = document.createElement('span')
+    name.className = 'n'
+    name.textContent = svc.display_name || svc.id || svc.name
     const state = document.createElement('span')
-    state.className = `state-${item.state || item.status}`
-    state.textContent = item.state || item.status
-    if (detail && item.provider) label.title = `Provider: ${item.provider}`
-    card.append(label, state)
-    return card
+    state.className = 's'
+    state.textContent = svcLabel[svc.state] || svc.state
+    row.append(name, state)
+    return row
   }))
 }
 
-function render (snapshot) {
+function render(snapshot) {
   const level = snapshot.availability || 'BLOCKED'
-  availability.textContent = level
-  summary.textContent = level === 'BLOCKED'
-    ? '核心能力仍在启动；你可以查看下面的实时进度。'
-    : level === 'TEXT_READY'
-      ? '文字交流已可用，语音能力仍在加载。'
-      : '角色能力已经就绪，正在进入舞台。'
-  renderCards(capabilityHost, snapshot.capabilities || [])
-  renderCards(serviceHost, snapshot.services || [], true)
+  const caps = snapshot.capabilities || []
+
+  // Remove loading animation once we have data
+  summary.classList.remove('loading')
+
+  if (level === 'BLOCKED') {
+    summary.textContent = '正在启动服务…'
+  } else if (level === 'TEXT_READY') {
+    summary.textContent = '文字模式已就绪，语音加载中…'
+  } else if (level === 'FULL_READY') {
+    summary.textContent = '正在进入…'
+  } else {
+    summary.textContent = level
+  }
+
+  // Progress bar
+  const ready = caps.filter(c => c.state === 'ready').length
+  const total = caps.length
+  const pct = total > 0 ? (ready / total) * 100 : 8
+  progressBar.style.width = Math.max(8, Math.min(100, pct)) + '%'
+
+  // Error display
+  const hasErr = caps.some(c => c.state === 'failed')
+  const detailSvc = snapshot.services || []
+  const hasSvcErr = detailSvc.some(s => s.state === 'failed')
+
+  if (hasErr || hasSvcErr) {
+    errorHost.style.display = 'block'
+    errorHost.textContent = '部分服务启动失败'
+    actions.style.display = 'flex'
+  } else if (level === 'FULL_READY') {
+    errorHost.style.display = 'none'
+    actions.style.display = 'none'
+  } else {
+    errorHost.style.display = 'none'
+    actions.style.display = 'none'
+  }
+
+  // Detail panel
+  if (detailSvc.length > 0) {
+    renderServiceRows(detailSvc)
+  }
 }
 
+// Wire up events
 window.electronAPI.onLifecycleSnapshot(render)
-window.electronAPI.onLifecycleError(message => { errorHost.textContent = message })
+window.electronAPI.onLifecycleError(msg => {
+  summary.classList.remove('loading')
+  summary.textContent = '启动失败'
+  errorHost.style.display = 'block'
+  errorHost.textContent = msg
+  actions.style.display = 'flex'
+})
 document.querySelector('#retry').addEventListener('click', () => window.electronAPI.lifecycleCommand('restart'))
 document.querySelector('#logs').addEventListener('click', () => window.electronAPI.openLogs())
-window.electronAPI.getLifecycleSnapshot().then(render)
+
+// Initial load
+window.electronAPI.getLifecycleSnapshot().then(snapshot => {
+  if (snapshot) render(snapshot)
+})

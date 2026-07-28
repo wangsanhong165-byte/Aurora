@@ -161,11 +161,22 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'UPDATE_LAST_ASSISTANT': {
       const msgs = [...state.messages]
+      let found = false
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i].role === 'assistant') {
           msgs[i] = { ...msgs[i], text: action.text, reasoning: action.reasoning ?? msgs[i].reasoning }
+          found = true
           break
         }
+      }
+      if (!found && action.text) {
+        msgs.push({
+          id: `assistant_${Date.now()}`,
+          role: 'assistant',
+          text: action.text,
+          reasoning: action.reasoning,
+          timestamp: Date.now(),
+        })
       }
       return { ...state, messages: msgs }
     }

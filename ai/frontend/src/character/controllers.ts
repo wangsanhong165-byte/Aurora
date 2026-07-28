@@ -56,6 +56,8 @@ export class ParameterController {
   // Expressions must keep contributing after their transition finishes.
   // ParameterMixer intentionally clears frame values every animation frame.
   private activeExpressionParams = new Set<string>()
+  // Track part IDs from the current expression's part opacity changes
+  private activeExpressionParts = new Set<string>()
   // Track last applied value for each parameter (used as interpolation "from")
   private _currentValues = new Map<string, number>()
 
@@ -132,6 +134,21 @@ export class ParameterController {
     }
 
     // Part opacity changes follow the same adapter-owned write path as parameters.
+    // Always clear old expression parts first, even if the new expression has none.
+    const nextPartIds = preset.parts ? new Set(preset.parts.map((p) => p.id)) : new Set<string>()
+    if (this.mixer) {
+      for (const partId of this.activeExpressionParts) {
+        if (!nextPartIds.has(partId)) {
+          this.mixer.submitPartOpacity({
+            id: `expression-part:${partId}`,
+            partId,
+            opacity: 0,
+            priority: 75,
+          })
+        }
+      }
+    }
+    this.activeExpressionParts = nextPartIds
     if (preset.parts && this.mixer) {
       for (const part of preset.parts) {
         this.mixer.submitPartOpacity({
@@ -360,6 +377,10 @@ export class CharacterController {
   private headY = 0
   private idleTime = 0
 
+  // Tracks motion arbiter transitions for idle restart guard
+  private _wasPlaying = false
+  private _lastMotionEnded = false
+
   // Lip-sync mouth value from AudioAnalyzer (submitted to mixer)
   private _mouthOpenValue = 0
 
@@ -470,7 +491,6 @@ export class CharacterController {
         this.audioPlaybackActive = false
         this.audioAnalyzer.reset()
         this._mouthOpenValue = 0
-        this.onActivityChange('idle')
       }),
     )
 
@@ -481,13 +501,20 @@ export class CharacterController {
       }),
     )
 
+    let audioEndTimer: ReturnType<typeof setTimeout> | null = null
     this.cleanupFns.push(
       eventBus.on('audio:end', () => {
-        // Backend completion may precede actual browser playback completion.
         this.audioPlaybackActive = false
         this.audioAnalyzer.reset()
         this._mouthOpenValue = 0
-        this.onActivityChange('idle')
+        if (this.currentActivity === 'speaking') {
+          if (audioEndTimer) clearTimeout(audioEndTimer)
+          audioEndTimer = setTimeout(() => {
+            if (!this.audioPlaybackActive) {
+              this.onActivityChange('idle')
+            }
+          }, 400)
+        }
       }),
     )
 
@@ -525,8 +552,11 @@ export class CharacterController {
       case 'idle':
         this.idleCtrl.setBreathing(true)
         this.exprCtrl.apply('neutral', 1, 520)
-        if (this.motionArbiter.isPlaying()) this.motionArbiter.enqueue('return_idle')
-        else this.startNativeIdleIfAvailable()
+        if (this.motionArbiter.isPlaying()) {
+          this.motionArbiter.enqueue('return_idle')
+        }
+        // Don't start native idle here — the update loop guard will do it
+        // once the return_idle motion completes.
         // Pipeline idle does not cancel a presentation motion already in flight.
         break
       case 'thinking':
@@ -922,8 +952,20 @@ export class CharacterController {
         createdAt: performance.now(),
       })
     }
-    // Always resume authored idle after transient motion while the character remains idle.
-    if (this.currentActivity === 'idle' && !this.motionArbiter.isPlaying()) {
+    // Detect motion arbiter transition: playing → idle (for idle restart guard below)
+    if (this._wasPlaying && !this.motionArbiter.isPlaying()) {
+      this._lastMotionEnded = true
+    }
+    this._wasPlaying = this.motionArbiter.isPlaying()
+
+    // Resume authored idle only once after motion completes, not every idle frame.
+    if (this.currentActivity === 'idle' && !this.motionArbiter.isPlaying() && this._lastMotionEnded) {
+      this._lastMotionEnded = false
+      this.startNativeIdleIfAvailable()
+    }
+    // Fallback: if idle with no motion and no native idle started yet, start it.
+    if (this.currentActivity === 'idle' && !this.motionArbiter.isPlaying()
+        && !this.motionArbiter.currentMotion && !this._lastMotionEnded) {
       this.startNativeIdleIfAvailable()
     }
     if (

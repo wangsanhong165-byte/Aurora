@@ -96,7 +96,6 @@ export function SettingsPanel({
                 onClick={() => setActiveTab(tab.id)}
               >
                 <span style={styles.tabIcon}>{tab.icon}</span>
-                <span style={styles.tabLabel}>{tab.label}</span>
               </button>
             ))}
           </div>
@@ -199,32 +198,27 @@ function GeneralTab({ settings, onSettingChange }: {
       {settings.proactive && (
         <div style={styles.proactiveIdleRow}>
           <span style={styles.proactiveIdleLabel}>Idle time:</span>
-          <div style={styles.proactiveIdleButtons}>
-            {[
-              { label: '30s', value: 30 },
-              { label: '1min', value: 60 },
-              { label: '2min', value: 120 },
-              { label: '5min', value: 300 },
-              { label: '10min', value: 600 },
-            ].map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                style={{
-                  ...styles.proactiveIdleBtn,
-                  backgroundColor: settings.proactiveIdleTime === opt.value
-                    ? theme.colors.accent
-                    : theme.colors.bg.surface,
-                  color: settings.proactiveIdleTime === opt.value
-                    ? '#fff'
-                    : theme.colors.text.primary,
-                }}
-                onClick={() => onSettingChange('proactiveIdleTime', opt.value)}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+          <input
+            type="number"
+            min="10"
+            max="3600"
+            step="10"
+            value={settings.proactiveIdleTime}
+            onChange={(e) => {
+              const v = parseInt(e.target.value, 10)
+              if (!isNaN(v) && v >= 10) onSettingChange('proactiveIdleTime', v)
+            }}
+            style={{
+              width: 72,
+              padding: '3px 8px',
+              borderRadius: 4,
+              border: `1px solid ${theme.colors.border}`,
+              backgroundColor: theme.colors.bg.surface,
+              color: theme.colors.text.primary,
+              fontSize: '0.75rem',
+              outline: 'none',
+            }}
+          />
         </div>
       )}
 
@@ -371,7 +365,7 @@ function Toggle({ checked, disabled, onChange }: {
       />
       <span style={{
         ...styles.toggleTrack,
-        backgroundColor: checked ? theme.colors.accent : '#3a3a3e',
+        backgroundColor: checked ? theme.colors.accent : theme.colors.border,
       }}>
         <span style={{
           ...styles.toggleThumb,
@@ -421,14 +415,14 @@ const styles: Record<string, React.CSSProperties> = {
 
   // ── Tab bar (left sidebar) ──
   tabBar: {
-    width: 120, flexShrink: 0, display: 'flex', flexDirection: 'column',
-    padding: `${theme.spacing.md}px 0`, gap: 2,
+    width: 48, flexShrink: 0, display: 'flex', flexDirection: 'column',
+    padding: `${theme.spacing.sm}px 0`, gap: 2,
     borderRight: `1px solid ${theme.colors.border}`,
     backgroundColor: theme.colors.bg.surface,
   },
   tabBtn: {
-    display: 'flex', alignItems: 'center', gap: 8,
-    padding: '10px 14px', border: 'none', cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    padding: '8px', border: 'none', cursor: 'pointer',
     color: theme.colors.text.secondary, fontSize: theme.fontSize.sm,
     textAlign: 'left' as const, transition: 'background-color 0.1s',
     width: '100%',
@@ -438,7 +432,7 @@ const styles: Record<string, React.CSSProperties> = {
 
   // ── Content area ──
   content: {
-    flex: 1, overflowY: 'auto', padding: `${theme.spacing.lg}px ${theme.spacing.xl}px`,
+    flex: 1, overflowY: 'auto', padding: `${theme.spacing.lg}px ${theme.spacing.lg}px`,
   },
   tabContent: {
     display: 'flex', flexDirection: 'column', gap: theme.spacing.md,
@@ -475,7 +469,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `${theme.spacing.xs}px ${theme.spacing.md}px`, borderRadius: theme.radius.md,
     border: `1px solid ${theme.colors.border}`, backgroundColor: theme.colors.bg.surface,
     color: theme.colors.text.primary, fontSize: theme.fontSize.sm, outline: 'none',
-    cursor: 'pointer', minWidth: 120, flexShrink: 0,
+    cursor: 'pointer', minWidth: 96, flexShrink: 0,
   },
 
   // ── Toggle cards ──
@@ -540,7 +534,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   toggleThumb: {
     display: 'inline-block', width: 18, height: 18, borderRadius: '50%',
-    backgroundColor: '#f0f0f0', position: 'absolute' as const, top: 2, left: 0,
+    backgroundColor: theme.colors.text.primary, position: 'absolute' as const, top: 2, left: 0,
     transition: 'transform 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
   },
 }

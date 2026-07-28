@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ── Window controls ──
   minimize: () => ipcRenderer.invoke('window:minimize'),
+  maximize: () => ipcRenderer.invoke('window:maximize'),
+  isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
   close: () => ipcRenderer.invoke('window:close'),
   setAlwaysOnTop: (value) => ipcRenderer.invoke('window:setAlwaysOnTop', value),
   setPetMode: (enabled) => ipcRenderer.invoke('window:setPetMode', enabled),

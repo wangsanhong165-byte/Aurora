@@ -1,7 +1,6 @@
 export type DrawerSection =
   | 'history'
   | 'character'
-  | 'voice'
   | 'memory'
   | 'capabilities'
   | 'settings'
@@ -18,14 +17,13 @@ export type DrawerAction =
   | { type: 'toggle' }
   | { type: 'resize'; width: number }
 
-export const MIN_DRAWER_WIDTH = 320
+export const MIN_DRAWER_WIDTH = 300
 export const MAX_DRAWER_WIDTH = 520
-export const DEFAULT_DRAWER_WIDTH = 380
+export const DEFAULT_DRAWER_WIDTH = 340
 
 const DRAWER_SECTIONS: DrawerSection[] = [
   'history',
   'character',
-  'voice',
   'memory',
   'capabilities',
   'settings',

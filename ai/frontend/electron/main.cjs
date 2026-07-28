@@ -56,9 +56,8 @@ function createWindow() {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    frame: false,                      // Frameless for custom title bar
-    transparent: true,                 // Transparent background support
-    backgroundColor: '#00000000',       // Fully transparent
+    frame: false,
+    backgroundColor: '#0d0e12',
     title: 'Monika Companion',
     show: false,
     webPreferences: {
@@ -68,12 +67,14 @@ function createWindow() {
     },
   })
 
-  // Capture console output from the renderer process
+  // Capture console output from the renderer process (async to avoid blocking)
   mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
     const prefix = ['', 'LOG', 'WARN', 'ERR'][level] || 'LOG'
-    try {
-      fs.appendFileSync(CONSOLE_LOG, `[${prefix}] ${message}\n`)
-    } catch (_) {}
+    setImmediate(() => {
+      try {
+        fs.appendFileSync(CONSOLE_LOG, `[${prefix}] ${message}\n`)
+      } catch (_) {}
+    })
   })
 
   // Close → hide to tray (not quit), unless forceQuit is set
@@ -152,6 +153,20 @@ function setupIPC() {
 
   ipcMain.handle('window:close', () => {
     mainWindow?.close()
+  })
+
+  ipcMain.handle('window:maximize', () => {
+    if (!mainWindow) return false
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize()
+      return false
+    }
+    mainWindow.maximize()
+    return true
+  })
+
+  ipcMain.handle('window:isMaximized', () => {
+    return mainWindow?.isMaximized() ?? false
   })
 
   ipcMain.handle('window:setAlwaysOnTop', (_event, value) => {
@@ -264,22 +279,35 @@ app.whenReady().then(async () => {
   setupIPC()
   createWindow()
   await mainWindow.loadFile(path.join(__dirname, 'bootstrap', 'index.html'))
-  mainWindow.show()
-  createTray()
 
   if (isDev) {
     console.log('[Electron] Dev mode — starting backend services...')
   }
 
-  // Start all backend services before loading the frontend,
-  // so the page never sees ERR_CONNECTION_REFUSED
+  // Start services BEFORE showing the window.
+  // The bootstrap page will then receive live lifecycle:snapshot events
+  // showing real-time service startup progress instead of stale "blocked".
+  const startPromise = pm.startAll()
+
+  // Start the readiness polling loop — use cached status, no subprocess spawn.
+  // Full refresh (pm.refresh() = spawn python subprocess) is too heavy for 2s interval.
+  // Do a background full refresh every 30s to catch service state changes.
+  let loadGen = 0
   statusTimer = setInterval(async () => {
-    const status = await pm.refresh()
+    const now = Date.now()
+    const status = loadGen++ % 15 === 0 && mainUiLoaded
+      ? await pm.refresh()    // full refresh every 30s (15 × 2000ms)
+      : pm.getStatus()         // cached, no subprocess
+    if (mainWindow?.isDestroyed?.()) return
     mainWindow?.webContents.send('lifecycle:snapshot', status)
     if (!mainUiLoaded && canEnterCompanion(status)) loadAppUrl()
-  }, 500)
+  }, mainUiLoaded ? 2000 : 500)
 
-  pm.startAll().then(status => {
+  // Now show the window — services are already starting in the background.
+  mainWindow.show()
+  createTray()
+
+  startPromise.then(status => {
     ready = canEnterCompanion(status)
     mainWindow?.webContents.send('lifecycle:snapshot', status)
     if (!mainUiLoaded && ready) loadAppUrl()

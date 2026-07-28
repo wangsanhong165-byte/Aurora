@@ -38,9 +38,9 @@
     "warmup": {"url": "http://{host}:{port}/warmup", "body": "{}", "timeout": 180}
   },
   "asr": {
-    "display_name": "语音识别", "category": "voice", "startup_priority": 120,
+    "display_name": "语音识别", "category": "voice", "startup_priority": 90,
     "host": "127.0.0.1", "port": 9101, "health": "/health", "timeout": 60,
-    "readiness": true, "depends_on": ["tts"], "profiles": ["backend", "electron", "full"],
+    "readiness": true, "profiles": ["backend", "electron", "full"],
     "command": {"module": "app.modules.asr.api", "args": ["--host", "{host}", "--port", "{port}"]}
   },
   "llm": {

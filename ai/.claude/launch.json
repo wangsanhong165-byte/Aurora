@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "vite-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "frontend"],
+      "port": 5174,
+      "url": "http://localhost:5174"
+    }
+  ]
+}

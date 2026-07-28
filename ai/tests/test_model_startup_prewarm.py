@@ -23,13 +23,22 @@ def test_tts_exposes_real_synthesis_warmup_and_ready_state():
     assert '"warm": _engine_warm' in api
 
 
-def test_manifest_declares_gpu_service_dependency_order():
+def test_manifest_declares_memory_safe_gpu_service_order():
     import json
+    from app.lifecycle.manifest import ServiceManifest
+
     manifest = json.loads((ROOT / "config/services.json").read_text(encoding="utf-8"))
     assert manifest["tts"]["depends_on"] == ["gsvi"]
     assert "warmup" in manifest["tts"]
-    assert manifest["asr"]["depends_on"] == ["tts"]
+    assert "depends_on" not in manifest["asr"]
     assert manifest["gsvi"]["readiness"] is True
+    ordered = [
+        service.name
+        for service in ServiceManifest.load(
+            ROOT / "config/services.json",
+        ).for_profile("electron")
+    ]
+    assert ordered.index("asr") < ordered.index("gsvi") < ordered.index("tts")
 
 
 def test_python_supervisor_owns_lifecycle_core():

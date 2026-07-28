@@ -3,29 +3,24 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>SoulLink 启动控制台</title>
+  <title>Companion</title>
   <link rel="stylesheet" href="bootstrap.css">
 </head>
 <body>
   <main>
-    <header>
-      <div>
-        <p class="eyebrow">SOULLINK</p>
-        <h1>正在唤醒角色</h1>
-        <p id="summary">启动控制台已就绪，正在连接生命周期服务。</p>
+    <div id="status">
+      <div id="progress-wrap"><div id="progress-bar"></div></div>
+      <p id="summary">载入中</p>
+      <div id="error" style="display:none"></div>
+      <div id="actions" style="display:none">
+        <button id="retry">重试</button>
+        <button id="logs">日志</button>
       </div>
-      <span id="availability">BLOCKED</span>
-    </header>
-    <section id="capabilities" aria-label="能力状态"></section>
-    <details>
-      <summary>开发详情</summary>
-      <section id="services"></section>
+    </div>
+    <details id="detail">
+      <summary>详情</summary>
+      <div id="detail-body"></div>
     </details>
-    <footer>
-      <button id="retry">重试</button>
-      <button id="logs">打开日志</button>
-      <pre id="error"></pre>
-    </footer>
   </main>
   <script src="bootstrap.js"></script>
 </body>

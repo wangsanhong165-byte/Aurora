@@ -1,20 +1,8 @@
+import { memo } from 'react'
+import { Minus, Maximize2, X } from 'lucide-react'
 import { electronWindowBridge } from '../session/electron-window-bridge'
 
-declare global {
-  interface Window {
-    electronAPI?: {
-      platform: string
-      minimize: () => void
-      close: () => void
-      setAlwaysOnTop: (value: boolean) => void
-      setPetMode: (enabled: boolean) => void
-      getSettings: () => Record<string, unknown>
-      getStatus?: () => Promise<{ services?: Array<Record<string, unknown>> }>
-    }
-  }
-}
-
-export function TitleBar() {
+export const TitleBar = memo(function TitleBar() {
   const api = electronWindowBridge
 
   return (
@@ -23,11 +11,18 @@ export function TitleBar() {
       <div className="window-controls">
         {api && (
           <>
-            <button type="button" onClick={() => api.minimize()} aria-label="最小化">最小化</button>
-            <button type="button" className="window-close" onClick={() => api.close()} aria-label="关闭">关闭</button>
+            <button type="button" onClick={() => api.minimize()} aria-label="最小化" title="最小化">
+              <Minus aria-hidden="true" />
+            </button>
+            <button type="button" onClick={() => api.maximize()} aria-label="最大化" title="最大化">
+              <Maximize2 aria-hidden="true" />
+            </button>
+            <button type="button" className="window-close" onClick={() => api.close()} aria-label="关闭" title="关闭">
+              <X aria-hidden="true" />
+            </button>
           </>
         )}
       </div>
     </header>
   )
-}
+})

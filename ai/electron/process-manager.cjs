@@ -14,6 +14,7 @@ class ProcessManager {
     this.profile = process.env.SOULLINK_PROFILE || 'electron'
     this.ownsLaunch = false
     this._status = { availability: 'BLOCKED', services: [], capabilities: [] }
+    this._refreshPromise = null
   }
 
   _request (command, extra = {}) {
@@ -57,8 +58,15 @@ class ProcessManager {
     await this._request('stop')
     return this._request('shutdown')
   }
-  async refresh () {
-    try { return await this._request('status') } catch (_) { return this._status }
+  refresh () {
+    if (!this._refreshPromise) {
+      this._refreshPromise = this._request('status')
+        .catch(() => this._status)
+        .finally(() => {
+          this._refreshPromise = null
+        })
+    }
+    return this._refreshPromise
   }
   getStatus () { return this._status }
   isReady () { return this._status.availability !== 'BLOCKED' }

@@ -35,13 +35,13 @@ test('drawer expansion changes only through the dedicated toggle action', () => 
     width: 380,
   })
   assert.deepEqual(
-    reduceDrawerState({ ...initial, expanded: false }, { type: 'select', section: 'voice' }),
-    { section: 'voice', expanded: true, width: 380 },
+    reduceDrawerState({ ...initial, expanded: false }, { type: 'select', section: 'memory' }),
+    { section: 'memory', expanded: true, width: 380 },
   )
 })
 
 test('drawer width stays inside the supported stage-safe range', () => {
-  assert.equal(clampDrawerWidth(240), 320)
+  assert.equal(clampDrawerWidth(240), 300)
   assert.equal(clampDrawerWidth(420), 420)
   assert.equal(clampDrawerWidth(700), 520)
 })

@@ -5,6 +5,25 @@ import { DrawerPanel } from './DrawerPanel'
 
 type RequestCommand = (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
 
+type MemoryItem = {
+  ref: string
+  summary: string
+  category: string
+  pinned: boolean
+  formedAt: string
+  updatedAt: string
+  lastUsedAt: string
+  formationReason?: string
+}
+
+type MemoryView = {
+  selectedCategory: string
+  categories: Array<{ id: string; label: string }>
+  items: MemoryItem[]
+}
+
+const EMPTY_MEMORY: MemoryView = { selectedCategory: 'all', categories: [], items: [] }
+
 type CharacterSelfView = {
   currentState: string
   recentFocus: string[]
@@ -13,65 +32,51 @@ type CharacterSelfView = {
   relationshipSummary?: string
 }
 
-type MemoryItem = {
-  ref: string
-  category: string
-  summary: string
-  updatedAt: string
-  formedAt?: string
-  lastUsedAt?: string
-  formationReason?: string
-  pinned: boolean
-  editable: boolean
-}
-
-type MemoryView = {
-  query: string
-  selectedCategory: string
-  categories: Array<{ id: string; label: string }>
-  items: MemoryItem[]
-}
-
 type VoiceStatusView = {
-  microphone: { status: string; label: string }
-  voice: { status: string; label: string; name: string }
-  outputDevice: { status: string; label: string }
+  microphone: { label: string; status: string }
+  voice: { label: string; status: string; name?: string }
+  outputDevice: { label: string }
   interruptible: boolean
 }
 
 type CapabilityItem = {
   name: string
-  description: string
+  description?: string
   status: string
   permission: string
-  recentlyUsedAt?: string
   allowedProactively: boolean
+  recentlyUsedAt?: string
 }
 
-const EMPTY_MEMORY: MemoryView = {
-  query: '',
-  selectedCategory: 'all',
-  categories: [],
-  items: [],
-}
-
-function EmptyState({ children }: { children: string }) {
+function EmptyState({ children }: { children: React.ReactNode }) {
   return <p className="empty-copy user-view-empty">{children}</p>
 }
 
+function formatDate(iso: string): string {
+  try { return new Date(iso).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+  catch { return iso || '—' }
+}
+
+function categoryLabel(category: string): string {
+  return ({ about_you: '关于你', shared: '共同经历', self: '角色自身', preferences: '偏好习惯', goals: '持续目标', pinned: '已置顶' })[category] || category
+}
+
+// ── Character Self Panel ─────────────────────────────────────────
+
 export function CharacterSelfPanel({ requestCommand }: { requestCommand: RequestCommand }) {
   const [view, setView] = useState<CharacterSelfView | null>(null)
+  const refresh = () => requestCommand('get_character_self_view', {}).then(data => setView((data as any).view))
+
   useEffect(() => {
-    const unsubMessage = eventBus.on('runtime:message', () =>
-      void requestCommand('get_character_self_view', {}).then(data => setView((data as any).view))
-    )
-    void requestCommand('get_character_self_view', {}).then(data => setView((data as any).view))
-    return () => {
-      unsubMessage()
-    }
+    const unsubMessage = eventBus.on('runtime:message', () => refresh())
+    void refresh()
+    return () => { unsubMessage() }
   }, [])
+
   return (
-    <DrawerPanel title="角色">
+    <DrawerPanel title="角色" action={
+      <button type="button" className="drawer-text-action" onClick={() => void refresh()}>刷新</button>
+    }>
       {!view ? <EmptyState>正在了解角色此刻的状态…</EmptyState> : (
         <div className="user-view">
           <ViewSection title="当前状态"><p>{view.currentState}</p></ViewSection>
@@ -87,6 +92,8 @@ export function CharacterSelfPanel({ requestCommand }: { requestCommand: Request
   )
 }
 
+// ── Memory Panel ────────────────────────────────────────────────────
+
 export function MemoryPanel({ requestCommand }: { requestCommand: RequestCommand }) {
   const [view, setView] = useState<MemoryView>(EMPTY_MEMORY)
   const [query, setQuery] = useState('')
@@ -94,19 +101,29 @@ export function MemoryPanel({ requestCommand }: { requestCommand: RequestCommand
   const [draft, setDraft] = useState('')
   const [confirmForget, setConfirmForget] = useState(false)
 
-  const refresh = (category = view.selectedCategory || 'all', search = query) =>
-    requestCommand('get_memory_view', { category, query: search })
+  const refresh = (category = view.selectedCategory || 'all', search = query) => {
+    setSelected(null)
+    return requestCommand('get_memory_view', { category, query: search })
       .then(data => setView((data as any).view ?? EMPTY_MEMORY))
+      .catch(() => {})
+  }
 
   useEffect(() => {
     void refresh('all', '')
+    const unsub = eventBus.on('connection:change', ({ connected }) => {
+      if (connected) void refresh(view.selectedCategory || 'all', query)
+    })
+    return () => unsub()
   }, [])
 
   const choose = (item: MemoryItem) => {
+    if (selected?.ref === item.ref) { setSelected(null); return }
     setSelected(item)
     setDraft(item.summary)
     setConfirmForget(false)
   }
+
+  const closeEditor = () => setSelected(null)
 
   return (
     <DrawerPanel title="记忆">
@@ -128,43 +145,54 @@ export function MemoryPanel({ requestCommand }: { requestCommand: RequestCommand
         <div className="memory-view-list">
           {view.items.length === 0 && <EmptyState>这个分类里暂时没有记忆。</EmptyState>}
           {view.items.map(item => (
-            <button type="button" key={item.ref} onClick={() => choose(item)}>
-              <span>{item.pinned ? '置顶 · ' : ''}{categoryLabel(item.category)}</span>
-              <strong>{item.summary}</strong>
-              <small>{formatDate(item.updatedAt)}</small>
-            </button>
-          ))}
-        </div>
-        {selected && (
-          <section className="memory-editor">
-            <span className="eyebrow">记忆详情</span>
-            <textarea value={draft} onChange={event => setDraft(event.target.value)} />
-            <dl className="memory-context">
-              <div><dt>形成于</dt><dd>{formatDate(selected.formedAt)}</dd></div>
-              <div><dt>最近使用</dt><dd>{formatDate(selected.lastUsedAt)}</dd></div>
-              <div><dt>形成原因</dt><dd>{selected.formationReason || '从相关对话中形成'}</dd></div>
-            </dl>
-            <div className="memory-editor-actions">
-              <button type="button" onClick={() => void requestCommand(
-                'update_memory_view', { ref: selected.ref, content: draft }
-              )}>保存修改</button>
-              <button type="button" onClick={() => void requestCommand(
-                'update_memory_view', { ref: selected.ref, pinned: !selected.pinned }
-              )}>{selected.pinned ? '取消置顶' : '置顶'}</button>
-              {!confirmForget ? (
-                <button type="button" onClick={() => setConfirmForget(true)}>遗忘…</button>
-              ) : (
-                <button type="button" className="danger" onClick={() =>
-                  void requestCommand('forget_memory_view', { ref: selected.ref })
-                }>确认遗忘</button>
+            <div key={item.ref}>
+              <button type="button" onClick={() => choose(item)}>
+                <span>{item.pinned ? '置顶 · ' : ''}{categoryLabel(item.category)}</span>
+                <strong>{item.summary}</strong>
+                <small>{formatDate(item.updatedAt)}</small>
+              </button>
+              {selected?.ref === item.ref && (
+                <section className="memory-editor">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span className="eyebrow">记忆详情</span>
+                    <button type="button" onClick={closeEditor}
+                      style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0 }}>&times;</button>
+                  </div>
+                  <textarea value={draft} onChange={event => setDraft(event.target.value)} />
+                  <dl className="memory-context">
+                    <div><dt>形成于</dt><dd>{formatDate(selected.formedAt)}</dd></div>
+                    <div><dt>最近使用</dt><dd>{formatDate(selected.lastUsedAt)}</dd></div>
+                    <div><dt>形成原因</dt><dd>{selected.formationReason || '从相关对话中形成'}</dd></div>
+                  </dl>
+                  <div className="memory-editor-actions">
+                    <button type="button" onClick={async () => {
+                      await requestCommand('update_memory_view', { ref: selected.ref, content: draft })
+                      setSelected(null); void refresh()
+                    }}>保存修改</button>
+                    <button type="button" onClick={async () => {
+                      await requestCommand('update_memory_view', { ref: selected.ref, pinned: !selected.pinned })
+                      setSelected(null); void refresh()
+                    }}>{selected.pinned ? '取消置顶' : '置顶'}</button>
+                    {!confirmForget ? (
+                      <button type="button" onClick={() => setConfirmForget(true)}>遗忘…</button>
+                    ) : (
+                      <button type="button" className="danger" onClick={async () => {
+                        await requestCommand('forget_memory_view', { ref: selected.ref })
+                        setSelected(null); setConfirmForget(false); void refresh()
+                      }}>确认遗忘</button>
+                    )}
+                  </div>
+                </section>
               )}
             </div>
-          </section>
-        )}
+          ))}
+        </div>
       </div>
     </DrawerPanel>
   )
 }
+
+// ── Voice Panel ──────────────────────────────────────────────────
 
 export function VoicePanel({ requestCommand }: { requestCommand: RequestCommand }) {
   const [view, setView] = useState<VoiceStatusView | null>(null)
@@ -186,43 +214,61 @@ export function VoicePanel({ requestCommand }: { requestCommand: RequestCommand 
   )
 }
 
+// ── Capability Panel ─────────────────────────────────────────────
+
 export function CapabilityPanel({ requestCommand }: { requestCommand: RequestCommand }) {
   const [items, setItems] = useState<CapabilityItem[]>([])
+  const [toggling, setToggling] = useState<string | null>(null)
   const refresh = () => requestCommand('get_capability_view', {})
     .then(data => setItems((data as any).view?.items ?? []))
+
   useEffect(() => {
     void refresh()
   }, [])
+
+  const toggleCapability = async (item: CapabilityItem) => {
+    setToggling(item.name)
+    setItems(prev => prev.map(i =>
+      i.name === item.name ? { ...i, status: i.status === 'available' ? 'disabled' : 'available' } : i
+    ))
+    await requestCommand('set_tool_enabled', { name: item.name, enabled: item.status !== 'available' })
+    await refresh()
+    setToggling(null)
+  }
+
   return (
     <DrawerPanel title="能力">
       <div className="capability-view">
         {items.length === 0 && <EmptyState>当前没有可用的外部能力。</EmptyState>}
-        {items.map(item => (
-          <article key={item.name}>
-            <div>
-              <strong>{item.name}</strong>
-              <p>{item.description || '由角色在需要时使用。'}</p>
-              <small>
-                {item.permission === 'ask' ? '使用前询问' : '只读自动使用'}
-                {' · '}
-                {item.allowedProactively ? '允许主动使用' : '仅响应你的请求'}
-                {item.recentlyUsedAt ? ` · 最近使用 ${formatDate(item.recentlyUsedAt)}` : ''}
-              </small>
-            </div>
-            <button
-              type="button"
-              className={item.status === 'available' ? 'is-active' : ''}
-              onClick={() => void requestCommand('set_tool_enabled', {
-                name: item.name,
-                enabled: item.status !== 'available',
-              })}
-            >{item.status === 'available' ? '已开启' : '已关闭'}</button>
-          </article>
-        ))}
+        {items.map(item => {
+          const isAvailable = item.status === 'available'
+          return (
+            <article key={item.name}>
+              <div>
+                <strong>{item.name}</strong>
+                <p>{item.description || '由角色在需要时使用。'}</p>
+                <small>
+                  {item.permission === 'ask' ? '使用前询问' : '只读自动使用'}
+                  {' · '}
+                  {item.allowedProactively ? '允许主动使用' : '仅响应你的请求'}
+                  {item.recentlyUsedAt ? ` · 最近使用 ${formatDate(item.recentlyUsedAt)}` : ''}
+                </small>
+              </div>
+              <button
+                type="button"
+                className={isAvailable ? 'is-active' : ''}
+                disabled={toggling === item.name}
+                onClick={() => void toggleCapability(item)}
+              >{isAvailable ? '已开启' : '已关闭'}</button>
+            </article>
+          )
+        })}
       </div>
     </DrawerPanel>
   )
 }
+
+// ── Shared helpers ────────────────────────────────────────────────
 
 function ViewSection({ title, children }: { title: string; children: React.ReactNode }) {
   return <section><h3>{title}</h3>{children}</section>
@@ -242,22 +288,4 @@ function StatusLine({ label, value }: { label: string; value: string }) {
 
 function statusLabel(status: string) {
   return status === 'ready' ? '正常' : status === 'unavailable' ? '不可用' : status
-}
-
-function categoryLabel(category: string) {
-  return ({
-    about_user: '关于你',
-    shared: '共同经历',
-    character: '角色自身',
-    preferences: '偏好习惯',
-    goals: '持续目标',
-  } as Record<string, string>)[category] ?? '记忆'
-}
-
-function formatDate(value?: string) {
-  if (!value) return '尚未使用'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', {
-    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  })
 }

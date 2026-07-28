@@ -31,12 +31,7 @@ export function ChatView() {
 
   return (
     <div className="chat-view" ref={listRef}>
-      {visible.length === 0 ? (
-        <div className="conversation-welcome">
-          <span>准备好了</span>
-          <p>和我说点什么吧，我会结合记忆与你自然交流。</p>
-        </div>
-      ) : visible.map(message => <Message key={message.id} message={message} />)}
+      {visible.map(message => <Message key={message.id} message={message} />)}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { Bot, Brain, History, Mic2, Settings, Sparkles, Wrench } from 'lucide-react'
+import { Brain, History, MessageSquareText, Settings, Sparkles, Wrench } from 'lucide-react'
 
 import type { RecorderState } from '../audio/recorder'
 import { CharacterView } from '../character/CharacterView'
@@ -15,14 +15,12 @@ import {
   CapabilityPanel,
   CharacterSelfPanel,
   MemoryPanel,
-  VoicePanel,
 } from './UserViewPanels'
 import type { DrawerSection } from './workspace-state'
 
 const DRAWER_ITEMS: DrawerItem[] = [
   { id: 'history', label: '聊天记录', icon: <History /> },
-  { id: 'character', label: '角色', icon: <Bot /> },
-  { id: 'voice', label: '语音', icon: <Mic2 /> },
+  { id: 'character', label: '角色', icon: <MessageSquareText /> },
   { id: 'memory', label: '记忆', icon: <Brain /> },
   { id: 'capabilities', label: '能力', icon: <Sparkles /> },
   { id: 'settings', label: '设置', icon: <Settings /> },
@@ -86,7 +84,6 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
     }
     if (section === 'character') return <CharacterSelfPanel requestCommand={props.requestCommand} />
     if (section === 'memory') return <MemoryPanel requestCommand={props.requestCommand} />
-    if (section === 'voice') return <VoicePanel requestCommand={props.requestCommand} />
     return <CapabilityPanel requestCommand={props.requestCommand} />
   }
 

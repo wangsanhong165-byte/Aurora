@@ -98,6 +98,17 @@ export function Layout({
 
   return (
     <div className={`workspace-shell ${petMode ? 'is-pet-mode' : ''}`}>
+      {!petMode && (
+        <aside className="stage-rail" aria-label="功能导航">
+          <nav aria-label="主要功能">
+            {drawerItems.filter(item => item.placement !== 'bottom').map(renderNavButton)}
+          </nav>
+          <nav className="rail-bottom" aria-label="开发功能">
+            {drawerItems.filter(item => item.placement === 'bottom').map(renderNavButton)}
+          </nav>
+        </aside>
+      )}
+
       <main
         className="companion-stage"
         onDoubleClick={petMode ? onExitPetMode : undefined}
@@ -120,6 +131,15 @@ export function Layout({
           style={{ width: drawer.width, flexBasis: drawer.width }}
           aria-label={`${drawerItems.find(item => item.id === drawer.section)?.label ?? ''}面板`}
         >
+          <button
+            type="button"
+            className="drawer-edge-toggle is-expanded"
+            onClick={() => dispatch({ type: 'toggle' })}
+            aria-label="收起侧栏"
+            title="收起侧栏"
+          >
+            <span aria-hidden="true">›</span>
+          </button>
           <div
             className="drawer-resize-handle"
             onPointerDown={beginResize}
@@ -128,27 +148,6 @@ export function Layout({
             aria-label="调整面板宽度"
           />
           {renderDrawer(drawer.section)}
-        </aside>
-      )}
-
-      {!petMode && (
-        <aside className="stage-rail" aria-label="功能导航">
-          <button
-            type="button"
-            className={`drawer-edge-toggle ${drawer.expanded ? 'is-expanded' : ''}`}
-            onClick={() => dispatch({ type: 'toggle' })}
-            aria-label={drawer.expanded ? '收起侧栏' : '展开侧栏'}
-            aria-expanded={drawer.expanded}
-            title={drawer.expanded ? '收起侧栏' : '展开侧栏'}
-          >
-            <span aria-hidden="true">‹</span>
-          </button>
-          <nav aria-label="主要功能">
-            {drawerItems.filter(item => item.placement !== 'bottom').map(renderNavButton)}
-          </nav>
-          <nav className="rail-bottom" aria-label="开发功能">
-            {drawerItems.filter(item => item.placement === 'bottom').map(renderNavButton)}
-          </nav>
         </aside>
       )}
     </div>
