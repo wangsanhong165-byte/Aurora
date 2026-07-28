@@ -23,6 +23,8 @@ interface DiagState {
   intent: string
   performanceDebug: string
   llmDiagnostics: string
+  telemetryEvents: string
+  telemetryLastTurn: string
 }
 
 export function DebugPanel() {
@@ -49,6 +51,8 @@ export function DebugPanel() {
     intent: 'none',
     performanceDebug: 'none',
     llmDiagnostics: 'none',
+    telemetryEvents: '',
+    telemetryLastTurn: '',
   })
   const stateRef = useRef(state)
   stateRef.current = state
@@ -108,6 +112,22 @@ export function DebugPanel() {
       }
     }))
 
+    // Telemetry events from TurnTelemetry
+    unsubs.push(eventBus.on('runtime:telemetry', ({ events }) => {
+      if (!events || events.length === 0) return
+      const last = events[events.length - 1]
+      const turnId = last?.turn_id || ''
+      const stages = events
+        .filter((e: any) => e.duration_ms != null)
+        .map((e: any) => `${e.stage}=${e.duration_ms.toFixed(1)}ms${e.status !== 'ok' ? ' ❌' : ''}`)
+        .join(' → ')
+      setState(s => ({
+        ...s,
+        telemetryEvents: stages,
+        telemetryLastTurn: `${turnId.slice(0, 12)} | ${events.length} events${last?.status === 'failed' ? ' ❌' : ''}`,
+      }))
+    }))
+
     unsubs.push(eventBus.on('character:native_catalog', ({ motions, expressions }) => {
       setNativeMotions(motions)
       setNativeExpressions(expressions)
@@ -153,6 +173,8 @@ export function DebugPanel() {
     ['Performance Runtime', state.performanceDebug],
     ['Character Intent', state.intent],
     ['Memory / Token', state.llmDiagnostics],
+    ['Telemetry Turn', state.telemetryLastTurn],
+    ['Telemetry Stages', state.telemetryEvents || '—'],
     ['Avatar Bindings', state.bindings],
     ['Last Live2D Event', state.lastLive2dEvent],
     ['TTS', state.ttsState],
