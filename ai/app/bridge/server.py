@@ -1,4 +1,4 @@
-﻿"""Live2D Bridge Server — serves frontend, Live2D models, WebSocket API."""
+"""Live2D Bridge Server — serves frontend, Live2D models, WebSocket API."""
 import asyncio
 import io
 import json
