@@ -4,7 +4,7 @@
 // CharacterRuntime must never directly reference WebSocket envelope types,
 // Python class names, or legacy tone/gesture fields.
 
-import type { CharacterActivity } from './CharacterStateMachine'
+import type { CharacterActivity } from '../character/CharacterStateMachine'
 
 // ── Intent (semantic, no renderer-specific data) ──
 

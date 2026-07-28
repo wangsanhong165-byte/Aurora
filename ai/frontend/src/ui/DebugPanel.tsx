@@ -118,7 +118,7 @@ export function DebugPanel() {
     unsubs.push(eventBus.on('runtime:telemetry', ({ events }) => {
       if (!events || events.length === 0) return
       const last = events[events.length - 1]
-      const turnId = last?.turn_id || ''
+      const turnId = String(last?.turn_id ?? '')
       const stages = events
         .filter((e: any) => e.duration_ms != null)
         .map((e: any) => `${e.stage}=${e.duration_ms.toFixed(1)}ms${e.status !== 'ok' ? ' ❌' : ''}`)

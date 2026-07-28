@@ -1,7 +1,7 @@
 // WebSocket Client — connects to Companion Runtime via V2/V3 Transport Protocol
 
 import { eventBus } from '../core/event-bus'
-import type { InboundMessage, OutboundMessage } from './protocol'
+import type { OutboundMessage } from './protocol'
 import { createEnvelope, validateEnvelope, validateVersion, SequenceTracker, type EventEnvelope } from './envelope'
 import { v2ToV3Envelope } from './compat'
 
@@ -180,7 +180,7 @@ export class RuntimeClient {
     }
   }
 
-  private dispatchV3Payload(type: string, payload: Record<string, unknown>, turnId: string = ''): void {
+  private dispatchV3Payload(type: string, payload: Record<string, unknown>, _turnId: string = ''): void {
     switch (type) {
       case 'session':
         if (payload.status === 'init') {
