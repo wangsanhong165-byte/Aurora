@@ -102,6 +102,8 @@ class CharacterTurn:
     metrics: dict[str, float] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     event: Event = field(init=False)
+    session_id: str = ""
+    telemetry: Any = None
 
     # Typed runtime-owned working fields. Pipeline steps may mutate these,
     # but durable character state is committed separately.

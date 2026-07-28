@@ -90,6 +90,16 @@ class CharacterRuntime:
         # Save to state store
         state_store.set("runtime_initialized", True)
 
+        # Wire telemetry observer (logs events, doesn't block pipeline)
+        from app.telemetry import TurnTelemetry
+
+        def _log_telemetry(event):
+            logger.debug("[Telemetry] %s | turn=%s | stage=%s | status=%s | %.1fms",
+                         event.session_id, event.turn_id, event.stage,
+                         event.status, event.duration_ms or 0)
+
+        self.pipeline.set_telemetry_observer(_log_telemetry)
+
         # ── Background services ─────────────────────────────────────
         self._init_memory_ticker()
         memory_provider = self.providers.get("memory")
@@ -552,7 +562,17 @@ class CharacterRuntime:
             input=turn_input,
             status_callback=status_callback,
             confirmation_callback=confirmation_callback,
+            session_id=get_session_id(),
+            telemetry=TurnTelemetry(
+                session_id=get_session_id(),
+                turn_id="",
+                parent_span_id="",
+            ),
         )
+        # Ensure telemetry turn_id matches the CharacterTurn turn_id
+        if turn.telemetry:
+            turn.telemetry.turn_id = turn.turn_id
+            turn.telemetry.record("turn.started", metadata={"origin": turn.input_origin})
         self._active_turn = turn
         turn.transition_to(TurnPhase.PROCESSING)
 
@@ -586,6 +606,11 @@ class CharacterRuntime:
 
         if not turn.error:
             turn.transition_to(TurnPhase.COMPLETED)
+            if turn.telemetry:
+                turn.telemetry.record("turn.completed", duration_ms=turn.metrics.get("e2e_latency_ms"))
+        else:
+            if turn.telemetry:
+                turn.telemetry.record("turn.failed", error_code=turn.error.code if turn.error else "unknown", metadata={"message": str(turn.error) if turn.error else ""})
         turn.metrics["e2e_latency_ms"] = (time.perf_counter() - started_at) * 1000
         try:
             from app.runtime.turn_recorder import get_turn_recorder
