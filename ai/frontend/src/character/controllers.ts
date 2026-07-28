@@ -529,10 +529,10 @@ export class CharacterController {
     )
 
     this.cleanupFns.push(
-      eventBus.on('runtime:user_message', () => {
+      eventBus.on('runtime:user_message', ({ text: _text }) => {
         this.onActivityChange('listening')
         this.applyIntent({ emotion: 'neutral', behavior: 'listen', intensity: 0.35, attention: 'user', energy: 0.25 })
-        setTimeout(() => { if (this.currentActivity === 'listening') this.onActivityChange('thinking') }, 350)
+        setTimeout(() => { if (this.stateMachine.activity === 'listening') this.onActivityChange('thinking') }, 350)
       }),
     )
 
@@ -544,9 +544,19 @@ export class CharacterController {
     )
   }
 
-  private onActivityChange(activity: string): void {
+  /** Set the current turnId for stale event rejection. */
+  setTurnId(turnId: string): void {
+    this.stateMachine.force(this.stateMachine.activity, turnId)
+  }
+
+  private onActivityChange(activity: string, turnId = ''): void {
     if (activity === 'idle' && this.audioPlaybackActive) return
     if (!activity || activity === this.currentActivity) return
+    // Reject stale events from previous turns
+    if (turnId && !this.stateMachine.isCurrentTurn(turnId)) {
+      eventBus.emit('character:runtime-telemetry', { type: 'runtime.stale-event-rejected', metadata: { turnId, currentTurnId: this.stateMachine.turnId, activity } })
+      return
+    }
     const from = this.stateMachine.activity
     const to = activity as CharacterActivity
     if (!this.stateMachine.transition(to)) return

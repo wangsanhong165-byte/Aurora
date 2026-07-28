@@ -14,7 +14,8 @@ export class CharacterStateMachine {
   private _activity: CharacterActivity = 'idle'
   private _previousActivity: CharacterActivity = 'idle'
   private _enteredAt = 0
-  private _listeners: Array<(from: CharacterActivity, to: CharacterActivity) => void> = []
+  private _turnId = ''
+  private _listeners: Array<(from: CharacterActivity, to: CharacterActivity, turnId: string) => void> = []
 
   get activity(): CharacterActivity {
     return this._activity
@@ -36,7 +37,18 @@ export class CharacterStateMachine {
     return this._activity === 'speaking'
   }
 
-  transition(to: CharacterActivity): boolean {
+  get turnId(): string {
+    return this._turnId
+  }
+
+  /** Check if a given turnId is the currently active turn.
+   *  Returns true if no turnId provided (backward compat), false if stale. */
+  isCurrentTurn(turnId: string): boolean {
+    if (!this._turnId || !turnId) return true
+    return this._turnId === turnId
+  }
+
+  transition(to: CharacterActivity, turnId = ''): boolean {
     if (to === this._activity) return false
     const allowed = VALID_TRANSITIONS[this._activity]
     if (!allowed || !allowed.includes(to)) {
@@ -47,24 +59,26 @@ export class CharacterStateMachine {
     this._previousActivity = this._activity
     this._activity = to
     this._enteredAt = performance.now()
+    if (turnId) this._turnId = turnId
     for (const listener of this._listeners) {
-      try { listener(from, to) } catch {}
+      try { listener(from, to, this._turnId) } catch {}
     }
     return true
   }
 
   /** Force a transition (used when the system is out of sync). */
-  force(to: CharacterActivity): void {
+  force(to: CharacterActivity, turnId = ''): void {
     const from = this._activity
     this._previousActivity = this._activity
     this._activity = to
     this._enteredAt = performance.now()
+    if (turnId) this._turnId = turnId
     for (const listener of this._listeners) {
-      try { listener(from, to) } catch {}
+      try { listener(from, to, this._turnId) } catch {}
     }
   }
 
-  onTransition(fn: (from: CharacterActivity, to: CharacterActivity) => void): () => void {
+  onTransition(fn: (from: CharacterActivity, to: CharacterActivity, turnId: string) => void): () => void {
     this._listeners.push(fn)
     return () => {
       const idx = this._listeners.indexOf(fn)
@@ -76,5 +90,6 @@ export class CharacterStateMachine {
     this._activity = 'idle'
     this._previousActivity = 'idle'
     this._enteredAt = performance.now()
+    this._turnId = ''
   }
 }
