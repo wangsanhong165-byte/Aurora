@@ -23,8 +23,6 @@ from app.transport.protocol import (
 )
 from contracts.v3.envelope import (
     EventEnvelope,
-    get_session_id as get_v3_session_id,
-    validate_envelope,
     validate_version,
     error_envelope,
 )

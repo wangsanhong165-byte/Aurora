@@ -558,6 +558,8 @@ class CharacterRuntime:
         if self._initiative_task is None or self._initiative_task.done():
             self._start_initiative_drain()
 
+        from app.telemetry import TurnTelemetry, get_session_id
+
         turn = CharacterTurn(
             input=turn_input,
             status_callback=status_callback,
