@@ -290,14 +290,13 @@ app.whenReady().then(async () => {
   const startPromise = pm.startAll()
 
   // Start the readiness polling loop — use cached status, no subprocess spawn.
-  // Full refresh (pm.refresh() = spawn python subprocess) is too heavy for 2s interval.
-  // Do a background full refresh every 30s to catch service state changes.
+  // Full refresh (pm.refresh()) spawns a Python subprocess; rate-limited by
+  // ProcessManager to 15s minimum. Every 15th cycle (~30s) does a forced fresh.
   let loadGen = 0
   statusTimer = setInterval(async () => {
-    const now = Date.now()
     const status = loadGen++ % 15 === 0 && mainUiLoaded
-      ? await pm.refresh()    // full refresh every 30s (15 × 2000ms)
-      : pm.getStatus()         // cached, no subprocess
+      ? await pm.refresh(true)   // force fresh every ~30s
+      : pm.getStatus()           // cached, no subprocess
     if (mainWindow?.isDestroyed?.()) return
     mainWindow?.webContents.send('lifecycle:snapshot', status)
     if (!mainUiLoaded && canEnterCompanion(status)) loadAppUrl()

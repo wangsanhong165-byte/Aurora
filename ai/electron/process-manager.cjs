@@ -6,6 +6,9 @@ const { spawn } = require('node:child_process')
 
 const ROOT_DIR = path.resolve(__dirname, '..')
 
+// Minimum interval between full subprocess spawns for status (ms)
+const MIN_REFRESH_INTERVAL = 15_000
+
 class ProcessManager {
   constructor () {
     this.python = process.env.MAIN_PYTHON || process.env.PYTHON || 'python'
@@ -15,6 +18,7 @@ class ProcessManager {
     this.ownsLaunch = false
     this._status = { availability: 'BLOCKED', services: [], capabilities: [] }
     this._refreshPromise = null
+    this._lastRefreshTimestamp = 0
   }
 
   _request (command, extra = {}) {
@@ -58,8 +62,19 @@ class ProcessManager {
     await this._request('stop')
     return this._request('shutdown')
   }
-  refresh () {
+
+  /** Full refresh: spawns a Python subprocess to query lifecycle status.
+   *  Rate-limited to MIN_REFRESH_INTERVAL between calls; returns cached
+   *  status if called too frequently.
+   *  Pass forceFresh=true to bypass the rate limit. */
+  refresh (forceFresh = false) {
+    const now = Date.now()
+    if (!forceFresh && (now - this._lastRefreshTimestamp) < MIN_REFRESH_INTERVAL) {
+      return Promise.resolve(this._status)
+    }
+
     if (!this._refreshPromise) {
+      this._lastRefreshTimestamp = now
       this._refreshPromise = this._request('status')
         .catch(() => this._status)
         .finally(() => {
@@ -68,8 +83,12 @@ class ProcessManager {
     }
     return this._refreshPromise
   }
+
+  /** Returns cached status without spawning any subprocess. */
   getStatus () { return this._status }
+
   isReady () { return this._status.availability !== 'BLOCKED' }
+
   getLogsDir () {
     return path.join(ROOT_DIR, 'logs', 'launches', this.launchId)
   }
