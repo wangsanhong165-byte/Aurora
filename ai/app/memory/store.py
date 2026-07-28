@@ -174,34 +174,6 @@ class MemoryStore:
                 context_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_usage_created
-                ON usage_events(character_id, created_at);
-            CREATE TABLE IF NOT EXISTS usage_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                character_id TEXT NOT NULL DEFAULT '',
-                prompt_tokens INTEGER NOT NULL DEFAULT 0,
-                completion_tokens INTEGER NOT NULL DEFAULT 0,
-                cached_tokens INTEGER NOT NULL DEFAULT 0,
-                estimated_cost_usd REAL NOT NULL DEFAULT 0,
-                model TEXT NOT NULL DEFAULT '',
-                context_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_usage_created
-                ON usage_events(character_id, created_at);
-            CREATE TABLE IF NOT EXISTS usage_events (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                character_id TEXT NOT NULL DEFAULT '',
-                prompt_tokens INTEGER NOT NULL DEFAULT 0,
-                completion_tokens INTEGER NOT NULL DEFAULT 0,
-                cached_tokens INTEGER NOT NULL DEFAULT 0,
-                estimated_cost_usd REAL NOT NULL DEFAULT 0,
-                model TEXT NOT NULL DEFAULT '',
-                context_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_usage_created
-                ON usage_events(character_id, created_at);
 
             CREATE VIRTUAL TABLE IF NOT EXISTS facts_fts USING fts5(
                 fact, tags,
@@ -448,55 +420,6 @@ class MemoryStore:
             (character_id, str(memory_id), __import__("time").time()),
         )
         self._get_conn().commit()
-
-    def record_usage(
-        self, character_id: str, usage: dict, context_budget: dict | None = None
-    ) -> None:
-        self._get_conn().execute(
-            "INSERT INTO usage_events(character_id, prompt_tokens, completion_tokens, "
-            "cached_tokens, estimated_cost_usd, model, context_json, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                character_id,
-                int(usage.get("prompt_tokens", 0) or 0),
-                int(usage.get("completion_tokens", 0) or 0),
-                int(usage.get("cached_tokens", 0) or 0),
-                float(usage.get("estimated_cost_usd", 0) or 0),
-                str(usage.get("model", "")),
-                json.dumps(context_budget or {}, ensure_ascii=False),
-                datetime.now(timezone.utc).isoformat(),
-            ),
-        )
-        self._get_conn().commit()
-
-    def usage_summary(self, character_id: str = "", recent_limit: int = 30) -> dict:
-        where, params = "", []
-        if character_id:
-            where = " WHERE character_id = ?"
-            params.append(character_id)
-        totals = self._get_conn().execute(
-            "SELECT COUNT(*) turns, COALESCE(SUM(prompt_tokens), 0) prompt_tokens, "
-            "COALESCE(SUM(completion_tokens), 0) completion_tokens, "
-            "COALESCE(SUM(cached_tokens), 0) cached_tokens, "
-            "COALESCE(SUM(estimated_cost_usd), 0) estimated_cost_usd "
-            "FROM usage_events" + where, params,
-        ).fetchone()
-        rows = self._get_conn().execute(
-            "SELECT prompt_tokens, completion_tokens, cached_tokens, "
-            "estimated_cost_usd, model, context_json, created_at FROM usage_events"
-            + where + " ORDER BY id DESC LIMIT ?",
-            (*params, max(1, min(200, int(recent_limit)))),
-        ).fetchall()
-        return {
-            "totals": dict(totals),
-            "recent": [
-                {
-                    **{key: row[key] for key in row.keys() if key != "context_json"},
-                    "context_budget": json.loads(row["context_json"] or "{}"),
-                }
-                for row in rows
-            ],
-        }
 
     def record_usage(
         self, character_id: str, usage: dict, context_budget: dict | None = None
