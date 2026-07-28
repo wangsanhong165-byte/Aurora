@@ -94,9 +94,11 @@ def test_tts_keeps_character_speaking_until_browser_audio_ends():
 
 def test_llm_prompt_uses_semantic_intent_not_legacy_model_controls():
     decision = (ROOT / "app/runtime/steps/decision_step.py").read_text(encoding="utf-8")
+    planner = (ROOT / "app/runtime/default_planner.py").read_text(encoding="utf-8")
 
-    assert '"emotion" from: {presentation_emotions}' in decision
-    assert '"behavior" from: {presentation_behaviors}' in decision
+    # The prompt format is now in DefaultPlanner (extracted from DecisionStep)
+    assert '"emotion" from: {presentation_emotions}' in planner
+    assert '"behavior" from: {presentation_behaviors}' in planner
     assert "avatar_caps = _load_avatar_capabilities()" not in decision
 
 
