@@ -25,6 +25,7 @@ interface DiagState {
   llmDiagnostics: string
   telemetryEvents: string
   telemetryLastTurn: string
+  runtimeEvents: string[]
 }
 
 export function DebugPanel() {
@@ -53,6 +54,7 @@ export function DebugPanel() {
     llmDiagnostics: 'none',
     telemetryEvents: '',
     telemetryLastTurn: '',
+    runtimeEvents: [],
   })
   const stateRef = useRef(state)
   stateRef.current = state
@@ -128,6 +130,16 @@ export function DebugPanel() {
       }))
     }))
 
+    // Frontend Runtime Telemetry
+    const MAX_RUNTIME_EVENTS = 20
+    unsubs.push(eventBus.on('character:runtime-telemetry', (event) => {
+      const label = `${event.type}${event.metadata ? ' ' + JSON.stringify(event.metadata) : ''}`
+      setState(s => ({
+        ...s,
+        runtimeEvents: [label, ...s.runtimeEvents].slice(0, MAX_RUNTIME_EVENTS),
+      }))
+    }))
+
     unsubs.push(eventBus.on('character:native_catalog', ({ motions, expressions }) => {
       setNativeMotions(motions)
       setNativeExpressions(expressions)
@@ -175,6 +187,7 @@ export function DebugPanel() {
     ['Memory / Token', state.llmDiagnostics],
     ['Telemetry Turn', state.telemetryLastTurn],
     ['Telemetry Stages', state.telemetryEvents || '—'],
+    ['Event Log', state.runtimeEvents.join(' │ ') || '—'],
     ['Avatar Bindings', state.bindings],
     ['Last Live2D Event', state.lastLive2dEvent],
     ['TTS', state.ttsState],

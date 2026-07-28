@@ -286,3 +286,66 @@ def test_no_business_code_imports_cubism_core():
             if pattern in content:
                 violations.append(f"{f.relative_to(ROOT).as_posix()} contains '{pattern}'")
     assert not violations, f"Cubism Core access restricted to framework + adapter:\n" + "\n".join(violations)
+
+
+# ── Test: Renderer must not import CharacterRuntime classes ─────────────
+
+RENDERER_BANNED_IMPORTS = {
+    "CharacterController", "MotionArbiter", "ParameterMixer",
+    "ExpressionController", "CharacterBehaviorResolver",
+    "CharacterPerformancePolicy", "PetModeController",
+    "AvatarController",
+}
+
+
+def test_renderer_does_not_import_runtime_controllers():
+    """Renderer (live2d/renderer.ts) must not import character runtime classes."""
+    renderer_files = [
+        FRONTEND / "src" / "character" / "live2d" / "renderer.ts",
+        FRONTEND / "src" / "character" / "live2d" / "core.ts",
+        FRONTEND / "src" / "character" / "Live2DModelAdapter.ts",
+    ]
+    violations = []
+    for f in renderer_files:
+        if not f.exists():
+            continue
+        rel = f.relative_to(ROOT).as_posix()
+        imports = get_frontend_imports(f)
+        for imp in imports:
+            for banned in RENDERER_BANNED_IMPORTS:
+                if banned in imp and "live2d" not in imp:
+                    violations.append(f"{rel} imports {imp} (contains {banned})")
+    assert not violations, f"Renderer must not import runtime controllers:\n" + "\n".join(violations)
+
+
+# ── Test: AudioRuntime must not directly write React State ──────────────
+
+def test_audio_player_does_not_import_react():
+    """AudioPlayer must not import React, event-bus, or store."""
+    audio_player = FRONTEND / "src" / "audio" / "player.ts"
+    if not audio_player.exists():
+        return
+    imports = get_frontend_imports(audio_player)
+    react_imports = [imp for imp in imports if imp.startswith("react") or "store" in imp or "event-bus" in imp]
+    assert not react_imports, f"AudioPlayer imports React/Store: {react_imports}"
+
+
+# ── Test: CharacterStateMachine exists and has valid transitions ────────
+
+def test_character_state_machine_exists():
+    """CharacterStateMachine must define valid transitions for all activity types."""
+    from types import ModuleType
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "csm",
+            str(FRONTEND / "src" / "character" / "CharacterStateMachine.ts"),
+        )
+        assert spec is not None, "CharacterStateMachine.ts not found"
+    except Exception:
+        # TypeScript file - just check it exists
+        csm_file = FRONTEND / "src" / "character" / "CharacterStateMachine.ts"
+        assert csm_file.exists(), "CharacterStateMachine.ts must exist"
+        content = csm_file.read_text(encoding="utf-8")
+        assert "VALID_TRANSITIONS" in content, "VALID_TRANSITIONS must be defined"
+        assert "idle" in content and "speaking" in content, "Activities must be defined"

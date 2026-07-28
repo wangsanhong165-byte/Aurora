@@ -39,7 +39,7 @@ def test_client_ws_is_the_only_production_websocket_route():
     assert routes == {"/client-ws"}
 
 
-def test_session_announces_transport_protocol_v2():
+def test_session_announces_transport_protocol_v3():
     websocket = _WebSocketProbe()
 
     async def handler(_message):
@@ -49,7 +49,9 @@ def test_session_announces_transport_protocol_v2():
 
     init = websocket.messages[0]
     assert init["type"] == "session"
-    assert init["config"]["protocol_version"] == "2.0"
+    # V3 envelope: config is nested in payload
+    payload = init.get("payload", init)
+    assert payload["config"]["protocol_version"] == "3.0"
 
 
 def test_production_runtime_has_no_legacy_turn_entrypoint():

@@ -54,6 +54,13 @@ export interface EventMap {
   }
   'runtime:character_intent': { emotion: string; behavior: string; attention: string; energy: number; intensity: number; durationMs?: number; naturalVAD?: { valence: number; arousal: number; dominance: number }; contextTags?: string[] }
   'runtime:telemetry': { events: Array<Record<string, unknown>> }
+  'character:runtime-telemetry': {
+    type: string
+    turnId?: string
+    spanId?: string
+    durationMs?: number
+    metadata?: Record<string, unknown>
+  }
   'character:switch_model': { name: string }
   'accessory:loaded': { parts: Record<string, string>; state: Record<string, boolean> }
   'accessory:toggle': { label: string }

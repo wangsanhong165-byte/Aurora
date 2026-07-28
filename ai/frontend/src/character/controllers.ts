@@ -26,6 +26,7 @@ import type { PerformanceMode } from './AvatarCapabilityProfile'
 import type { NativeMotionPlayer } from './live2d/NativeMotionPlayer'
 import type { Live2DModelAdapter } from './Live2DModelAdapter'
 import { InteractionPerformancePolicy } from './performance/InteractionPerformancePolicy'
+import { CharacterStateMachine, type CharacterActivity } from './CharacterStateMachine'
 
 // ── Parameter Interpolation (smooth transitions) ──
 
@@ -344,11 +345,14 @@ export class CharacterController {
   vadGesture = new VADGestureController()
   privateEmotion = new PrivateEmotionOverlay()
   voiceWaiting = new VoiceWaitingMotionController()
+  stateMachine = new CharacterStateMachine()
 
   // References set externally by the animation loop
   private adapter: Live2DModelAdapter | null = null
   private cleanupFns: (() => void)[] = []
-  private currentActivity = 'idle'
+  private get currentActivity(): string {
+    return this.stateMachine.activity
+  }
   private previousActivity = 'idle'
   private activityEnteredAt = performance.now()
   private activityBlend = 0
@@ -543,11 +547,15 @@ export class CharacterController {
   private onActivityChange(activity: string): void {
     if (activity === 'idle' && this.audioPlaybackActive) return
     if (!activity || activity === this.currentActivity) return
+    const from = this.stateMachine.activity
+    const to = activity as CharacterActivity
+    if (!this.stateMachine.transition(to)) return
     this.previousActivity = this.currentActivity
-    this.currentActivity = activity
     this.activityEnteredAt = performance.now()
     this.activityBlend = 0
     this.speechPerformance.setSpeaking(activity === 'speaking')
+    // Emit telemetry event
+    eventBus.emit('character:runtime-telemetry', { type: 'state.transition', metadata: { from, to } })
     switch (activity) {
       case 'idle':
         this.idleCtrl.setBreathing(true)
@@ -582,6 +590,7 @@ export class CharacterController {
     this._currentEmotion = intent.emotion || 'neutral'
     this._currentEmotionIntensity = Math.max(0, Math.min(1, intent.intensity ?? 1))
     this.vad.setEmotion(intent.emotion, intent.intensity ?? 1)
+    eventBus.emit('character:runtime-telemetry', { type: 'intent.received', metadata: { emotion: intent.emotion, behavior: intent.behavior } })
     if (intent.naturalVAD) {
       this.vad.setTarget(intent.naturalVAD, Math.max(0.6, (intent.durationMs ?? 2400) / 1000))
     }

@@ -94,7 +94,7 @@ class WebSocketSession:
             payload={"status": "init", "config": config},
             source="bridge",
         )
-        byp = init_envelope.to_dict()
+        await self._send_raw(init_envelope.to_dict())
 
         ping_task = asyncio.create_task(self._ping_loop())
         try:
