@@ -24,12 +24,12 @@ class Live2DStep(Step):
             if isinstance(last, dict):
                 segment = last
 
-        if isinstance(segment, dict) and not segment.get("tone") and not segment.get("emotion"):
-            segment = {**segment, "tone": ctx.emotion or "neutral"}
+        if isinstance(segment, dict) and not segment.get("emotion"):
+            segment = {**segment, "emotion": ctx.emotion or "neutral"}
 
         # The runtime owns intent, not delivery. The V2 transport maps this
         # to a model-specific expression and sends it to the frontend.
-        intent = CharacterIntent.from_llm_segment(segment or {"tone": ctx.emotion or "neutral"}, ctx.emotion_intensity)
+        intent = CharacterIntent.from_llm_segment(segment or {"emotion": ctx.emotion or "neutral"}, ctx.emotion_intensity)
         # Spoken output must retain a semantic presentation behavior even when
         # an older LLM response omits it or emits its former `idle` default.
         if ctx.reply_text and (not intent.behavior or intent.behavior == "idle"):
@@ -43,4 +43,4 @@ class Live2DStep(Step):
                 natural_vad=intent.natural_vad,
                 context_tags=intent.context_tags,
             )
-        ctx.live2d_intent = {**intent.to_dict(), "gesture": intent.behavior, "speaking": bool(ctx.audio)}
+        ctx.live2d_intent = {**intent.to_dict(), "behavior": intent.behavior, "speaking": bool(ctx.audio)}

@@ -48,8 +48,8 @@ class ResponseInterpreter:
             segments.append(cleaned)
 
         last = segments[-1] if segments else {}
-        emotion = str(last.get("emotion", last.get("tone", "neutral")))
-        behavior = str(last.get("behavior", last.get("gesture", "speak" if response.reply else "")))
+        emotion = str(last.get("emotion", "neutral"))
+        behavior = str(last.get("behavior", "speak" if response.reply else ""))
         energy = float(last.get("energy", last.get("intensity", 0.5)))
         performance = PerformancePlan(
             emotion=emotion,

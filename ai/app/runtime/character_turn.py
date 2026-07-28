@@ -206,7 +206,7 @@ class CharacterTurn:
     def live2d_intent(self, value: dict[str, Any]) -> None:
         plan = self.output.performance
         plan.emotion = str(value.get("emotion", plan.emotion))
-        plan.behavior = str(value.get("behavior", value.get("gesture", plan.behavior)))
+        plan.behavior = str(value.get("behavior", plan.behavior))
         plan.attention = str(value.get("attention", plan.attention))
         plan.energy = float(value.get("energy", value.get("intensity", plan.energy)))
         plan.speaking = bool(value.get("speaking", plan.speaking))

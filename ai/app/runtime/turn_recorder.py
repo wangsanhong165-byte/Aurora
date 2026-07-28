@@ -203,8 +203,8 @@ class TurnRecorder:
                 "segments": [
                     {
                         "text": _safe_text(item.get("text"), 300),
-                        "tone": _safe_text(item.get("tone"), 40),
-                        "gesture": _safe_text(item.get("gesture"), 40),
+                        "emotion": _safe_text(item.get("emotion"), 40),
+                        "behavior": _safe_text(item.get("behavior"), 40),
                     }
                     for item in turn.segments
                     if isinstance(item, dict)

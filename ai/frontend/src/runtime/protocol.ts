@@ -7,7 +7,7 @@ export interface AssistantMessage {
   type: 'assistant_message'
   text: string
   reasoning?: string
-  segments?: Array<{ text: string; tone: string; gesture: string }>
+  segments?: Array<{ text: string; emotion: string; behavior: string }>
   diagnostics?: {
     llm_usage?: {
       prompt_tokens?: number

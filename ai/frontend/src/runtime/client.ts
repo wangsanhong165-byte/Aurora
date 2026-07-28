@@ -204,7 +204,7 @@ export class RuntimeClient {
         eventBus.emit('runtime:message', {
           text: payload.text as string,
           reasoning: payload.reasoning as string | undefined,
-          segments: payload.segments as Array<{ text: string; tone: string; gesture: string }> | undefined,
+          segments: payload.segments as Array<{ text: string; emotion: string; behavior: string }> | undefined,
           diagnostics: payload.diagnostics as Record<string, unknown> | undefined,
         })
         break

@@ -38,7 +38,7 @@ export interface EventMap {
   'connection:change': { connected: boolean }
   'runtime:status': { status: string; message?: string }
   'runtime:error': { code: string; message: string; requestId?: string }
-  'runtime:message': { text: string; reasoning?: string; segments?: Array<{ text: string; tone: string; gesture: string }>; diagnostics?: Record<string, unknown> }
+  'runtime:message': { text: string; reasoning?: string; segments?: Array<{ text: string; emotion: string; behavior: string }>; diagnostics?: Record<string, unknown> }
   'runtime:chunk': { text: string; delta: string }
   'runtime:tts_start': { format: string; sequence: number }
   'runtime:tts_end': { reason: string }

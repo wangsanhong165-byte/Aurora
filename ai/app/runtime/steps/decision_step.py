@@ -140,9 +140,9 @@ class DecisionStep(Step):
         segments = interpreted.segments
         if segments:
             ctx.segments = segments
-            last_tone = segments[-1].get("emotion", segments[-1].get("tone", ""))
-            if last_tone:
-                ctx.emotion = last_tone
+            last_emotion = segments[-1].get("emotion", "")
+            if last_emotion:
+                ctx.emotion = last_emotion
 
         # Add turns to conversation
         conversation = ctx.conversation
