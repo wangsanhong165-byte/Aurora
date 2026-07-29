@@ -33,6 +33,8 @@ class Service:
     provider: str | None = None
     python: str | None = None
     startup_priority: int = 100
+    failure_policy: str = "abort"  # "abort" — exception raises, profile stops
+                                   # "isolate" — logged, other services continue
 
     def argv(self, root: Path) -> list[str]:
         command = self.command
@@ -120,6 +122,7 @@ class ServiceManifest:
                 provider=merged.get("provider"),
                 python=str(python_services.get(name, python_default)),
                 startup_priority=int(merged.get("startup_priority", 100)),
+                failure_policy=str(merged.get("failure_policy", "abort")),
             )
         capabilities = {
             name: Capability(
@@ -172,7 +175,7 @@ class ServiceManifest:
     def availability(self, states: Mapping[str, str]) -> AvailabilityLevel:
         ready_levels: set[AvailabilityLevel] = set()
         for capability in self.capabilities.values():
-            if all(states.get(name) in {"ready", "degraded"} for name in capability.required_services):
+            if all(states.get(name) in {"ready", "degraded", "failed"} for name in capability.required_services):
                 ready_levels.add(capability.minimum_level)
         if AvailabilityLevel.VOICE_READY in ready_levels:
             declared = {
@@ -184,7 +187,7 @@ class ServiceManifest:
                 )
             }
             all_declared_ready = all(
-                states.get(name) in {"ready", "degraded"} for name in declared
+                states.get(name) in {"ready", "degraded", "failed"} for name in declared
             )
             return AvailabilityLevel.FULL_READY if all_declared_ready else AvailabilityLevel.VOICE_READY
         if AvailabilityLevel.TEXT_READY in ready_levels:

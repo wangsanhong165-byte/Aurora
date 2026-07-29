@@ -40,6 +40,7 @@ class LifecycleOrchestrator:
         self.launch_id: str | None = None
         self.events: list[dict] = []
         self.stream: EventStream | None = None
+        self._failed_services: set[str] = set()
 
     def start(
         self,
@@ -58,14 +59,25 @@ class LifecycleOrchestrator:
         self.stream = EventStream(self.launch_id, self.owner)
         prune_launch_logs(self.root)
         rollback_from = len(self.started)
-        try:
-            for service in self.manifest.for_profile(profile):
+        self._failed_services.clear()
+        # Services with failure_policy="isolate" that time out are NOT rolled back.
+        # Only abort-policy failures raise and trigger a full rollback.
+        for service in self.manifest.for_profile(profile):
+            try:
                 self._start_service(service)
-            self._emit("availability", availability=self.status()["availability"])
-            return self.status()
-        except Exception:
-            self._stop_names(self.started[rollback_from:])
-            raise
+            except LifecycleError:
+                if service.failure_policy != "isolate":
+                    self._stop_names(self.started[rollback_from:])
+                    raise
+                # Log and continue for isolated services
+                import logging
+                logger = logging.getLogger("lifecycle.orchestrator")
+                logger.warning(
+                    "%s: failure_policy=isolate — proceeding without it",
+                    service.name,
+                )
+        self._emit("availability", availability=self.status()["availability"])
+        return self.status()
 
     def _start_service(self, service: Service) -> None:
         owner = self.platform.port_owner(service.port)
@@ -109,6 +121,13 @@ class LifecycleOrchestrator:
             self.started.append(service.name)
         self._emit("service_state", service_id=service.name, state="running")
         if not self.probe.wait(service, process):
+            if service.failure_policy == "isolate":
+                import logging
+                logger = logging.getLogger("lifecycle.orchestrator")
+                logger.warning("%s: readiness timeout, isolating failure", service.name)
+                self._failed_services.add(service.name)
+                self._emit("service_state", service_id=service.name, state="failed")
+                return  # Other services continue
             raise LifecycleError(f"{service.name}: readiness timeout")
         if service.warmup:
             self._emit("service_state", service_id=service.name, state="warming")
@@ -177,7 +196,9 @@ class LifecycleOrchestrator:
         for name, service in self.manifest.services.items():
             owner = self.platform.port_owner(service.port)
             state = "stopped"
-            if owner:
+            if name in self._failed_services:
+                state = "failed"
+            elif owner:
                 actual = self.platform.identity(owner, service.port)
                 if actual and self.registry.matches(name, actual):
                     state = "ready" if self.probe.ready(service) else "running"
@@ -205,7 +226,7 @@ class LifecycleOrchestrator:
             "minimum_level": capability.minimum_level.value,
             "state": (
                 "ready"
-                if all(state_map.get(name) in {"ready", "degraded"} for name in capability.required_services)
+                if all(state_map.get(name) in {"ready", "degraded", "failed"} for name in capability.required_services)
                 else "warming"
             ),
         } for capability in self.manifest.capabilities.values()]
