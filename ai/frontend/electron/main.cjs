@@ -33,6 +33,9 @@ const ELECTRON_PID_FILE = path.join(__dirname, '..', '..', 'data', 'pids', 'elec
 // Live2D model files. Vite (5173) doesn't have the /live2d-models/ mount.
 const DEV_URL = process.env.VITE_URL || 'http://127.0.0.1:5173'
 const PROD_URL = process.env.BRIDGE_URL || 'http://127.0.0.1:9528'
+// Startup timeout: force the main UI to load after this many ms,
+// even if backend services haven't reached FULL_READY yet.
+const STARTUP_TIMEOUT_MS = 15_000
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -288,6 +291,16 @@ app.whenReady().then(async () => {
   // The bootstrap page will then receive live lifecycle:snapshot events
   // showing real-time service startup progress instead of stale "blocked".
   const startPromise = pm.startAll()
+  const startTime = Date.now()
+
+  // Startup timeout: force the main UI to load after STARTUP_TIMEOUT_MS
+  // even if services aren't fully ready. The UI can show its own degraded state.
+  const startupTimer = setTimeout(() => {
+    if (!mainUiLoaded) {
+      console.log('[Electron] Startup timeout — loading main UI with degraded services')
+      loadAppUrl()
+    }
+  }, STARTUP_TIMEOUT_MS)
 
   // Start the readiness polling loop — use cached status, no subprocess spawn.
   // Full refresh (pm.refresh()) spawns a Python subprocess; rate-limited by
@@ -299,7 +312,12 @@ app.whenReady().then(async () => {
       : pm.getStatus()           // cached, no subprocess
     if (mainWindow?.isDestroyed?.()) return
     mainWindow?.webContents.send('lifecycle:snapshot', status)
-    if (!mainUiLoaded && canEnterCompanion(status)) loadAppUrl()
+    // TEXT_READY is sufficient — the UI works for text chat while
+    // voice services continue loading in the background.
+    if (!mainUiLoaded && canEnterCompanion(status)) {
+      clearTimeout(startupTimer)
+      loadAppUrl()
+    }
   }, mainUiLoaded ? 2000 : 500)
 
   // Now show the window — services are already starting in the background.
@@ -309,10 +327,20 @@ app.whenReady().then(async () => {
   startPromise.then(status => {
     ready = canEnterCompanion(status)
     mainWindow?.webContents.send('lifecycle:snapshot', status)
-    if (!mainUiLoaded && ready) loadAppUrl()
+    if (!mainUiLoaded && ready) {
+      clearTimeout(startupTimer)
+      loadAppUrl()
+    }
   }).catch(err => {
     console.error('[Electron] Failed to start services:', err)
     mainWindow?.webContents.send('lifecycle:error', err.message)
+    // Even if services fail, load the UI after a short grace period
+    setTimeout(() => {
+      if (!mainUiLoaded) {
+        clearTimeout(startupTimer)
+        loadAppUrl()
+      }
+    }, 3000)
   })
 
   app.on('activate', () => {

@@ -3,9 +3,9 @@ const test = require('node:test')
 
 const { canEnterCompanion } = require('./startup-policy.cjs')
 
-test('startup console remains visible until every enabled capability is ready', () => {
+test('text ready is enough to enter companion; voice waits in background', () => {
   assert.equal(canEnterCompanion({ availability: 'BLOCKED' }), false)
-  assert.equal(canEnterCompanion({ availability: 'TEXT_READY' }), false)
-  assert.equal(canEnterCompanion({ availability: 'VOICE_READY' }), false)
+  assert.equal(canEnterCompanion({ availability: 'TEXT_READY' }), true)
+  assert.equal(canEnterCompanion({ availability: 'VOICE_READY' }), true)
   assert.equal(canEnterCompanion({ availability: 'FULL_READY' }), true)
 })
