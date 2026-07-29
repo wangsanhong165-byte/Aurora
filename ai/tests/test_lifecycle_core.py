@@ -179,3 +179,145 @@ def test_event_stream_assigns_protocol_identity_and_monotonic_sequence():
     assert [first["sequence"], second["sequence"]] == [1, 2]
     assert first["recoverable"] is True
     assert "recommended_action" in first
+
+
+def test_orchestrator_status_rechecks_processes_after_a_child_exits(tmp_path: Path):
+    path = tmp_path / "services.json"
+    path.write_text(json.dumps({
+        "_meta": {
+            "capabilities": {
+                "text": {
+                    "minimum_level": "TEXT_READY",
+                    "required_services": ["bridge"],
+                },
+            },
+        },
+        "bridge": {
+            "port": 9528,
+            "health": "/health",
+            "command": {"module": "bridge"},
+            "profiles": ["backend"],
+        },
+    }), encoding="utf-8")
+    identity = ProcessIdentity(99, 1.0, "python.exe", ("python", "-m", "bridge"), 9528)
+
+    class Platform:
+        owner = 99
+
+        def port_owner(self, _port):
+            return self.owner
+
+        def identity(self, pid, _port):
+            return identity if pid == identity.pid else None
+
+    class Probe:
+        def ready(self, _service):
+            return True
+
+    registry = ProcessRegistry(tmp_path / "pids.json")
+    registry.put("bridge", identity)
+    platform = Platform()
+    orchestrator = LifecycleOrchestrator(
+        tmp_path,
+        ServiceManifest.load(path),
+        registry=registry,
+        platform=platform,
+        probe=Probe(),
+    )
+
+    assert orchestrator.status()["availability"] == "TEXT_READY"
+    platform.owner = None
+    second = orchestrator.status()
+
+    assert second["availability"] == "BLOCKED"
+    assert second["services"][0]["status"] == "stopped"
+
+
+def test_start_repairs_missing_voice_services_from_text_ready_state(tmp_path: Path):
+    path = tmp_path / "services.json"
+    path.write_text(json.dumps({
+        "_meta": {
+            "capabilities": {
+                "text": {
+                    "minimum_level": "TEXT_READY",
+                    "required_services": ["bridge"],
+                },
+                "voice": {
+                    "minimum_level": "VOICE_READY",
+                    "required_services": ["voice"],
+                },
+            },
+        },
+        "bridge": {
+            "port": 9528,
+            "health": "/health",
+            "command": {"module": "bridge"},
+            "profiles": ["backend"],
+        },
+        "voice": {
+            "port": 9105,
+            "health": "/health",
+            "command": {"module": "voice"},
+            "profiles": ["backend"],
+        },
+    }), encoding="utf-8")
+    bridge_identity = ProcessIdentity(
+        99, 1.0, "python.exe", ("python", "-m", "bridge"), 9528
+    )
+
+    class Process:
+        pid = 100
+
+        def poll(self):
+            return None
+
+    class Platform:
+        def __init__(self):
+            self.owners = {9528: 99}
+            self.spawned_pids = set()
+            self.spawn_count = 0
+
+        def port_owner(self, port):
+            return self.owners.get(port)
+
+        def identity(self, pid, port):
+            if pid == bridge_identity.pid and port == bridge_identity.port:
+                return bridge_identity
+            if pid in self.spawned_pids:
+                self.owners[port] = pid
+                return ProcessIdentity(
+                    pid, 2.0, "python.exe", ("python", "-m", "voice"), port
+                )
+            return None
+
+        def spawn(self, _argv, _cwd, _env, _log):
+            self.spawn_count += 1
+            process = Process()
+            self.spawned_pids.add(process.pid)
+            return process
+
+    class Probe:
+        def ready(self, _service):
+            return True
+
+        def wait(self, _service, _process):
+            return True
+
+    registry = ProcessRegistry(tmp_path / "pids.json")
+    registry.put("bridge", bridge_identity)
+    platform = Platform()
+    orchestrator = LifecycleOrchestrator(
+        tmp_path,
+        ServiceManifest.load(path),
+        registry=registry,
+        platform=platform,
+        probe=Probe(),
+    )
+    orchestrator.launch_id = "existing-launch"
+    orchestrator.started = ["bridge"]
+
+    result = orchestrator.start("backend")
+
+    assert platform.spawn_count == 1
+    assert result["availability"] == "FULL_READY"
+    assert orchestrator.started == ["bridge", "voice"]

@@ -40,9 +40,6 @@ class LifecycleOrchestrator:
         self.launch_id: str | None = None
         self.events: list[dict] = []
         self.stream: EventStream | None = None
-        # Status cache: avoids spawning processes for rapid queries.
-        # Call invalidate() after any state mutation to force fresh data.
-        self._status_cache: dict | None = None
 
     def start(
         self,
@@ -53,7 +50,7 @@ class LifecycleOrchestrator:
     ) -> dict:
         if self.launch_id and self.started:
             current = self.status()
-            if current["ready"]:
+            if current["availability"] == AvailabilityLevel.FULL_READY.value:
                 return current
         self.active_profile = profile
         self.launch_id = launch_id or self.launch_id or uuid4().hex
@@ -69,8 +66,6 @@ class LifecycleOrchestrator:
         except Exception:
             self._stop_names(self.started[rollback_from:])
             raise
-        finally:
-            self._invalidate_cache()
 
     def _start_service(self, service: Service) -> None:
         owner = self.platform.port_owner(service.port)
@@ -110,7 +105,8 @@ class LifecycleOrchestrator:
         self.processes[service.name] = process
         self.logs[service.name] = log
         self.registry.put(service.name, identity, self.owner)
-        self.started.append(service.name)
+        if service.name not in self.started:
+            self.started.append(service.name)
         self._emit("service_state", service_id=service.name, state="running")
         if not self.probe.wait(service, process):
             raise LifecycleError(f"{service.name}: readiness timeout")
@@ -136,7 +132,6 @@ class LifecycleOrchestrator:
         self._stop_names(names)
         self.started.clear()
         self.processes.clear()
-        self._invalidate_cache()
         return self.status()
 
     def stop_launch(self, launch_id: str) -> dict:
@@ -174,14 +169,8 @@ class LifecycleOrchestrator:
         return self.start(profile)
 
     def status(self) -> dict:
-        """Return current status. Uses cache between mutations."""
-        if self._status_cache is not None:
-            return self._status_cache
-        self._status_cache = self._build_status()
-        return self._status_cache
-
-    def _invalidate_cache(self) -> None:
-        self._status_cache = None
+        """Return a fresh snapshot so child exits are visible immediately."""
+        return self._build_status()
 
     def _build_status(self) -> dict:
         services = []
