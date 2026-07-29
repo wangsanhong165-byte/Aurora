@@ -42,7 +42,6 @@ export interface EventMap {
   'runtime:chunk': { text: string; delta: string }
   'runtime:tts_start': { format: string; sequence: number }
   'runtime:tts_end': { reason: string }
-  'runtime:character_state': { activity: string; emotion: string; intensity: number; expression: string; motion: string; behavior?: string; attention?: string; energy?: number; durationMs?: number; naturalVAD?: { valence: number; arousal: number; dominance: number }; contextTags?: string[] }
   'runtime:command_response': { action: string; data: Record<string, unknown>; requestId?: string }
   'runtime:session': { status: string; config: Record<string, unknown> }
   'runtime:user_message': { text: string }

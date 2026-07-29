@@ -74,13 +74,13 @@ export function DebugPanel() {
       setState(s => ({ ...s, sessionConfig: config }))
     }))
 
-    unsubs.push(eventBus.on('runtime:character_state', ({ expression, motion, emotion }) => {
+    unsubs.push(eventBus.on('runtime:character_intent', ({ emotion, behavior }) => {
       const now = new Date().toLocaleTimeString()
       setState(s => ({
         ...s,
-        lastExpression: expression || emotion || '—',
-        lastMotion: motion || '—',
-        lastLive2dEvent: now + ` (expr=${expression || emotion}, motion=${motion || 'none'})`,
+        lastExpression: emotion || '—',
+        lastMotion: behavior || '—',
+        lastLive2dEvent: now + ` (emotion=${emotion}, behavior=${behavior || 'none'})`,
       }))
     }))
 

@@ -541,13 +541,6 @@ export class CharacterController {
         this.applyIntent({ emotion, behavior, attention: attention as any, energy, intensity, durationMs, naturalVAD, contextTags })
       }),
     )
-
-    this.cleanupFns.push(
-      eventBus.on('runtime:character_state', ({ activity, emotion, intensity, motion, behavior, attention, energy, durationMs, naturalVAD, contextTags }) => {
-        this.onActivityChange(activity)
-        this.applyIntent({ emotion, behavior: behavior || motion, intensity, activity, attention: attention as any, energy, durationMs, naturalVAD, contextTags })
-      }),
-    )
   }
 
   /** Set the current turnId for stale event rejection. */
@@ -572,6 +565,8 @@ export class CharacterController {
     this.speechPerformance.setSpeaking(activity === 'speaking')
     // Emit telemetry event
     eventBus.emit('character:runtime-telemetry', { type: 'state.transition', metadata: { from, to } })
+    // Emit activity change so the React Store mirrors StateMachine state
+    eventBus.emit('character:activity', { activity })
     switch (activity) {
       case 'idle':
         this.idleCtrl.setBreathing(true)

@@ -562,7 +562,7 @@ export const CharacterView = memo(function CharacterView() {
     }
 
     // Detect speaking state from event bus
-    const unsubState = eventBus.on('runtime:character_state', ({ activity }) => {
+    const unsubState = eventBus.on('character:activity', ({ activity }) => {
       if (activity === 'speaking') {
         petCtrl.onSpeakingStart()
       } else if (activity === 'idle' && !browserAudioActive) {

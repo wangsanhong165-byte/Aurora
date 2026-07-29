@@ -53,13 +53,19 @@ export function DesktopSessionWorkspace() {
       }
     })
 
-    const unsub2 = eventBus.on('runtime:status', ({ status, message }) => {
-      const activityMap: Record<string, AiActivity> = {
-        idle: 'idle', processing: 'thinking', thinking: 'thinking', speaking: 'speaking',
-      }
-      const activity = activityMap[status] || 'idle'
-      actions.setActivity(activity)
+    const unsub2 = eventBus.on('runtime:status', ({ message }) => {
+      // activity is driven by CharacterStateMachine via character:activity event
       if (message) actions.setStatusMessage(message)
+    })
+
+    // activity single source: CharacterStateMachine (emitted by controllers)
+    const unsubActivity = eventBus.on('character:activity', ({ activity }) => {
+      actions.setActivity(activity as AiActivity)
+    })
+
+    // character state (emotion/intensity) driven by backend CharacterUpdate
+    const unsubIntent = eventBus.on('runtime:character_intent', ({ emotion, intensity, behavior }) => {
+      actions.setCharacter(emotion, intensity, behavior || emotion)
     })
 
     const unsub3 = eventBus.on('runtime:message', ({ text, reasoning }) => {
@@ -90,11 +96,6 @@ export function DesktopSessionWorkspace() {
     })
 
     const unsub8 = eventBus.on('runtime:tts_end', () => {})
-
-    const unsub9 = eventBus.on('runtime:character_state', ({ activity, emotion, intensity, expression, motion }) => {
-      actions.setCharacterActivity(activity as AiActivity)
-      actions.setCharacter(emotion, intensity, expression, motion)
-    })
 
     const unsub11 = eventBus.on('runtime:user_message', ({ text }) => {
       if (!text) return
@@ -199,7 +200,8 @@ export function DesktopSessionWorkspace() {
 
     return () => {
       unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6()
-      unsub7(); unsub8(); unsub9(); unsub10(); unsub11(); unsub12()
+      unsub7(); unsub8(); unsub10(); unsub11(); unsub12()
+      unsubActivity(); unsubIntent()
       unsubAccessoryLoaded(); unsubAccessoryChanged()
       client.disconnect(); audio.stop()
     }
