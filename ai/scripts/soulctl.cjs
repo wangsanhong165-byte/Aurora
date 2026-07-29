@@ -171,7 +171,7 @@ function holdForeground (python) {
   process.once('SIGTERM', stop)
 }
 
-function main (argv = process.argv.slice(2)) {
+async function main (argv = process.argv.slice(2)) {
   const command = argv[0] || 'electron'
   const hot = argv.includes('--hot') || command === 'dev'
   const pythonIndex = argv.indexOf('--python')
@@ -180,7 +180,7 @@ function main (argv = process.argv.slice(2)) {
   if (!python) throw new Error('Python was not found. Run soulctl doctor.')
 
   if (['electron', 'web', 'dev'].includes(command) && !hot) ensureFrontendBuild()
-  ensureSupervisor(python)
+  await ensureSupervisor(python)
 
   if (command === 'logs') {
     console.log(path.join(ROOT, 'logs', 'launches'))
@@ -230,13 +230,13 @@ function main (argv = process.argv.slice(2)) {
 }
 
 if (require.main === module) {
-  try {
-    process.exitCode = main()
-  } catch (error) {
+  main().then(code => {
+    process.exitCode = code || 0
+  }).catch(error => {
     console.error(`[FAILED] ${error.message}`)
     console.error('Run: soulctl.cmd doctor')
     process.exitCode = 1
-  }
+  })
 }
 
 module.exports = {

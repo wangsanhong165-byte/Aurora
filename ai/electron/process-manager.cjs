@@ -21,7 +21,7 @@ class ProcessManager {
     this._lastRefreshTimestamp = 0
   }
 
-  _request (command, extra = {}) {
+  _request (command, extra = {}, timeoutMs = 30000) {
     const args = [
       '-m', 'app.lifecycle.client', command,
       '--launch-id', this.launchId,
@@ -36,10 +36,23 @@ class ProcessManager {
       })
       let stdout = ''
       let stderr = ''
+      let settled = false
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true
+          child.kill()
+          reject(new Error(`lifecycle request timed out after ${timeoutMs}ms`))
+        }
+      }, timeoutMs)
       child.stdout.on('data', data => { stdout += data })
       child.stderr.on('data', data => { stderr += data })
-      child.on('error', reject)
+      child.on('error', err => {
+        if (!settled) { settled = true; clearTimeout(timer); reject(err) }
+      })
       child.on('exit', code => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
         try {
           const response = JSON.parse(stdout.trim())
           if (!response.ok) throw new Error(response.error || 'lifecycle request failed')
