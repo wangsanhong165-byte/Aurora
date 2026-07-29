@@ -132,14 +132,38 @@ class LegacyToolProvider(ToolInterface):
         await self._ensure_mcp()
 
         builtin_schemas = self._registry.list_openai_schemas()
+        builtin_names: set[str] = set()
         for schema in builtin_schemas:
             name = schema.get("function", {}).get("name", "")
+            if name:
+                builtin_names.add(name)
             tool = self._registry.get(name)
             risk = getattr(tool, "risk", "confirm")
             schema["risk"] = "read_only" if risk == "safe" else risk
             schema["allowed_in_initiative"] = risk == "safe"
+
+        # OpenAI-compatible APIs reject the entire request when tool names are
+        # repeated.  The local implementation is the canonical owner when an
+        # MCP server exposes the same capability (the time server currently
+        # collides on ``get_current_time``), so keep its schema and execution
+        # route.  Also collapse duplicate schemas returned by MCP discovery.
         mcp_schemas = []
+        seen_names = set(builtin_names)
         for raw in self._openai_schemas:
+            name = raw.get("function", {}).get("name", "")
+            if not name:
+                logger.warning("Ignoring MCP tool schema without a function name")
+                continue
+            if name in builtin_names:
+                logger.warning(
+                    "Ignoring MCP tool '%s': built-in tool owns this name", name
+                )
+                self._mcp_tool_names.discard(name)
+                continue
+            if name in seen_names:
+                logger.warning("Ignoring duplicate MCP tool schema '%s'", name)
+                continue
+            seen_names.add(name)
             schema = dict(raw)
             schema.setdefault("risk", "confirm")
             schema.setdefault("allowed_in_initiative", False)
