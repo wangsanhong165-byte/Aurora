@@ -81,19 +81,19 @@ class ProcessManager {
    *  status if called too frequently.
    *  Pass forceFresh=true to bypass the rate limit. */
   refresh (forceFresh = false) {
+    if (this._refreshPromise) return this._refreshPromise
+
     const now = Date.now()
     if (!forceFresh && (now - this._lastRefreshTimestamp) < MIN_REFRESH_INTERVAL) {
       return Promise.resolve(this._status)
     }
 
-    if (!this._refreshPromise) {
-      this._lastRefreshTimestamp = now
-      this._refreshPromise = this._request('status')
-        .catch(() => this._status)
-        .finally(() => {
-          this._refreshPromise = null
-        })
-    }
+    this._lastRefreshTimestamp = now
+    this._refreshPromise = this._request('status')
+      .catch(() => this._status)
+      .finally(() => {
+        this._refreshPromise = null
+      })
     return this._refreshPromise
   }
 

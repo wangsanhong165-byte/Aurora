@@ -28,7 +28,7 @@ test('concurrent refresh calls share one lifecycle status request', async () => 
   assert.equal(secondStatus.availability, 'TEXT_READY')
 })
 
-test('refresh starts a new status request after the previous one settles', async () => {
+test('refresh returns the cached status inside the refresh interval', async () => {
   const manager = new ProcessManager()
   let requestCount = 0
   manager._request = async () => {
@@ -38,6 +38,20 @@ test('refresh starts a new status request after the previous one settles', async
 
   await manager.refresh()
   await manager.refresh()
+
+  assert.equal(requestCount, 1)
+})
+
+test('forced refresh starts a new status request inside the refresh interval', async () => {
+  const manager = new ProcessManager()
+  let requestCount = 0
+  manager._request = async () => {
+    requestCount += 1
+    return { availability: 'TEXT_READY', services: [], capabilities: [] }
+  }
+
+  await manager.refresh()
+  await manager.refresh(true)
 
   assert.equal(requestCount, 2)
 })
