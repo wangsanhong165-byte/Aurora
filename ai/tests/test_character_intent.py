@@ -3,7 +3,7 @@ from app.runtime.character_intent import CharacterIntent
 
 def test_segment_adapter_accepts_only_high_level_intent_fields():
     intent = CharacterIntent.from_llm_segment({
-        "tone": "happy", "gesture": "greet", "attention": "user",
+        "emotion": "happy", "behavior": "greet", "attention": "user",
         "energy": 0.8, "ParamAngleX": 99,
     }, 0.7)
     assert intent.emotion == "happy"
@@ -13,6 +13,15 @@ def test_segment_adapter_accepts_only_high_level_intent_fields():
 
 def test_segment_adapter_rejects_unknown_intent_values():
     intent = CharacterIntent.from_llm_segment({"emotion": "ParamMouthOpenY", "behavior": "keyframe"})
+    assert intent.emotion == "neutral"
+    assert intent.behavior == ""
+
+
+def test_segment_adapter_does_not_restore_removed_v2_fields():
+    intent = CharacterIntent.from_llm_segment({
+        "tone": "happy",
+        "gesture": "wave",
+    })
     assert intent.emotion == "neutral"
     assert intent.behavior == ""
 

@@ -25,8 +25,8 @@ class CharacterIntent:
     @classmethod
     def from_llm_segment(cls, segment: dict[str, Any] | None, intensity: float = 0.5) -> "CharacterIntent":
         segment = segment if isinstance(segment, dict) else {}
-        emotion = str(segment.get("emotion", segment.get("tone", "neutral"))).lower()
-        behavior = str(segment.get("behavior", segment.get("gesture", ""))).lower()
+        emotion = str(segment.get("emotion", "neutral")).lower()
+        behavior = str(segment.get("behavior", "")).lower()
         attention = str(segment.get("attention", "user")).lower()
         raw_intensity = segment.get("intensity", intensity)
         raw_energy = segment.get("energy", raw_intensity)

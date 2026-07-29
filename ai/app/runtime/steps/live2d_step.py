@@ -6,7 +6,7 @@ from app.runtime.character_intent import CharacterIntent
 class Live2DStep(Step):
     """Update Live2D character expression and play audio.
 
-    Populates ctx.live2d_intent with AI emotion/gesture decisions.
+    Populates ctx.live2d_intent with AI emotion/behavior decisions.
     The actual delivery is handled by RuntimeEventHandler._character_update(),
     which routes through the AvatarController permission system:
       - AI requests (priority=50) are submitted as AvatarRequest objects

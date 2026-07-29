@@ -105,10 +105,12 @@ def test_frontend_connects_only_to_canonical_client_ws():
     assert "/v2/ws" not in debug_source
 
 
-def test_lossless_memory_migration_boundary_is_preserved():
-    migration_source = (
-        ROOT / "app" / "memory" / "history_migration.py"
+def test_data_migration_is_not_part_of_production_startup():
+    memory_source = (
+        ROOT / "app" / "providers" / "memory" / "sqlite_memory.py"
     ).read_text("utf-8")
+    migration_script = ROOT / "scripts" / "migrate_runtime_data_v3.py"
 
-    assert "migrate_legacy_histories" in migration_source
-    assert "legacy_history_import" in migration_source
+    assert "migrate_legacy_histories" not in memory_source
+    assert "history_migration" not in memory_source
+    assert migration_script.exists()

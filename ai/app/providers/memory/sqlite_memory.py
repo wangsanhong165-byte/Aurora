@@ -61,17 +61,6 @@ class SQLiteMemory(MemoryInterface):
         memory_store.start()
         if self._store is not None:
             self._store.backfill_legacy_facts()
-            from pathlib import Path
-            from app.memory.history_migration import migrate_legacy_histories
-            migrate_legacy_histories(
-                Path(__file__).resolve().parents[3],
-                self._store,
-                character_id=(
-                    getattr(character_registry, "active_id", "")
-                    if character_registry is not None
-                    else ""
-                ) or "default",
-            )
 
         # Get sync LLM adapter for the ticker
         llm_adapter = self._get_ticker_adapter(llm_provider)

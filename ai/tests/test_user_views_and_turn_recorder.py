@@ -132,6 +132,7 @@ def test_turn_recorder_persists_sanitized_read_only_trace(tmp_path: Path):
     summaries = recorder.list_turns()
     assert summaries[0]["turnId"] == turn.turn_id
     detail = recorder.get_turn(turn.turn_id)
+    assert detail["schemaVersion"] == 3
     assert detail["readOnly"] is True
     assert detail["response"]["text"] == "好的"
     assert detail["performance"]["behavior"] == "nod"
@@ -195,14 +196,15 @@ def test_management_commands_extend_existing_command_protocol():
 def test_frontend_uses_app_permission_dialog_and_no_frame_replay():
     root = Path(__file__).resolve().parents[1]
     client = (root / "frontend/src/runtime/client.ts").read_text("utf-8")
+    adapter = (root / "frontend/src/runtime/adapter.ts").read_text("utf-8")
     workspace = (root / "frontend/src/ui/CompanionWorkspace.tsx").read_text("utf-8")
     developer = (root / "frontend/src/ui/DeveloperWorkspace.tsx").read_text("utf-8")
 
     assert "window.confirm" not in client
-    assert "runtime:permission_requested" in client
+    assert "runtime:permission.requested" in adapter
     assert "CharacterSelfPanel" in workspace
     assert "MemoryPanel" in workspace
-    assert "VoicePanel" in workspace
+    assert "InputBar" in workspace
     assert "CapabilityPanel" in workspace
     assert "DeveloperWorkspace" in workspace
     assert "逐帧参数回放" in developer

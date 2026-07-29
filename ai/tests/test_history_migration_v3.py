@@ -1,10 +1,9 @@
 import json
 
-from app.memory.history_migration import migrate_legacy_histories
-from app.memory.store import MemoryStore
+from scripts.migrate_runtime_data_v3 import migrate_runtime_data
 
 
-def test_legacy_history_migration_is_lossless_and_idempotent(tmp_path):
+def test_history_archive_is_lossless_and_not_imported_at_runtime(tmp_path):
     histories = tmp_path / "data" / "memory" / "histories"
     histories.mkdir(parents=True)
     source = histories / "hist_demo.json"
@@ -12,16 +11,12 @@ def test_legacy_history_migration_is_lossless_and_idempotent(tmp_path):
         {"role": "user", "content": "hello"},
         {"role": "assistant", "content": "world"},
     ]), encoding="utf-8")
-    store = MemoryStore(base_dir=tmp_path)
 
-    first = migrate_legacy_histories(tmp_path, store, character_id="monika")
-    second = migrate_legacy_histories(tmp_path, store, character_id="monika")
+    first = migrate_runtime_data(tmp_path, apply=True)
+    second = migrate_runtime_data(tmp_path, apply=True)
 
-    assert first == 1
-    assert second == 0
+    assert first["historyArchives"] == 1
+    assert second["historyArchives"] == 0
     assert source.exists()
-    assert (histories / "v2-archive" / "hist_demo.json").exists()
-    assert store.history_messages("hist_demo", character_id="monika") == [
-        {"role": "user", "content": "hello"},
-        {"role": "assistant", "content": "world"},
-    ]
+    archive = histories / "v2-archive" / source.name
+    assert archive.read_bytes() == source.read_bytes()

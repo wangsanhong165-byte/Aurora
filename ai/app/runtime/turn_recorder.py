@@ -190,6 +190,7 @@ class TurnRecorder:
                 },
             ])
         return {
+            "schemaVersion": 3,
             "turnId": turn.turn_id,
             "readOnly": True,
             "createdAt": datetime.fromtimestamp(

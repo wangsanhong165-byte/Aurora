@@ -26,7 +26,7 @@ class TestLive2DV2Protocol(unittest.TestCase):
         ctx = CharacterTurn(input=TurnInput(text="hello"))
         ctx.emotion = "happy"
         ctx.emotion_intensity = 0.8
-        ctx.segments = [{"gesture": "wave"}]
+        ctx.segments = [{"behavior": "wave"}]
 
         _run(Live2DStep().run(ctx))
 

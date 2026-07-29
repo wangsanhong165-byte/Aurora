@@ -363,8 +363,19 @@ class MemoryStore:
             "INSERT INTO retrieval_audit(query, character_id, result_json, created_at) "
             "VALUES (?, ?, ?, ?)",
             (query, character_id, json.dumps(
-                [{"id": row["id"], "score": row["score"], "reasons": row["reasons"]}
-                 for row in results], ensure_ascii=False), now),
+                {
+                    "schemaVersion": 3,
+                    "results": [
+                        {
+                            "id": row["id"],
+                            "score": row["score"],
+                            "reasons": row["reasons"],
+                        }
+                        for row in results
+                    ],
+                },
+                ensure_ascii=False,
+            ), now),
         )
         self._get_conn().commit()
         return results
@@ -375,7 +386,14 @@ class MemoryStore:
             "INSERT INTO character_states(character_id, state_json, updated_at) "
             "VALUES (?, ?, ?) ON CONFLICT(character_id) DO UPDATE SET "
             "state_json = excluded.state_json, updated_at = excluded.updated_at",
-            (character_id, json.dumps(state, ensure_ascii=False), now),
+            (
+                character_id,
+                json.dumps(
+                    {"schemaVersion": 3, **state},
+                    ensure_ascii=False,
+                ),
+                now,
+            ),
         )
         self._get_conn().commit()
 
@@ -387,7 +405,14 @@ class MemoryStore:
         if not row:
             return {}
         try:
-            return json.loads(row["state_json"])
+            state = json.loads(row["state_json"])
+            if not isinstance(state, dict) or state.get("schemaVersion") != 3:
+                return {}
+            return {
+                key: value
+                for key, value in state.items()
+                if key != "schemaVersion"
+            }
         except (json.JSONDecodeError, TypeError):
             return {}
 
@@ -435,7 +460,10 @@ class MemoryStore:
                 int(usage.get("cached_tokens", 0) or 0),
                 float(usage.get("estimated_cost_usd", 0) or 0),
                 str(usage.get("model", "")),
-                json.dumps(context_budget or {}, ensure_ascii=False),
+                json.dumps(
+                    {"schemaVersion": 3, **(context_budget or {})},
+                    ensure_ascii=False,
+                ),
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
@@ -464,7 +492,13 @@ class MemoryStore:
             "recent": [
                 {
                     **{key: row[key] for key in row.keys() if key != "context_json"},
-                    "context_budget": json.loads(row["context_json"] or "{}"),
+                    "context_budget": {
+                        key: value
+                        for key, value in json.loads(
+                            row["context_json"] or "{}"
+                        ).items()
+                        if key != "schemaVersion"
+                    },
                 }
                 for row in rows
             ],
@@ -484,7 +518,10 @@ class MemoryStore:
                 int(usage.get("cached_tokens", 0) or 0),
                 float(usage.get("estimated_cost_usd", 0) or 0),
                 str(usage.get("model", "")),
-                json.dumps(context_budget or {}, ensure_ascii=False),
+                json.dumps(
+                    {"schemaVersion": 3, **(context_budget or {})},
+                    ensure_ascii=False,
+                ),
                 datetime.now(timezone.utc).isoformat(),
             ),
         )
@@ -513,7 +550,13 @@ class MemoryStore:
             "recent": [
                 {
                     **{key: row[key] for key in row.keys() if key != "context_json"},
-                    "context_budget": json.loads(row["context_json"] or "{}"),
+                    "context_budget": {
+                        key: value
+                        for key, value in json.loads(
+                            row["context_json"] or "{}"
+                        ).items()
+                        if key != "schemaVersion"
+                    },
                 }
                 for row in rows
             ],

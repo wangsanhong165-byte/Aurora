@@ -52,7 +52,7 @@ class EmotionStep(Step):
     """Analyze reply text and update character emotion state.
 
     Priority order:
-      1. LLM-provided segments (ctx.segments with tones)
+      1. LLM-provided segments (ctx.segments with emotions)
       2. Already-set ctx.emotion (from DecisionStep segment extraction)
       3. Keyword-based fallback detection
     """
@@ -60,7 +60,7 @@ class EmotionStep(Step):
     async def run(self, ctx: CharacterTurn) -> None:
         # If LLM already provided structured segments with emotion, use those
         if ctx.segments:
-            # Emotion already set by DecisionStep from segment tones
+            # Emotion already set by DecisionStep from segment emotions
             self._update_character_emotion(ctx, ctx.emotion)
             return
 

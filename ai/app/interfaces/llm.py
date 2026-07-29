@@ -47,7 +47,7 @@ class LLMResponse:
 
     Fields:
         reply:       Plain text reply (extracted from final_reply or content).
-        segments:    Per-sentence segment dicts, each with text/tone/gesture.
+        segments:    Per-sentence segment dicts with text/emotion/behavior.
         tool_calls:  Tool invocations requested by the LLM.
         messages:    Full conversation history including assistant tool_calls
                      messages (used by DecisionStep's tool-calling loop).
