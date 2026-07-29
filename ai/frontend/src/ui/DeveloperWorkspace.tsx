@@ -44,19 +44,32 @@ export function DeveloperWorkspace({
   const [errors, setErrors] = useState<Array<{ code: string; message: string }>>([])
   const [services, setServices] = useState<any[]>([])
 
+  const recordRequestError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error)
+    setErrors(items => [
+      { code: 'DIAGNOSTICS_REQUEST_FAILED', message },
+      ...items,
+    ].slice(0, 20))
+  }
+
   const refresh = () => {
+    electronWindowBridge.getStatus()
+      .then((result: any) => setServices(result?.services ?? []))
+      .catch(() => setServices([]))
+    if (!connected) return
+
     void requestCommand('get_turns', { limit: 100 }).then(data => {
       const next = Array.isArray((data as any).turns) ? (data as any).turns : []
       setTurns(next)
       if (!detail && next[0]) {
         void requestCommand('get_turn_detail', { turn_id: next[0].turnId })
           .then(turnData => setDetail((turnData as any).turn ?? null))
+          .catch(recordRequestError)
       }
-    })
-    void requestCommand('get_runtime_diagnostics', {}).then(setDiagnostics)
-    electronWindowBridge.getStatus()
-      .then((result: any) => setServices(result?.services ?? []))
-      .catch(() => setServices([]))
+    }).catch(recordRequestError)
+    void requestCommand('get_runtime_diagnostics', {})
+      .then(setDiagnostics)
+      .catch(recordRequestError)
   }
 
   useEffect(() => {
@@ -64,12 +77,8 @@ export function DeveloperWorkspace({
       setErrors(items => [error, ...items].slice(0, 20))
     )
     refresh()
-    const timer = window.setInterval(refresh, 10000)
-    return () => {
-      unsubError()
-      window.clearInterval(timer)
-    }
-  }, [])
+    return unsubError
+  }, [connected])
 
   return (
     <DrawerPanel
@@ -98,7 +107,8 @@ export function DeveloperWorkspace({
                 key={turn.turnId}
                 className={detail?.turnId === turn.turnId ? 'is-active' : ''}
                 onClick={() => void requestCommand('get_turn_detail', { turn_id: turn.turnId })
-                  .then(data => setDetail((data as any).turn ?? null))}
+                  .then(data => setDetail((data as any).turn ?? null))
+                  .catch(recordRequestError)}
               >
                 <span>{turn.phase} · {turn.origin}</span>
                 <strong>{turn.summary || '语音输入'}</strong>
