@@ -525,10 +525,13 @@ async def client_websocket_endpoint(websocket: WebSocket):
     """Serve the V2 Transport contract through the sole Runtime V3 entrypoint."""
     from app.transport.websocket.handler import RuntimeEventHandler
     from app.transport.session import WebSocketSession
+    from app.transport.v3_emitter import V3Emitter
 
     handler = RuntimeEventHandler(avatar_controller=_get_avatar_controller())
     session = WebSocketSession(websocket, handler.handle)
     handler.send_message = session.send
+    handler.send_v3 = session.send_envelope
+    handler.v3_emitter_factory = V3Emitter
     handler.enable_proactive_push()
     try:
         await session.run()

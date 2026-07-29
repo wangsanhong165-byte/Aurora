@@ -218,6 +218,10 @@ class WebSocketSession:
         """Public send — used by handler for proactive streaming messages."""
         await self._send(message)
 
+    async def send_envelope(self, envelope: EventEnvelope) -> None:
+        """Send a V3 EventEnvelope directly (no V2 wrapping)."""
+        await self._send_envelope(envelope)
+
     async def _send(self, message: OutboundMessage) -> None:
         """Serialize and send an outbound message (V3 envelope)."""
         try:
