@@ -28,7 +28,7 @@ test('main UI transition stops startup lifecycle polling', () => {
   assert.match(loadAppUrl, /statusTimer = null/)
 })
 
-test('stable Electron runtime refreshes lifecycle only on demand', () => {
+test('startup refresh is bounded and stable runtime refresh remains on demand', () => {
   const pollingLoop = sourceBetween(
     'statusTimer = setInterval',
     '// Now show the window',
@@ -38,7 +38,11 @@ test('stable Electron runtime refreshes lifecycle only on demand', () => {
     "ipcMain.handle('lifecycle:getSnapshot'",
   )
 
-  assert.doesNotMatch(pollingLoop, /pm\.refresh/)
+  // This timer exists only while the bootstrap page is visible; loadAppUrl()
+  // clears it in the preceding regression test.  Startup may refresh the
+  // cached snapshot, but must not bypass ProcessManager rate limiting.
+  assert.match(pollingLoop, /pm\.refresh\(\)/)
+  assert.doesNotMatch(pollingLoop, /pm\.refresh\(true\)/)
   assert.match(statusHandler, /pm\.refresh\(\)/)
 })
 
