@@ -76,6 +76,10 @@ class ProcessManager {
     return this._request('shutdown')
   }
 
+  shutdownAll () {
+    return this._request('shutdown')
+  }
+
   /** Full refresh: spawns a Python subprocess to query lifecycle status.
    *  Rate-limited to MIN_REFRESH_INTERVAL between calls; returns cached
    *  status if called too frequently.

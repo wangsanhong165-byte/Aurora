@@ -62,3 +62,12 @@ test('developer diagnostics refresh only on demand and handle failures', () => {
   assert.match(DEVELOPER_WORKSPACE_SOURCE, /if \(!connected\) return/)
   assert.ok(handledRequests >= 3)
 })
+
+test('explicit application quit shuts down every registered workspace service', () => {
+  const beforeQuit = sourceBetween(
+    "app.on('before-quit'",
+    '\n})',
+  )
+
+  assert.match(beforeQuit, /await pm\.shutdownAll\(\)/)
+})

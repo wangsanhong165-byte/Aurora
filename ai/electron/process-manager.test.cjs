@@ -55,3 +55,17 @@ test('forced refresh starts a new status request inside the refresh interval', a
 
   assert.equal(requestCount, 2)
 })
+
+test('application shutdown stops all registered services even when reusing a launch', async () => {
+  const manager = new ProcessManager()
+  const commands = []
+  manager.ownsLaunch = false
+  manager._request = async (command, extra) => {
+    commands.push([command, extra])
+    return { availability: 'BLOCKED', services: [], capabilities: [] }
+  }
+
+  await manager.shutdownAll()
+
+  assert.deepEqual(commands, [['shutdown', undefined]])
+})

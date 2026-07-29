@@ -366,7 +366,7 @@ app.on('before-quit', async (event) => {
   }
 
   try {
-    await pm.stopAll()
+    await pm.shutdownAll()
   } catch (err) {
     console.error('[Electron] Lifecycle shutdown failed:', err)
   } finally {
