@@ -537,6 +537,12 @@ export class CharacterController {
     )
 
     this.cleanupFns.push(
+      eventBus.on('runtime:character_intent', ({ emotion, behavior, attention, energy, intensity, durationMs, naturalVAD, contextTags }) => {
+        this.applyIntent({ emotion, behavior, attention: attention as any, energy, intensity, durationMs, naturalVAD, contextTags })
+      }),
+    )
+
+    this.cleanupFns.push(
       eventBus.on('runtime:character_state', ({ activity, emotion, intensity, motion, behavior, attention, energy, durationMs, naturalVAD, contextTags }) => {
         this.onActivityChange(activity)
         this.applyIntent({ emotion, behavior: behavior || motion, intensity, activity, attention: attention as any, energy, durationMs, naturalVAD, contextTags })

@@ -349,3 +349,14 @@ def test_character_state_machine_exists():
         content = csm_file.read_text(encoding="utf-8")
         assert "VALID_TRANSITIONS" in content, "VALID_TRANSITIONS must be defined"
         assert "idle" in content and "speaking" in content, "Activities must be defined"
+
+
+def test_character_controller_consumes_runtime_character_intents():
+    """Backend character updates must reach the Live2D character controller."""
+    client = (FRONTEND / "src" / "runtime" / "client.ts").read_text(encoding="utf-8")
+    controllers = (
+        FRONTEND / "src" / "character" / "controllers.ts"
+    ).read_text(encoding="utf-8")
+
+    assert "eventBus.emit('runtime:character_intent'" in client
+    assert "eventBus.on('runtime:character_intent'" in controllers
