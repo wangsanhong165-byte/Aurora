@@ -70,14 +70,15 @@ function createWindow() {
     },
   })
 
-  // Capture console output from the renderer process (async to avoid blocking)
-  mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+  // Keep production logs actionable without blocking Electron's main process.
+  mainWindow.webContents.on('console-message', (_event, level, message) => {
+    if (!isDev && level < 2) return
     const prefix = ['', 'LOG', 'WARN', 'ERR'][level] || 'LOG'
-    setImmediate(() => {
-      try {
-        fs.appendFileSync(CONSOLE_LOG, `[${prefix}] ${message}\n`)
-      } catch (_) {}
-    })
+    fs.appendFile(
+      CONSOLE_LOG,
+      `[${new Date().toISOString()}] [${prefix}] ${message}\n`,
+      () => {},
+    )
   })
 
   // Close → hide to tray (not quit), unless forceQuit is set

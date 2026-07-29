@@ -37,3 +37,14 @@ test('stable Electron runtime refreshes lifecycle only on demand', () => {
   assert.doesNotMatch(pollingLoop, /pm\.refresh/)
   assert.match(statusHandler, /pm\.refresh\(\)/)
 })
+
+test('renderer console capture never blocks the Electron main process', () => {
+  const consoleHandler = sourceBetween(
+    "mainWindow.webContents.on('console-message'",
+    '// Close',
+  )
+
+  assert.doesNotMatch(consoleHandler, /appendFileSync/)
+  assert.match(consoleHandler, /fs\.appendFile\(/)
+  assert.match(consoleHandler, /!isDev && level < 2/)
+})
