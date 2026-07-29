@@ -36,6 +36,7 @@ const PROD_URL = process.env.BRIDGE_URL || 'http://127.0.0.1:9528'
 // Startup timeout: force the main UI to load after this many ms,
 // even if backend services haven't reached FULL_READY yet.
 const STARTUP_TIMEOUT_MS = 15_000
+const APP_LOAD_RETRY_MS = 1_000
 
 // ── State ────────────────────────────────────────────────────────────
 
@@ -50,6 +51,8 @@ let ready = false
 let shutdownStarted = false
 let statusTimer = null
 let mainUiLoaded = false
+let mainUiLoading = false
+let appLoadRetryTimer = null
 
 // ── Window creation ──
 
@@ -95,17 +98,31 @@ function createWindow() {
   })
 }
 
-function loadAppUrl() {
-  // Load the app URL (only call AFTER services are ready)
-  if (statusTimer) {
-    clearInterval(statusTimer)
-    statusTimer = null
-  }
+async function loadAppUrl() {
+  if (mainUiLoaded || mainUiLoading || !mainWindow || mainWindow.isDestroyed()) return
+  mainUiLoading = true
   const targetUrl = isDev ? DEV_URL : PROD_URL
-  mainUiLoaded = true
-  mainWindow.loadURL(targetUrl).catch(error => {
+  return mainWindow.loadURL(targetUrl).then(() => {
+    mainUiLoaded = true
+    if (statusTimer) {
+      clearInterval(statusTimer)
+      statusTimer = null
+    }
+    if (appLoadRetryTimer) {
+      clearTimeout(appLoadRetryTimer)
+      appLoadRetryTimer = null
+    }
+    mainUiLoading = false
+  }).catch(error => {
     mainUiLoaded = false
+    mainUiLoading = false
     mainWindow.loadFile(path.join(__dirname, 'bootstrap', 'index.html'))
+    if (!shutdownStarted && !appLoadRetryTimer) {
+      appLoadRetryTimer = setTimeout(() => {
+        appLoadRetryTimer = null
+        void loadAppUrl()
+      }, APP_LOAD_RETRY_MS)
+    }
     mainWindow.webContents.send('lifecycle:error', `角色界面加载失败：${error.message}`)
   })
 }
@@ -370,6 +387,7 @@ app.on('before-quit', async (event) => {
   event.preventDefault()
   shutdownStarted = true
   if (statusTimer) clearInterval(statusTimer)
+  if (appLoadRetryTimer) clearTimeout(appLoadRetryTimer)
   if (isDev) {
     console.log('[Electron] Shutting down all services...')
   }

@@ -18,14 +18,23 @@ function sourceBetween (start, end) {
   return afterStart.split(end, 1)[0]
 }
 
-test('main UI transition stops startup lifecycle polling', () => {
+test('main UI transition stops startup lifecycle polling only after a successful load', () => {
   const loadAppUrl = sourceBetween(
-    'function loadAppUrl() {',
+    'async function loadAppUrl() {',
     '// ── System tray',
   )
 
+  assert.match(loadAppUrl, /if \(mainUiLoaded \|\| mainUiLoading/)
+  assert.match(loadAppUrl, /return mainWindow\.loadURL\(targetUrl\)\.then/)
   assert.match(loadAppUrl, /clearInterval\(statusTimer\)/)
   assert.match(loadAppUrl, /statusTimer = null/)
+  assert.ok(
+    loadAppUrl.indexOf('return mainWindow.loadURL(targetUrl)')
+      < loadAppUrl.indexOf('clearInterval(statusTimer)'),
+    'startup polling must remain active until the main UI actually loads',
+  )
+  assert.match(loadAppUrl, /setTimeout\(\(\) =>/)
+  assert.match(loadAppUrl, /loadAppUrl\(\)/)
 })
 
 test('startup refresh is bounded and stable runtime refresh remains on demand', () => {

@@ -57,7 +57,7 @@
   },
   "bridge": {
     "display_name": "角色连接", "category": "text", "startup_priority": 30,
-    "host": "127.0.0.1", "port": 9528, "health": null, "timeout": 15,
+    "host": "127.0.0.1", "port": 9528, "health": null, "timeout": 30,
     "depends_on": ["llm", "memory"], "profiles": ["web", "backend", "electron", "full"],
     "command": {"module": "app.bridge.server", "args": []}
   },

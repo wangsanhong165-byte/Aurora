@@ -41,6 +41,15 @@ def test_manifest_declares_memory_safe_gpu_service_order():
     assert ordered.index("asr") < ordered.index("gsvi") < ordered.index("tts")
 
 
+def test_bridge_timeout_covers_character_runtime_initialization():
+    import json
+
+    manifest = json.loads(
+        (ROOT / "config/services.json").read_text(encoding="utf-8")
+    )
+    assert manifest["bridge"]["timeout"] >= 30
+
+
 def test_python_supervisor_owns_lifecycle_core():
     supervisor = (ROOT / "app/lifecycle/supervisor.py").read_text(encoding="utf-8")
     assert "LifecycleOrchestrator" in supervisor
