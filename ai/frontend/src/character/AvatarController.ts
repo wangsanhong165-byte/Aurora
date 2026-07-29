@@ -127,29 +127,29 @@ export class AvatarController {
   /** Send a user control command to the server. */
   sendRequest(target: string, name: string, action: string): void {
     eventBus.emit('avatar:send', {
-      type: 'avatar_request',
-      target,
-      name,
-      action,
-      source: 'user',
-      priority: 100,
-    } as any)
+      eventType: 'character.control.requested',
+      payload: {
+        action,
+        requestId: `request_${crypto.randomUUID()}`,
+        params: { target, name, source: 'user', priority: 100 },
+      },
+    })
   }
 
   /** Accept an AI suggestion. */
   acceptSuggestion(suggestionId: string): void {
     eventBus.emit('avatar:send', {
-      type: 'avatar_accept',
-      suggestion_id: suggestionId,
-    } as any)
+      eventType: 'character.suggestion.accepted',
+      payload: { suggestionId },
+    })
   }
 
   /** Reject an AI suggestion. */
   rejectSuggestion(suggestionId: string): void {
     eventBus.emit('avatar:send', {
-      type: 'avatar_reject',
-      suggestion_id: suggestionId,
-    } as any)
+      eventType: 'character.suggestion.rejected',
+      payload: { suggestionId, reason: 'user' },
+    })
   }
 
   /** Get current avatar state. */

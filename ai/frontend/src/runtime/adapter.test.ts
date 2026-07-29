@@ -1,0 +1,119 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import { eventBus } from '../core/event-bus.ts'
+import { RuntimeEventAdapter } from './adapter.ts'
+import type { EventPayloadMap, EventType, RuntimeEvent } from './event-types.ts'
+
+let sequence = 0
+function runtimeEvent<K extends EventType>(
+  eventType: K,
+  payload: EventPayloadMap[K],
+  turnId: string | null,
+): RuntimeEvent {
+  sequence += 1
+  return {
+    protocolVersion: '3.0',
+    eventId: `event-${sequence}`,
+    eventType,
+    sessionId: 'session-1',
+    turnId,
+    sequence,
+    source: 'runtime',
+    timestamp: 1,
+    payload,
+  } as RuntimeEvent
+}
+
+test('adapter routes V3 turn, character and audio events without V2 payload recovery', () => {
+  const adapter = new RuntimeEventAdapter()
+  const received: string[] = []
+  const unsubs = [
+    eventBus.on('runtime:turn.started', () => received.push('turn')),
+    eventBus.on('runtime:character.intent', () => received.push('intent')),
+    eventBus.on('audio:play', () => received.push('audio')),
+  ]
+
+  adapter.dispatch(runtimeEvent(
+    'turn.started',
+    { origin: 'user', inputMode: 'text' },
+    'turn-1',
+  ))
+  adapter.dispatch(runtimeEvent(
+    'character.intent',
+    {
+      emotion: 'happy',
+      behavior: 'greet',
+      attention: 'user',
+      energy: 0.8,
+      durationMs: null,
+      naturalVAD: null,
+      contextTags: [],
+    },
+    'turn-1',
+  ))
+  adapter.dispatch(runtimeEvent(
+    'tts.audio',
+    { data: 'AAAA', format: 'wav', audioSequence: 0, volumes: [] },
+    'turn-1',
+  ))
+
+  assert.deepEqual(received, ['turn', 'intent', 'audio'])
+  unsubs.forEach(unsub => unsub())
+})
+
+test('adapter rejects stale assistant, character and audio events after a new turn starts', () => {
+  const adapter = new RuntimeEventAdapter()
+  const received: string[] = []
+  const unsubs = [
+    eventBus.on('runtime:message', () => received.push('message')),
+    eventBus.on('runtime:character.intent', () => received.push('intent')),
+    eventBus.on('audio:play', () => received.push('audio')),
+  ]
+
+  adapter.dispatch(runtimeEvent(
+    'turn.started',
+    { origin: 'user', inputMode: 'text' },
+    'turn-new',
+  ))
+  adapter.dispatch(runtimeEvent(
+    'assistant.text.completed',
+    { text: 'stale', reasoning: '', segments: [] },
+    'turn-old',
+  ))
+  adapter.dispatch(runtimeEvent(
+    'character.intent',
+    {
+      emotion: 'sad',
+      behavior: 'idle',
+      attention: 'user',
+      energy: 0.2,
+      durationMs: null,
+      naturalVAD: null,
+      contextTags: [],
+    },
+    'turn-old',
+  ))
+  adapter.dispatch(runtimeEvent(
+    'tts.audio',
+    { data: 'AAAA', format: 'wav', audioSequence: 0, volumes: [] },
+    'turn-old',
+  ))
+
+  assert.deepEqual(received, [])
+  unsubs.forEach(unsub => unsub())
+})
+
+test('cancel stops current audio generation', () => {
+  const adapter = new RuntimeEventAdapter()
+  let stops = 0
+  const unsub = eventBus.on('audio:stop', () => { stops += 1 })
+  adapter.dispatch(runtimeEvent(
+    'turn.started',
+    { origin: 'user', inputMode: 'text' },
+    'turn-1',
+  ))
+  adapter.dispatch(runtimeEvent('tts.cancelled', { reason: 'interrupted' }, 'turn-1'))
+  assert.equal(stops, 1)
+  unsub()
+})

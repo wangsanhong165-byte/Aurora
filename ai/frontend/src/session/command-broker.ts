@@ -1,8 +1,7 @@
 export type CommandEnvelope = {
-  type: 'command'
   action: string
   params: Record<string, unknown>
-  request_id: string
+  requestId: string
 }
 
 type Pending = {
@@ -33,7 +32,7 @@ export class CommandBroker {
         reject(new Error(`command timed out: ${action}`))
       }, this.timeoutMs)
       this.pending.set(requestId, { resolve, reject, timer })
-      this.send({ type: 'command', action, params, request_id: requestId })
+      this.send({ action, params, requestId })
     })
   }
 

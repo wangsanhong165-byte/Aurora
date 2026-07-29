@@ -40,19 +40,27 @@ export interface EventMap {
   'runtime:error': { code: string; message: string; requestId?: string }
   'runtime:message': { text: string; reasoning?: string; segments?: Array<{ text: string; emotion: string; behavior: string }>; diagnostics?: Record<string, unknown> }
   'runtime:chunk': { text: string; delta: string }
-  'runtime:tts_start': { format: string; sequence: number }
-  'runtime:tts_end': { reason: string }
-  'runtime:command_response': { action: string; data: Record<string, unknown>; requestId?: string }
+  'runtime:tts.started': { turnId: string; format: string; sequence: number }
+  'runtime:tts.completed': { turnId: string; reason: string }
+  'runtime:management.result': { action: string; data: Record<string, unknown>; requestId: string }
+  'runtime:management.failed': { action: string; code: string; message: string; requestId: string }
   'runtime:session': { status: string; config: Record<string, unknown> }
-  'runtime:user_message': { text: string }
-  'runtime:permission_requested': {
+  'runtime:asr.result': { turnId: string; text: string }
+  'runtime:permission.requested': {
+    turnId: string
     requestId: string
     capability: string
     args: Record<string, unknown>
     risk: string
   }
-  'runtime:character_intent': { emotion: string; behavior: string; attention: string; energy: number; intensity: number; durationMs?: number; naturalVAD?: { valence: number; arousal: number; dominance: number }; contextTags?: string[] }
-  'runtime:telemetry': { events: Array<Record<string, unknown>> }
+  'runtime:character.intent': { turnId: string; emotion: string; behavior: string; attention: string; energy: number; intensity: number; durationMs?: number; naturalVAD?: { valence: number; arousal: number; dominance: number }; contextTags?: string[] }
+  'runtime:telemetry.batch': { events: Array<Record<string, unknown>> }
+  'runtime:turn.started': { turnId: string; inputMode: 'text' | 'audio' | 'initiative'; origin: 'user' | 'initiative' | 'tool' | 'system' }
+  'runtime:turn.completed': { turnId: string; reason: string }
+  'runtime:turn.failed': { turnId: string; code: string; message: string }
+  'runtime:turn.cancelled': { turnId: string; reason: string }
+  'runtime:service.status': { service: string; state: string; detail: string }
+  'runtime:configuration.updated': { config: Record<string, unknown> }
   'character:runtime-telemetry': {
     type: string
     turnId?: string
@@ -72,7 +80,19 @@ export interface EventMap {
   'avatar:motion_update': { name: string; controller: string; priority: number; loop: boolean }
   'avatar:state_restored': { components: Record<string, boolean>; expression: string; intensity: number; motion: string }
   'avatar:suggestion': { target: string; name: string; action: string; reason: string; suggestionId: string }
-  'avatar:send': Record<string, unknown>
+  'avatar:send':
+    | {
+        eventType: 'character.control.requested'
+        payload: { action: string; requestId: string; params: Record<string, unknown> }
+      }
+    | {
+        eventType: 'character.suggestion.accepted'
+        payload: { suggestionId: string }
+      }
+    | {
+        eventType: 'character.suggestion.rejected'
+        payload: { suggestionId: string; reason: string }
+      }
 }
 
 export type EventName = keyof EventMap

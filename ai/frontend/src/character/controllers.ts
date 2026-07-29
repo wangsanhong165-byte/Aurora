@@ -485,12 +485,6 @@ export class CharacterController {
     )
 
     this.cleanupFns.push(
-      eventBus.on('character:activity', ({ activity }) => {
-        this.onActivityChange(activity)
-      }),
-    )
-
-    this.cleanupFns.push(
       eventBus.on('audio:stop', () => {
         this.audioPlaybackActive = false
         this.audioAnalyzer.reset()
@@ -529,16 +523,38 @@ export class CharacterController {
     )
 
     this.cleanupFns.push(
-      eventBus.on('runtime:user_message', ({ text: _text }) => {
-        this.onActivityChange('listening')
-        this.applyIntent({ emotion: 'neutral', behavior: 'listen', intensity: 0.35, attention: 'user', energy: 0.25 })
-        setTimeout(() => { if (this.stateMachine.activity === 'listening') this.onActivityChange('thinking') }, 350)
+      eventBus.on('runtime:turn.started', ({ turnId, inputMode }) => {
+        this.setTurnId(turnId)
+        this.onActivityChange(inputMode === 'audio' ? 'listening' : 'thinking', turnId)
       }),
     )
 
     this.cleanupFns.push(
-      eventBus.on('runtime:character_intent', ({ emotion, behavior, attention, energy, intensity, durationMs, naturalVAD, contextTags }) => {
+      eventBus.on('runtime:asr.result', ({ turnId, text: _text }) => {
+        if (!this.stateMachine.isCurrentTurn(turnId)) return
+        this.applyIntent({ emotion: 'neutral', behavior: 'listen', intensity: 0.35, attention: 'user', energy: 0.25 })
+        this.onActivityChange('thinking', turnId)
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('runtime:character.intent', ({ turnId, emotion, behavior, attention, energy, intensity, durationMs, naturalVAD, contextTags }) => {
+        if (!this.stateMachine.isCurrentTurn(turnId)) return
         this.applyIntent({ emotion, behavior, attention: attention as any, energy, intensity, durationMs, naturalVAD, contextTags })
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('runtime:turn.completed', ({ turnId }) => {
+        if (this.stateMachine.isCurrentTurn(turnId) && !this.audioPlaybackActive) {
+          this.onActivityChange('idle', turnId)
+        }
+      }),
+      eventBus.on('runtime:turn.failed', ({ turnId }) => {
+        if (this.stateMachine.isCurrentTurn(turnId)) this.onActivityChange('idle', turnId)
+      }),
+      eventBus.on('runtime:turn.cancelled', ({ turnId }) => {
+        if (this.stateMachine.isCurrentTurn(turnId)) this.onActivityChange('idle', turnId)
       }),
     )
   }

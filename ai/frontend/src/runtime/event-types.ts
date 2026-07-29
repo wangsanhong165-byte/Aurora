@@ -176,3 +176,7 @@ export type RuntimeEventEnvelope<K extends EventType = EventType> = {
   timestamp: number
   payload: EventPayloadMap[K]
 }
+
+export type RuntimeEvent = {
+  [K in EventType]: RuntimeEventEnvelope<K>
+}[EventType]

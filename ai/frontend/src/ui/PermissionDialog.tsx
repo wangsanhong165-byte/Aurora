@@ -22,7 +22,7 @@ export function PermissionDialog() {
   const [error, setError] = useState('')
   const current = queue[0]
 
-  useEffect(() => eventBus.on('runtime:permission_requested', request => {
+  useEffect(() => eventBus.on('runtime:permission.requested', request => {
     setQueue(items => [...items, request])
   }), [])
 

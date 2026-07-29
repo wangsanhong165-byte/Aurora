@@ -64,7 +64,7 @@ export function DesktopSessionWorkspace() {
     })
 
     // character state (emotion/intensity) driven by backend CharacterUpdate
-    const unsubIntent = eventBus.on('runtime:character_intent', ({ emotion, intensity, behavior }) => {
+    const unsubIntent = eventBus.on('runtime:character.intent', ({ emotion, intensity, behavior }) => {
       actions.setCharacter(emotion, intensity, behavior || emotion)
     })
 
@@ -75,7 +75,6 @@ export function DesktopSessionWorkspace() {
     })
 
     const unsub4 = eventBus.on('runtime:chunk', ({ text }) => {
-      actions.setActivity('speaking')
       actions.updateLastAssistant(text)
       setSubtitleText(text)
     })
@@ -90,26 +89,24 @@ export function DesktopSessionWorkspace() {
       actions.setAudioPlaying(false)
     })
 
-    const unsub7 = eventBus.on('runtime:tts_start', () => {
-      actions.setActivity('speaking')
+    const unsub7 = eventBus.on('runtime:tts.started', () => {
       actions.setAudioPlaying(true)
     })
 
-    const unsub8 = eventBus.on('runtime:tts_end', () => {})
+    const unsub8 = eventBus.on('runtime:tts.completed', () => {})
 
-    const unsub11 = eventBus.on('runtime:user_message', ({ text }) => {
+    const unsub11 = eventBus.on('runtime:asr.result', ({ text }) => {
       if (!text) return
       actions.addMessage({ id: nextId(), role: 'user', text, timestamp: Date.now() })
       actions.addMessage({ id: nextId(), role: 'assistant', text: '', timestamp: Date.now() })
     })
 
     const unsub10 = eventBus.on('runtime:error', ({ message }) => {
-      actions.setActivity('idle')
       actions.addMessage({ id: nextId(), role: 'system', text: `[Error] ${message}`, timestamp: Date.now() })
     })
 
     // Handle command responses (e.g., get_histories)
-    const unsub12 = eventBus.on('runtime:command_response', ({ action, data }) => {
+    const unsub12 = eventBus.on('runtime:management.result', ({ action, data }) => {
       if (action === 'get_histories' && Array.isArray((data as any)?.histories)) {
         const h = (data as any).histories as HistoryEntry[]
         setHistories(h)
@@ -229,7 +226,6 @@ export function DesktopSessionWorkspace() {
     if (!client) return
     // Ensure AudioContext is ready (browser autoplay policy)
     audio?.resume()
-    actions.setActivity('thinking')
     actions.setStatusMessage('Processing...')
     actions.addMessage({ id: nextId(), role: 'user', text, timestamp: Date.now() })
     actions.addMessage({ id: nextId(), role: 'assistant', text: '', timestamp: Date.now() })
@@ -241,7 +237,6 @@ export function DesktopSessionWorkspace() {
     const audio = audioRef.current
     audio?.stop()
     client?.sendInterrupt()
-    actions.setActivity('idle')
     actions.setStatusMessage('')
   }, [])
 

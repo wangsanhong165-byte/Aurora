@@ -35,13 +35,13 @@ export function validateVersion(version: unknown): asserts version is '3.0' {
 export class SequenceTracker {
   private lastSequence = new Map<string, number>()
 
-  accept(sessionId: string, sequence: number): boolean {
+  classify(sessionId: string, sequence: number): 'accepted' | 'gap' | 'out_of_order' {
     const last = this.lastSequence.get(sessionId) ?? 0
-    if (sequence > last) {
+    if (sequence === last + 1) {
       this.lastSequence.set(sessionId, sequence)
-      return true
+      return 'accepted'
     }
-    return false
+    return sequence <= last ? 'out_of_order' : 'gap'
   }
 
   reset(sessionId?: string): void {

@@ -2,7 +2,7 @@ import {
   EVENT_TYPES,
   type EventSource,
   type EventType,
-  type RuntimeEventEnvelope,
+  type RuntimeEvent,
 } from './event-types.ts'
 import { validateVersion } from './envelope.ts'
 
@@ -216,7 +216,7 @@ function validatePayload(eventType: EventType, payload: unknown): void {
   }
 }
 
-export function parseRuntimeEvent(raw: unknown): RuntimeEventEnvelope {
+export function parseRuntimeEvent(raw: unknown): RuntimeEvent {
   if (!isRecord(raw)) throw new Error('event envelope must be an object')
   for (const field of ENVELOPE_FIELDS) {
     if (!(field in raw)) throw new Error(`${field} is required`)
@@ -239,5 +239,5 @@ export function parseRuntimeEvent(raw: unknown): RuntimeEventEnvelope {
   if (typeof raw.timestamp !== 'number' || raw.timestamp <= 0) throw new Error('timestamp must be > 0')
   validatePayload(eventType, raw.payload)
 
-  return raw as RuntimeEventEnvelope
+  return raw as RuntimeEvent
 }

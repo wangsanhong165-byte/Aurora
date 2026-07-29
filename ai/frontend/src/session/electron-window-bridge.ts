@@ -10,6 +10,10 @@ declare global {
       setPetMode: (enabled: boolean) => void
       getSettings: () => Record<string, unknown>
       getStatus?: () => Promise<{ services?: Array<Record<string, unknown>> }>
+      onLifecycleSnapshot?: (callback: (snapshot: {
+        availability?: string
+        services?: Array<Record<string, unknown>>
+      }) => void) => () => void
     }
   }
 }

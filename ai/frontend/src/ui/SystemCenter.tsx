@@ -66,7 +66,7 @@ export function SystemCenter({
   }
 
   useEffect(() => {
-    const unsub = eventBus.on('runtime:command_response', ({ action, data }) => {
+    const unsub = eventBus.on('runtime:management.result', ({ action, data }) => {
       if (action === 'get_memories') {
         const items = Array.isArray((data as any)?.memories) ? (data as any).memories : []
         setMemories(items)

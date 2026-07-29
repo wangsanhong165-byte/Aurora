@@ -74,7 +74,7 @@ export function DebugPanel() {
       setState(s => ({ ...s, sessionConfig: config }))
     }))
 
-    unsubs.push(eventBus.on('runtime:character_intent', ({ emotion, behavior }) => {
+    unsubs.push(eventBus.on('runtime:character.intent', ({ emotion, behavior }) => {
       const now = new Date().toLocaleTimeString()
       setState(s => ({
         ...s,
@@ -84,11 +84,11 @@ export function DebugPanel() {
       }))
     }))
 
-    unsubs.push(eventBus.on('runtime:tts_start', () => {
+    unsubs.push(eventBus.on('runtime:tts.started', () => {
       setState(s => ({ ...s, ttsState: 'playing', audioQueueLen: s.audioQueueLen + 1 }))
     }))
 
-    unsubs.push(eventBus.on('runtime:tts_end', () => {
+    unsubs.push(eventBus.on('runtime:tts.completed', () => {
       setState(s => ({ ...s, ttsState: 'idle', audioQueueLen: Math.max(0, s.audioQueueLen - 1) }))
     }))
 
@@ -104,29 +104,24 @@ export function DebugPanel() {
       setState(s => ({ ...s, performanceDebug: JSON.stringify(debug, null, 2) }))
     }))
 
-    unsubs.push(eventBus.on('runtime:character_intent', (intent) => {
+    unsubs.push(eventBus.on('runtime:character.intent', (intent) => {
       setState(s => ({ ...s, intent: JSON.stringify(intent) }))
     }))
 
-    unsubs.push(eventBus.on('runtime:message', ({ diagnostics }) => {
-      if (diagnostics) {
-        setState(s => ({ ...s, llmDiagnostics: JSON.stringify(diagnostics, null, 2) }))
-      }
-    }))
-
     // Telemetry events from TurnTelemetry
-    unsubs.push(eventBus.on('runtime:telemetry', ({ events }) => {
+    unsubs.push(eventBus.on('runtime:telemetry.batch', ({ events }) => {
       if (!events || events.length === 0) return
       const last = events[events.length - 1]
-      const turnId = String(last?.turn_id ?? '')
+      const lastData = (last?.data ?? {}) as Record<string, unknown>
+      const turnId = String(lastData.turnId ?? '')
       const stages = events
-        .filter((e: any) => e.duration_ms != null)
-        .map((e: any) => `${e.stage}=${e.duration_ms.toFixed(1)}ms${e.status !== 'ok' ? ' ❌' : ''}`)
+        .filter((e: any) => e.data?.durationMs != null)
+        .map((e: any) => `${e.name}=${Number(e.data.durationMs).toFixed(1)}ms`)
         .join(' → ')
       setState(s => ({
         ...s,
         telemetryEvents: stages,
-        telemetryLastTurn: `${turnId.slice(0, 12)} | ${events.length} events${last?.status === 'failed' ? ' ❌' : ''}`,
+        telemetryLastTurn: `${turnId.slice(0, 12)} | ${events.length} events`,
       }))
     }))
 

@@ -9,9 +9,9 @@ test('resolves concurrent commands with the matching request id', async () => {
   const first = broker.request('get_turns', {})
   const second = broker.request('get_turns', {})
 
-  assert.notEqual(sent[0].request_id, sent[1].request_id)
-  broker.resolve(String(sent[1].request_id), { value: 2 })
-  broker.resolve(String(sent[0].request_id), { value: 1 })
+  assert.notEqual(sent[0].requestId, sent[1].requestId)
+  broker.resolve(String(sent[1].requestId), { value: 2 })
+  broker.resolve(String(sent[0].requestId), { value: 1 })
 
   assert.deepEqual(await first, { value: 1 })
   assert.deepEqual(await second, { value: 2 })
