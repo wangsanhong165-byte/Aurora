@@ -308,7 +308,16 @@ app.whenReady().then(async () => {
 
   // Poll only the in-memory startup snapshot. loadAppUrl() clears this timer,
   // so the stable renderer never triggers background lifecycle subprocesses.
+  // Periodically refresh from the orchestrator (rate-limited to 15s internally)
+  // so that services which finish after startAll's initial ack are picked up.
+  let statusPollCounter = 0
   statusTimer = setInterval(() => {
+    statusPollCounter++
+    // Refresh the orchestrator snapshot every 30 polls (15s @ 500ms each,
+    // matches MIN_REFRESH_INTERVAL so the rate-limit never kicks in).
+    if (statusPollCounter % 30 === 0) {
+      pm.refresh()
+    }
     const status = pm.getStatus()
     if (mainWindow?.isDestroyed?.()) return
     mainWindow?.webContents.send('lifecycle:snapshot', status)

@@ -68,7 +68,20 @@ class ProcessManager {
     })
   }
 
-  startAll () { return this._request('start', { profile: this.profile }) }
+  startAll () {
+    // Fire-and-forget: the lifecycle orchestrator's start command is acknowledged
+    // in the background. The cached _status updates via refresh() when services
+    // become ready, and the Electron statusTimer polls it periodically.
+    // The 30s _request timeout no longer blocks the main window — if the
+    // orchestrator finishes after that, refresh() picks up the new state.
+    this._request('start', { profile: this.profile })
+      .catch(() => {
+        // Ignore timeout: services may still be loading in the orchestrator.
+        // The timeout only means the subprocess was killed, not the services.
+        // refresh() later picks up the true state once the orchestrator finishes.
+      })
+    return Promise.resolve(this._status)
+  }
   restartAll () { return this._request('restart', { profile: this.profile }) }
   async stopAll () {
     if (!this.ownsLaunch) return this._status
