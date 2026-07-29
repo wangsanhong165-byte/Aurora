@@ -528,7 +528,7 @@ async def client_websocket_endpoint(websocket: WebSocket):
     from app.transport.v3_emitter import V3Emitter
 
     handler = RuntimeEventHandler(avatar_controller=_get_avatar_controller())
-    session = WebSocketSession(websocket, handler.handle)
+    session = WebSocketSession(websocket, handler.handle_event)
     handler.send_message = session.send
     handler.send_v3 = session.send_envelope
     handler.v3_emitter_factory = V3Emitter

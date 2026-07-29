@@ -16,6 +16,17 @@ class _Disconnect(Exception):
 class _WebSocketProbe:
     def __init__(self):
         self.messages: list[dict] = []
+        self.incoming = [json.dumps({
+            "protocolVersion": "3.0",
+            "eventId": "event-open",
+            "eventType": "session.open",
+            "sessionId": "session-test",
+            "turnId": None,
+            "sequence": 1,
+            "source": "frontend",
+            "timestamp": 1.0,
+            "payload": {"capabilities": ["text"]},
+        })]
 
     async def accept(self):
         return None
@@ -24,6 +35,8 @@ class _WebSocketProbe:
         self.messages.append(json.loads(payload))
 
     async def receive_text(self):
+        if self.incoming:
+            return self.incoming.pop(0)
         from fastapi import WebSocketDisconnect
 
         raise WebSocketDisconnect()

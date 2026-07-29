@@ -41,6 +41,8 @@ class TurnInput:
     text: str = ""
     audio: bytes = b""
     sample_rate: int = 16000
+    session_id: str = ""
+    turn_id: str = ""
     origin: TurnOrigin = TurnOrigin.USER
     screen_context: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)

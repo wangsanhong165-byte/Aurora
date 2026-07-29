@@ -26,6 +26,24 @@ class ManagementHandler:
     def __init__(self):
         self._manager = get_manager()
 
+    async def handle(
+        self,
+        action: str,
+        params: dict,
+        request_id: str = "",
+    ) -> list[OutboundMessage]:
+        """Typed V3 ingress used by RuntimeEventHandler.
+
+        Outbound conversion remains here until the V3-3 emitter phase.
+        """
+        responses = await self.handle_command(
+            Command(action=action, params=params, request_id=request_id)
+        )
+        for response in responses:
+            if hasattr(response, "request_id"):
+                response.request_id = request_id
+        return responses
+
     async def handle_command(self, message: Command) -> list[OutboundMessage]:
         """Route a Command message to RuntimeManager and return protocol response."""
         action = message.action

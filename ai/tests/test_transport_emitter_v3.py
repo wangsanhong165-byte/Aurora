@@ -2,8 +2,8 @@ import asyncio
 
 from app.runtime.character_turn import CharacterTurn, TurnInput, TurnPhase
 from app.transport.emitter import TransportEmitter
-from app.transport.protocol import TextInput
 from app.transport.websocket.handler import RuntimeEventHandler
+from contracts.v3.registry import EventRegistry
 
 
 def test_success_lifecycle_has_one_canonical_order():
@@ -52,21 +52,41 @@ def test_websocket_pushes_processing_before_runtime_work_starts():
 
     class RuntimeProbe:
         async def handle_turn(self, turn_input, **kwargs):
-            assert [message.type for message in pushed] == ["runtime_status"]
-            assert pushed[0].state == "processing"
+            assert [message.event_type for message in pushed] == ["runtime.status"]
+            assert pushed[0].payload["state"] == "processing"
             turn = CharacterTurn(input=turn_input)
             turn.transition_to(TurnPhase.PROCESSING)
             turn.reply_text = "done"
             turn.transition_to(TurnPhase.COMPLETED)
             return turn
 
-    handler = RuntimeEventHandler(runtime=RuntimeProbe(), send_message=push)
-    responses = asyncio.run(handler.handle(TextInput(text="hello")))
+    handler = RuntimeEventHandler(runtime=RuntimeProbe())
+    handler.send_v3 = push
+    incoming = EventRegistry.parse({
+        "protocolVersion": "3.0",
+        "eventId": "event-1",
+        "eventType": "user.text",
+        "sessionId": "session-1",
+        "turnId": "turn-1",
+        "sequence": 1,
+        "source": "frontend",
+        "timestamp": 1.0,
+        "payload": {"text": "hello"},
+    })
 
-    assert responses == []
-    assert [message.type for message in pushed] == [
-        "runtime_status",
-        "assistant_message",
-        "character_update",
-        "runtime_status",
+    async def scenario():
+        responses = await handler.handle_event(incoming)
+        assert responses == []
+        assert handler._active_task is not None
+        await handler._active_task
+
+    asyncio.run(scenario())
+
+    assert [message.event_type for message in pushed] == [
+        "runtime.status",
+        "turn.started",
+        "assistant.text.started",
+        "assistant.text.completed",
+        "character.intent",
+        "turn.completed",
     ]

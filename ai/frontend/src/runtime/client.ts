@@ -2,7 +2,8 @@
 
 import { eventBus } from '../core/event-bus'
 import type { OutboundMessage } from './protocol'
-import { validateVersion, SequenceTracker } from './envelope'
+import { createEnvelope, validateVersion, SequenceTracker } from './envelope'
+import type { EventPayloadMap, EventType } from './event-types'
 import { v2ToV3Envelope, type TransitionalEnvelope } from './compat'
 
 export class RuntimeClient {
@@ -20,6 +21,8 @@ export class RuntimeClient {
   private sessionId = ''
   private sequenceTracker = new SequenceTracker()
   private sequenceCounter = 0
+  private currentTurnId: string | null = null
+  private currentAudioTurnId: string | null = null
 
   constructor(url: string) {
     this.url = url
@@ -32,7 +35,7 @@ export class RuntimeClient {
     // Listen for avatar send requests from AvatarController
     if (!this._unsubAvatarSend) {
       this._unsubAvatarSend = eventBus.on('avatar:send', (data) => {
-        this.sendViaEnvelope(data as Record<string, unknown>)
+        this.sendAvatarEvent(data)
       })
     }
 
@@ -48,6 +51,11 @@ export class RuntimeClient {
     this.ws.onopen = () => {
       this.reconnectAttempts = 0
       this.sequenceTracker.reset()
+      this.sequenceCounter = 0
+      this.sessionId = `ses_${crypto.randomUUID()}`
+      this.currentTurnId = null
+      this.currentAudioTurnId = null
+      this.sendEvent('session.open', { capabilities: ['text', 'audio', 'character', 'tts'] }, null)
       eventBus.emit('connection:change', { connected: true })
       this.startPing()
     }
@@ -95,47 +103,111 @@ export class RuntimeClient {
   }
 
   send(msg: OutboundMessage): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      // Wrap in V3 envelope with V2-type content for backward compat
-      this.sendViaEnvelope(msg as unknown as Record<string, unknown>)
+    switch (msg.type) {
+      case 'text_input':
+        this.sendText(msg.text)
+        break
+      case 'audio_input':
+        this.sendAudioSamples(Float32Array.from(msg.samples), msg.sample_rate)
+        break
+      case 'audio_end':
+        this.sendAudioEnd()
+        break
+      case 'interrupt':
+        this.sendInterrupt()
+        break
+      case 'command':
+        this.sendCommand(msg.action, msg.params, msg.request_id)
+        break
+      case 'ping':
+        this.sendEvent('session.ping', { nonce: '' }, null)
+        break
+      case 'avatar_request':
+      case 'avatar_accept':
+      case 'avatar_reject':
+        this.sendAvatarEvent(msg as unknown as Record<string, unknown>)
+        break
     }
   }
 
-  private sendViaEnvelope(data: Record<string, unknown>): void {
+  private sendEvent<K extends EventType>(
+    eventType: K,
+    payload: EventPayloadMap[K],
+    turnId: string | null,
+  ): void {
     if (this.ws?.readyState !== WebSocket.OPEN) return
     this.sequenceCounter++
-    const envelope: TransitionalEnvelope = {
-      protocolVersion: '3.0',
-      eventId: `evt_${crypto.randomUUID()}`,
-      eventType: String(data.type ?? ''),
+    const envelope = createEnvelope(eventType, payload, {
       sessionId: this.sessionId,
-      turnId: null,
+      turnId,
       sequence: this.sequenceCounter,
-      timestamp: Date.now() / 1000,
       source: 'frontend',
-      payload: data,
-    }
+    })
     this.ws.send(JSON.stringify(envelope))
   }
 
   sendText(text: string): void {
-    this.send({ type: 'text_input', text } as unknown as OutboundMessage)
+    const turnId = `turn_${crypto.randomUUID()}`
+    this.currentTurnId = turnId
+    this.sendEvent('user.text', { text }, turnId)
   }
 
   sendInterrupt(): void {
-    this.send({ type: 'interrupt' } as unknown as OutboundMessage)
+    const turnId = this.currentAudioTurnId ?? this.currentTurnId
+    if (!turnId) return
+    this.sendEvent('turn.cancelled', { reason: 'user_interrupt' }, turnId)
   }
 
   sendCommand(action: string, params: Record<string, unknown> = {}, requestId?: string): void {
-    this.send({ type: 'command', action, params, request_id: requestId } as unknown as OutboundMessage)
+    this.sendEvent('management.requested', {
+      action,
+      params: params as EventPayloadMap['management.requested']['params'],
+      requestId: requestId ?? `request_${crypto.randomUUID()}`,
+    }, null)
   }
 
   sendAudioSamples(samples: Float32Array, sampleRate: number): void {
-    this.send({ type: 'audio_input', samples: Array.from(samples), sample_rate: sampleRate } as unknown as OutboundMessage)
+    if (!this.currentAudioTurnId) {
+      this.currentAudioTurnId = `turn_${crypto.randomUUID()}`
+      this.currentTurnId = this.currentAudioTurnId
+      this.sendEvent('user.audio.started', {
+        sampleRate,
+        channels: 1,
+        format: 'pcm_f32',
+      }, this.currentAudioTurnId)
+    }
+    this.sendEvent('user.audio.chunk', { samples: Array.from(samples) }, this.currentAudioTurnId)
   }
 
   sendAudioEnd(): void {
-    this.send({ type: 'audio_end' } as unknown as OutboundMessage)
+    if (!this.currentAudioTurnId) return
+    this.sendEvent('user.audio.completed', {}, this.currentAudioTurnId)
+    this.currentAudioTurnId = null
+  }
+
+  private sendAvatarEvent(data: Record<string, unknown>): void {
+    const messageType = String(data.type ?? '')
+    if (messageType === 'avatar_request') {
+      this.sendEvent('character.control.requested', {
+        action: String(data.action ?? ''),
+        requestId: `request_${crypto.randomUUID()}`,
+        params: {
+          target: String(data.target ?? ''),
+          name: String(data.name ?? ''),
+          source: String(data.source ?? 'user'),
+          priority: Number(data.priority ?? 100),
+        },
+      }, this.currentTurnId)
+    } else if (messageType === 'avatar_accept') {
+      this.sendEvent('character.suggestion.accepted', {
+        suggestionId: String(data.suggestion_id ?? ''),
+      }, null)
+    } else if (messageType === 'avatar_reject') {
+      this.sendEvent('character.suggestion.rejected', {
+        suggestionId: String(data.suggestion_id ?? ''),
+        reason: 'user',
+      }, null)
+    }
   }
 
   // ── V3 envelope dispatch ──
@@ -240,6 +312,16 @@ export class RuntimeClient {
 
       case 'session.opened':
         eventBus.emit('connection:change', { connected: true })
+        break
+
+      case 'turn.started':
+        if (_turnId) this.currentTurnId = _turnId
+        break
+
+      case 'turn.completed':
+      case 'turn.failed':
+      case 'turn.cancelled':
+        if (!_turnId || this.currentTurnId === _turnId) this.currentTurnId = null
         break
 
       // ── Legacy V2 event types (compatibility) ──
@@ -401,7 +483,7 @@ export class RuntimeClient {
 
       // Keepalive
       case 'session.ping':
-        this.sendViaEnvelope({ type: 'session.pong', nonce: payload.nonce ?? '' })
+        this.sendEvent('session.pong', { nonce: String(payload.nonce ?? '') }, null)
         break
 
       case 'session.pong':
@@ -424,7 +506,7 @@ export class RuntimeClient {
         return
       }
       this.pongPending = true
-      this.sendViaEnvelope({ type: 'session.ping', nonce: '' })
+      this.sendEvent('session.ping', { nonce: '' }, null)
     }, 30000)
   }
 

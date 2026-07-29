@@ -45,6 +45,22 @@ def test_character_turn_records_structured_error():
     )
 
 
+def test_turn_input_carries_transport_identity_into_character_turn():
+    turn_input = TurnInput(
+        text="hello",
+        session_id="session-1",
+        turn_id="turn-1",
+    )
+    turn = CharacterTurn(
+        input=turn_input,
+        session_id=turn_input.session_id,
+        turn_id=turn_input.turn_id,
+    )
+
+    assert turn.session_id == "session-1"
+    assert turn.turn_id == "turn-1"
+
+
 def test_character_runtime_handle_turn_is_the_only_public_turn_entrypoint():
     runtime = CharacterRuntime()
     turn = asyncio.run(runtime.handle_turn(TurnInput(text="hello")))

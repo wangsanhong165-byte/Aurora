@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+
+from app.runtime.character_turn import CharacterTurn, TurnInput, TurnPhase
+from app.transport.websocket.handler import RuntimeEventHandler
+from contracts.v3.registry import EventRegistry
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def event(event_type: str, payload: dict, *, turn_id: str = "turn-1"):
+    return EventRegistry.parse({
+        "protocolVersion": "3.0",
+        "eventId": f"event-{event_type}",
+        "eventType": event_type,
+        "sessionId": "session-1",
+        "turnId": turn_id,
+        "sequence": 1,
+        "source": "frontend",
+        "timestamp": 1.0,
+        "payload": payload,
+    })
+
+
+class RuntimeProbe:
+    def __init__(self):
+        self.inputs: list[TurnInput] = []
+
+    async def handle_turn(self, turn_input: TurnInput, **_kwargs) -> CharacterTurn:
+        self.inputs.append(turn_input)
+        turn = CharacterTurn(
+            input=turn_input,
+            turn_id=turn_input.turn_id,
+            session_id=turn_input.session_id,
+        )
+        turn.transition_to(TurnPhase.PROCESSING)
+        turn.reply_text = "done"
+        turn.transition_to(TurnPhase.COMPLETED)
+        return turn
+
+
+def test_text_event_reaches_domain_with_session_and_turn_identity() -> None:
+    runtime = RuntimeProbe()
+    handler = RuntimeEventHandler(runtime=runtime)
+
+    responses = asyncio.run(handler.handle_event(event("user.text", {"text": "hello"})))
+
+    assert runtime.inputs == [
+        TurnInput(text="hello", session_id="session-1", turn_id="turn-1")
+    ]
+    assert responses
+    assert all(response.session_id == "session-1" for response in responses)
+    assert all(
+        response.turn_id == "turn-1"
+        for response in responses
+        if response.event_type not in {"runtime.status", "protocol.error"}
+    )
+
+
+def test_audio_events_assemble_one_turn_without_v2_messages() -> None:
+    runtime = RuntimeProbe()
+    handler = RuntimeEventHandler(runtime=runtime)
+
+    async def scenario():
+        await handler.handle_event(event(
+            "user.audio.started",
+            {"sampleRate": 16000, "channels": 1, "format": "pcm_f32"},
+        ))
+        await handler.handle_event(event("user.audio.chunk", {"samples": [0.0, 0.5]}))
+        return await handler.handle_event(event("user.audio.completed", {"sampleRate": 16000}))
+
+    responses = asyncio.run(scenario())
+
+    assert len(runtime.inputs) == 1
+    assert runtime.inputs[0].audio.startswith(b"RIFF")
+    assert runtime.inputs[0].session_id == "session-1"
+    assert runtime.inputs[0].turn_id == "turn-1"
+    assert responses
+
+
+def test_stale_audio_chunk_is_rejected_before_pipeline() -> None:
+    runtime = RuntimeProbe()
+    handler = RuntimeEventHandler(runtime=runtime)
+
+    async def scenario():
+        await handler.handle_event(event(
+            "user.audio.started",
+            {"sampleRate": 16000, "channels": 1, "format": "pcm_f32"},
+            turn_id="turn-current",
+        ))
+        return await handler.handle_event(event(
+            "user.audio.chunk",
+            {"samples": [0.1]},
+            turn_id="turn-stale",
+        ))
+
+    responses = asyncio.run(scenario())
+
+    assert runtime.inputs == []
+    assert responses[0].event_type == "protocol.error"
+    assert responses[0].payload["code"] == "stale_turn"
+
+
+def test_cancel_clears_audio_and_emits_canonical_cancel_events() -> None:
+    runtime = RuntimeProbe()
+    handler = RuntimeEventHandler(runtime=runtime)
+
+    async def scenario():
+        await handler.handle_event(event(
+            "user.audio.started",
+            {"sampleRate": 16000, "channels": 1, "format": "pcm_f32"},
+        ))
+        await handler.handle_event(event("user.audio.chunk", {"samples": [0.1]}))
+        return await handler.handle_event(event("turn.cancelled", {"reason": "user_interrupt"}))
+
+    responses = asyncio.run(scenario())
+
+    assert runtime.inputs == []
+    assert [response.event_type for response in responses] == [
+        "tts.cancelled",
+        "turn.cancelled",
+    ]
+
+
+def test_management_event_is_routed_without_v2_inbound_message() -> None:
+    handler = RuntimeEventHandler(runtime=RuntimeProbe())
+
+    class ManagementProbe:
+        async def handle(self, action, params, request_id):
+            assert action == "get_status"
+            assert params == {}
+            assert request_id == "request-1"
+            return []
+
+    handler._management = ManagementProbe()
+    responses = asyncio.run(handler.handle_event(event(
+        "management.requested",
+        {"requestId": "request-1", "action": "get_status", "params": {}},
+        turn_id="turn-unused",
+    )))
+
+    assert responses == []
+
+
+def test_production_ingress_has_no_v2_message_conversion() -> None:
+    handler_source = (
+        ROOT / "app" / "transport" / "websocket" / "handler.py"
+    ).read_text("utf-8")
+    session_source = (
+        ROOT / "app" / "transport" / "session.py"
+    ).read_text("utf-8")
+    v3_handler_source = (
+        ROOT / "app" / "transport" / "v3_handler.py"
+    ).read_text("utf-8")
+
+    assert "InboundMessage" not in handler_source
+    assert "MESSAGE_TYPE_MAP" not in v3_handler_source
+    assert "_envelope_to_inbound" not in v3_handler_source
+    assert "V2CompatibilityAdapter" not in session_source
+    assert not (ROOT / "app" / "transport" / "v2_adapter.py").exists()

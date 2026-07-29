@@ -1,47 +1,40 @@
-"""Runtime Event Handler — bridges Transport Protocol to CharacterRuntime.
-
-This is the ONLY place where transport messages are translated to Runtime
-events. It is intentionally thin — no business logic, just protocol mapping.
-"""
+"""Typed V3 RuntimeEvent ingress for the CharacterTurn pipeline."""
 
 from __future__ import annotations
 
+import asyncio
+import io
 import logging
+import struct
+import wave
+from typing import Awaitable, Callable
 
-from app.runtime.character_turn import TurnInput
-from app.runtime.runtime import runtime as default_runtime
-from app.transport.protocol import (
-    InboundMessage,
-    OutboundMessage,
-    TextInput,
-    AudioInput,
-    AudioEnd,
-    Interrupt,
-    TtsEnd,
-    RuntimeStatus,
-    UserMessage,
-)
 from app.avatar.controller import AvatarController
-from app.avatar.protocol import (
-    AvatarRequest,
-    AvatarRequestMsg,
-    AvatarAcceptMsg,
-    AvatarRejectMsg,
+from app.avatar.protocol import AvatarRequest
+from app.runtime.character_turn import CharacterTurn, TurnInput
+from app.runtime.runtime import runtime as default_runtime
+from app.transport.protocol import OutboundMessage
+from app.transport.v3_emitter import V3Emitter
+from contracts.v3.envelope import EventEnvelope, error_envelope
+from contracts.v3.events import (
+    CharacterControlRequestedPayload,
+    CharacterSuggestionAcceptedPayload,
+    CharacterSuggestionRejectedPayload,
+    ManagementRequestedPayload,
+    UserAudioChunkPayload,
+    UserAudioCompletedPayload,
+    UserAudioStartedPayload,
+    UserTextPayload,
 )
 
 logger = logging.getLogger("transport.handler")
 
+RuntimeResponse = EventEnvelope | OutboundMessage
+PushEnvelope = Callable[[EventEnvelope], Awaitable[None]]
+
 
 class RuntimeEventHandler:
-    """Translates Transport Protocol messages to CharacterRuntime.handle_turn().
-
-    One instance per WebSocket connection. Manages a ManagementHandler
-    for auxiliary operations via the generic Command message.
-
-    If a send_message callback is provided, the handler can send
-    streaming chunks (assistant_chunk) proactively during pipeline
-    execution instead of returning them in the response list.
-    """
+    """Map typed V3 events to existing domain commands and CharacterTurn."""
 
     def __init__(
         self,
@@ -50,262 +43,334 @@ class RuntimeEventHandler:
         avatar_controller: AvatarController | None = None,
     ):
         self.runtime = runtime or default_runtime
+        self.send_message = send_message
+        self.send_v3: PushEnvelope | None = None
+        self.v3_emitter_factory = V3Emitter
+        self.avatar = avatar_controller
+        self._management = None
         self._audio_buffer: list[float] = []
         self._sample_rate = 16000
-        self._management = None
-        self.send_message = send_message
-        self.send_v3 = None  # set by bridge if V3 emission is desired
-        self.v3_emitter_factory = None  # V3Emitter class, set by bridge
-        self.avatar = avatar_controller
-        # Wire avatar push callback so it can broadcast to frontend
-        if self.avatar and send_message:
-            self.avatar.set_push_callback(send_message)
-
-    def enable_proactive_push(self) -> None:
-        """Register for proactive LLM responses from the runtime.
-
-        Must be called after send_message is set. Responses are pushed
-        to the frontend when the runtime generates a proactive reply.
-        """
-        self.runtime.register_proactive_handler(self._on_proactive_reply)
-
-    def disable_proactive_push(self) -> None:
-        """Unregister from proactive responses (connection closing)."""
-        self.runtime.unregister_proactive_handler(self._on_proactive_reply)
+        self._audio_turn_id = ""
+        self._audio_session_id = ""
+        self._active_task: asyncio.Task[None] | None = None
+        self._active_turn_id = ""
 
     @property
     def management(self):
         if self._management is None:
             from app.transport.management import ManagementHandler
+
             self._management = ManagementHandler()
         return self._management
 
-    async def handle(self, message: InboundMessage) -> list[OutboundMessage] | None:
-        """Route an inbound message to the Runtime and return responses."""
-        msg_type = message.type
+    def enable_proactive_push(self) -> None:
+        self.runtime.register_proactive_handler(self._on_proactive_reply)
 
-        # ── Core pipeline messages ──
-        if msg_type == "text_input":
-            return await self._handle_text(message)
-        elif msg_type == "audio_input":
-            self._buffer_audio(message)
-            return None
-        elif msg_type == "audio_end":
-            return await self._handle_audio_end()
-        elif msg_type == "interrupt":
-            return await self._handle_interrupt()
+    def disable_proactive_push(self) -> None:
+        self.runtime.unregister_proactive_handler(self._on_proactive_reply)
+        if self._active_task and not self._active_task.done():
+            self._active_task.cancel()
 
-        # ── Management commands ──
-        elif msg_type == "command":
-            responses = await self.management.handle_command(message)
-            for response in responses:
-                if hasattr(response, "request_id"):
-                    response.request_id = message.request_id
-            return responses
+    async def handle_event(self, event: EventEnvelope) -> list[RuntimeResponse]:
+        event_type = event.event_type
 
-        # ── Avatar control messages ──
-        elif msg_type == "avatar_request":
-            return await self._handle_avatar_request(message)
-        elif msg_type == "avatar_accept":
-            return await self._handle_avatar_accept(message)
-        elif msg_type == "avatar_reject":
-            return await self._handle_avatar_reject(message)
+        if event_type == "user.text":
+            payload = self._payload(event, UserTextPayload)
+            turn_input = TurnInput(
+                text=payload.text,
+                session_id=event.session_id,
+                turn_id=event.turn_id or "",
+            )
+            return await self._start_or_run_turn(turn_input)
 
+        if event_type == "user.audio.started":
+            payload = self._payload(event, UserAudioStartedPayload)
+            if self._active_turn_id and self._active_turn_id != event.turn_id:
+                return [self._stale_turn(event)]
+            self._audio_buffer.clear()
+            self._sample_rate = payload.sample_rate
+            self._audio_turn_id = event.turn_id or ""
+            self._audio_session_id = event.session_id
+            self._active_turn_id = self._audio_turn_id
+            return []
+
+        if event_type == "user.audio.chunk":
+            payload = self._payload(event, UserAudioChunkPayload)
+            if not self._matches_audio_turn(event):
+                return [self._stale_turn(event)]
+            self._audio_buffer.extend(payload.samples)
+            return []
+
+        if event_type == "user.audio.completed":
+            payload = self._payload(event, UserAudioCompletedPayload)
+            if not self._matches_audio_turn(event):
+                return [self._stale_turn(event)]
+            if payload.sample_rate:
+                self._sample_rate = payload.sample_rate
+            audio = self._audio_to_wav()
+            self._clear_audio()
+            if not audio:
+                return [error_envelope(
+                    "empty_audio",
+                    "Audio turn completed without samples",
+                    session_id=event.session_id,
+                    turn_id=event.turn_id or "",
+                )]
+            return await self._start_or_run_turn(TurnInput(
+                audio=audio,
+                sample_rate=self._sample_rate,
+                session_id=event.session_id,
+                turn_id=event.turn_id or "",
+            ))
+
+        if event_type in {"user.audio.cancelled", "turn.cancelled"}:
+            return await self._cancel_turn(event)
+
+        if event_type == "management.requested":
+            payload = self._payload(event, ManagementRequestedPayload)
+            return await self.management.handle(
+                payload.action,
+                payload.params,
+                payload.request_id,
+            )
+
+        if event_type == "character.control.requested":
+            return await self._handle_avatar_request(
+                event,
+                self._payload(event, CharacterControlRequestedPayload),
+            )
+
+        if event_type == "character.suggestion.accepted":
+            payload = self._payload(event, CharacterSuggestionAcceptedPayload)
+            raw = await self.avatar.handle_accept(payload.suggestion_id) if self.avatar else []
+            return self._avatar_responses(event, raw)
+
+        if event_type == "character.suggestion.rejected":
+            payload = self._payload(event, CharacterSuggestionRejectedPayload)
+            raw = await self.avatar.handle_reject(payload.suggestion_id) if self.avatar else []
+            return self._avatar_responses(event, raw)
+
+        return [error_envelope(
+            "unsupported_event",
+            f"Unsupported runtime event: {event_type}",
+            session_id=event.session_id,
+            turn_id=event.turn_id or "",
+        )]
+
+    @staticmethod
+    def _payload(event: EventEnvelope, expected_type):
+        payload = event.payload
+        if not isinstance(payload, expected_type):
+            raise TypeError(
+                f"{event.event_type} payload must be {expected_type.__name__}"
+            )
+        return payload
+
+    async def _start_or_run_turn(self, turn_input: TurnInput) -> list[RuntimeResponse]:
+        if self._active_turn_id and self._active_turn_id != turn_input.turn_id:
+            return [error_envelope(
+                "turn_in_progress",
+                f"Turn {self._active_turn_id} is still active",
+                session_id=turn_input.session_id,
+                turn_id=turn_input.turn_id,
+            )]
+        self._active_turn_id = turn_input.turn_id
+
+        if self.send_v3 is not None:
+            self._active_task = asyncio.create_task(self._run_turn_and_push(turn_input))
+            return []
+
+        try:
+            return await self._run_turn(turn_input)
+        finally:
+            self._active_turn_id = ""
+
+    async def _run_turn_and_push(self, turn_input: TurnInput) -> None:
+        try:
+            await self._run_turn(turn_input)
+        except asyncio.CancelledError:
+            logger.info("Turn cancelled: %s", turn_input.turn_id)
+            raise
+        except Exception:
+            logger.exception("V3 turn task failed: %s", turn_input.turn_id)
+        finally:
+            if self._active_turn_id == turn_input.turn_id:
+                self._active_turn_id = ""
+            self._active_task = None
+
+    async def _run_turn(self, turn_input: TurnInput) -> list[RuntimeResponse]:
+        emitter = self.v3_emitter_factory(
+            session_id=turn_input.session_id,
+            turn_id=turn_input.turn_id,
+        )
+        responses: list[RuntimeResponse] = []
+        start_event = emitter.start()
+        if self.send_v3 is not None:
+            await self.send_v3(start_event)
         else:
-            return None
-
-    async def _handle_text(self, msg: TextInput) -> list[OutboundMessage]:
-        """Route text input through the Runtime and canonical emitter."""
-        push_v3 = self.send_v3
-        push_v2 = self.send_message
-
-        # Send start message before handle_turn so the frontend shows thinking state
-        v3_session_id = ""
-        v3_turn_id = ""
-        if push_v3:
-            v3 = self.v3_emitter_factory(session_id="", turn_id="")
-            await push_v3(v3.start())
-            v3_session_id = v3.session_id
-            v3_turn_id = v3.turn_id
-        elif push_v2:
-            from app.transport.emitter import TransportEmitter
-            await push_v2(TransportEmitter().start())
+            responses.append(start_event)
 
         async def confirm_tool(name, args, risk):
-            if not push_v2:
+            if self.send_v3 is None:
                 return False
             from app.runtime.tool_confirmation import tool_confirmation_broker
-            from app.transport.protocol import ToolConfirmation
-            return await tool_confirmation_broker.request(
-                lambda payload: push_v2(ToolConfirmation(**payload)),
-                name, args, risk,
-            )
 
-        turn = await self.runtime.handle_turn(
-            TurnInput(text=msg.text),
-            confirmation_callback=confirm_tool,
-        )
-
-        if push_v3:
-            v3 = self.v3_emitter_factory(
-                session_id=v3_session_id or getattr(turn, "session_id", ""),
-                turn_id=v3_turn_id or turn.turn_id,
-            )
-            for envelope in v3.emit_completion(turn):
-                await push_v3(envelope)
-            return []
-
-        # V2 fallback
-        from app.transport.emitter import TransportEmitter
-        emitter = TransportEmitter()
-        if push_v2:
-            for response in emitter.emit_completion(turn):
-                await push_v2(response)
-            return []
-        return emitter.emit(turn)
-
-    def _buffer_audio(self, msg: AudioInput) -> None:
-        """Buffer audio samples until stream ends."""
-        self._audio_buffer.extend(msg.samples)
-
-    async def _handle_audio_end(self) -> list[OutboundMessage]:
-        """Process buffered audio through ASR + Runtime pipeline."""
-        if not self._audio_buffer:
-            return [RuntimeStatus(state="idle", message="")]
-
-        # Convert float32 samples to WAV bytes
-        import struct
-        import io
-        import wave
-
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)
-            wf.setframerate(self._sample_rate)
-            samples_int16 = [
-                max(-32768, min(32767, int(s * 32767)))
-                for s in self._audio_buffer
-            ]
-            wf.writeframes(struct.pack(f"<{len(samples_int16)}h", *samples_int16))
-
-        wav_bytes = buf.getvalue()
-        self._audio_buffer = []
-
-        push_v3 = self.send_v3
-        push_v2 = self.send_message
-
-        # Send start message before handle_turn
-        v3_session_id = ""
-        v3_turn_id = ""
-        if push_v3:
-            v3 = self.v3_emitter_factory(session_id="", turn_id="")
-            await push_v3(v3.start())
-            v3_session_id = v3.session_id
-            v3_turn_id = v3.turn_id
-        elif push_v2:
-            from app.transport.emitter import TransportEmitter
-            await push_v2(TransportEmitter().start())
-
-        async def confirm_tool(name, args, risk):
-            if not push_v2:
-                return False
-            from app.runtime.tool_confirmation import tool_confirmation_broker
-            from app.transport.protocol import ToolConfirmation
-            return await tool_confirmation_broker.request(
-                lambda payload: push_v2(ToolConfirmation(**payload)),
-                name, args, risk,
-            )
-
-        turn = await self.runtime.handle_turn(
-            TurnInput(audio=wav_bytes, sample_rate=self._sample_rate),
-            confirmation_callback=confirm_tool,
-        )
-
-        if push_v3:
-            v3 = self.v3_emitter_factory(
-                session_id=v3_session_id or getattr(turn, "session_id", ""),
-                turn_id=v3_turn_id or turn.turn_id,
-            )
-            if turn.user_text:
-                from contracts.v3.envelope import EventEnvelope
-                await push_v3(EventEnvelope(
-                    session_id=v3.session_id,
-                    turn_id=v3.turn_id,
-                    event_type="user.text",
+            async def notify(payload):
+                await self.send_v3(EventEnvelope(
+                    session_id=turn_input.session_id,
+                    turn_id=turn_input.turn_id,
+                    event_type="tool.requested",
                     sequence=1,
-                    payload={"text": turn.user_text},
+                    source="runtime",
+                    payload={
+                        "requestId": payload["request_id"],
+                        "tool": payload["tool"],
+                        "args": payload["args"],
+                        "risk": payload["risk"],
+                    },
                 ))
-            for envelope in v3.emit_completion(turn):
-                await push_v3(envelope)
-            return []
 
-        # V2 fallback
-        from app.transport.emitter import TransportEmitter
-        emitter = TransportEmitter()
-        if push_v2:
-            if turn.user_text:
-                await push_v2(UserMessage(text=turn.user_text))
-            for response in emitter.emit_completion(turn):
-                await push_v2(response)
-            return []
-        return emitter.emit(turn)
+            return await tool_confirmation_broker.request(notify, name, args, risk)
 
-    async def _handle_interrupt(self) -> list[OutboundMessage]:
-        """Handle interrupt — send TTS end signal and reset state."""
+        turn: CharacterTurn = await self.runtime.handle_turn(
+            turn_input,
+            confirmation_callback=confirm_tool,
+        )
+        completion = emitter.emit_completion(turn)
+        if self.send_v3 is not None:
+            for event in completion:
+                await self.send_v3(event)
+        else:
+            responses.extend(completion)
+        return responses
+
+    def _matches_audio_turn(self, event: EventEnvelope) -> bool:
+        return bool(
+            self._audio_turn_id
+            and event.turn_id == self._audio_turn_id
+            and event.session_id == self._audio_session_id
+        )
+
+    def _audio_to_wav(self) -> bytes:
+        if not self._audio_buffer:
+            return b""
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(self._sample_rate)
+            samples = [
+                max(-32768, min(32767, int(sample * 32767)))
+                for sample in self._audio_buffer
+            ]
+            wav_file.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+        return buf.getvalue()
+
+    def _clear_audio(self) -> None:
+        self._audio_buffer.clear()
+        self._audio_turn_id = ""
+        self._audio_session_id = ""
+        if self._active_task is None:
+            self._active_turn_id = ""
+
+    async def _cancel_turn(self, event: EventEnvelope) -> list[RuntimeResponse]:
+        if self._active_turn_id and event.turn_id != self._active_turn_id:
+            return [self._stale_turn(event)]
+        self._clear_audio()
+        if self._active_task and not self._active_task.done():
+            self._active_task.cancel()
+        self._active_turn_id = ""
+        reason = getattr(event.payload, "reason", "cancelled")
         return [
-            TtsEnd(reason="interrupted"),
-            RuntimeStatus(state="idle", message="Interrupted"),
+            EventEnvelope(
+                session_id=event.session_id,
+                turn_id=event.turn_id,
+                event_type="tts.cancelled",
+                sequence=1,
+                source="runtime",
+                payload={"reason": reason},
+            ),
+            EventEnvelope(
+                session_id=event.session_id,
+                turn_id=event.turn_id,
+                event_type="turn.cancelled",
+                sequence=2,
+                source="runtime",
+                payload={"reason": reason},
+            ),
         ]
 
-    # ── Avatar Control Handlers ────────────────────────────────────────
-
-    async def _handle_avatar_request(self, msg: AvatarRequestMsg) -> list[dict]:
-        """Process a user avatar control request through the AvatarController."""
-        if not self.avatar:
-            logger.warning("Avatar request received but no AvatarController configured")
-            return []
-
-        request = AvatarRequest(
-            target=msg.target,
-            name=msg.name,
-            action=msg.action,
-            source=msg.source,
-            priority=msg.priority,
+    @staticmethod
+    def _stale_turn(event: EventEnvelope) -> EventEnvelope:
+        return error_envelope(
+            "stale_turn",
+            f"Event belongs to inactive turn {event.turn_id}",
+            session_id=event.session_id,
+            turn_id=event.turn_id or "",
         )
-        return await self.avatar.handle_request(request)
 
-    async def _handle_avatar_accept(self, msg: AvatarAcceptMsg) -> list[dict]:
-        """User accepted an AI suggestion."""
+    async def _handle_avatar_request(
+        self,
+        event: EventEnvelope,
+        payload: CharacterControlRequestedPayload,
+    ) -> list[RuntimeResponse]:
         if not self.avatar:
             return []
-        return await self.avatar.handle_accept(msg.suggestion_id)
+        params = payload.params
+        request = AvatarRequest(
+            target=str(params.get("target", "")),
+            name=str(params.get("name", "")),
+            action=payload.action,
+            source=str(params.get("source", "user")),
+            priority=int(params.get("priority", 100)),
+        )
+        return self._avatar_responses(event, await self.avatar.handle_request(request))
 
-    async def _handle_avatar_reject(self, msg: AvatarRejectMsg) -> list[dict]:
-        """User rejected an AI suggestion."""
-        if not self.avatar:
-            return []
-        return await self.avatar.handle_reject(msg.suggestion_id)
+    def _avatar_responses(
+        self,
+        request: EventEnvelope,
+        messages: list[dict],
+    ) -> list[RuntimeResponse]:
+        mapping = {
+            "avatar_component": "character.component",
+            "avatar_expression": "character.expression",
+            "avatar_motion": "character.motion",
+            "avatar_state": "character.snapshot",
+            "avatar_suggestion": "character.suggestion",
+        }
+        results: list[RuntimeResponse] = []
+        for message in messages:
+            old_type = str(message.get("type", ""))
+            event_type = mapping.get(old_type)
+            if not event_type:
+                continue
+            payload = {
+                {
+                    "display_name": "displayName",
+                    "param_ids": "paramIds",
+                    "expression_intensity": "expressionIntensity",
+                    "suggestion_id": "suggestionId",
+                }.get(key, key): value
+                for key, value in message.items()
+                if key not in {"type", "model_id"}
+            }
+            results.append(EventEnvelope(
+                session_id=request.session_id,
+                turn_id=request.turn_id,
+                event_type=event_type,
+                sequence=1,
+                source="runtime",
+                payload=payload,
+            ))
+        return results
 
-    async def _on_proactive_reply(self, turn) -> None:
-        """Push a proactive LLM response to the frontend.
-
-        Called by CharacterRuntime when an initiative-triggered pipeline
-        completes. Sends the same message types as _handle_text so the
-        frontend displays the AI's message, plays audio, and updates the
-        character — all without any user input.
-        """
-        if self.send_v3:
-            v3 = self.v3_emitter_factory(
-                session_id=getattr(turn, "session_id", ""),
-                turn_id=turn.turn_id,
-            )
-            await self.send_v3(v3.start())
-            for envelope in v3.emit_completion(turn):
-                await self.send_v3(envelope)
+    async def _on_proactive_reply(self, turn: CharacterTurn) -> None:
+        if self.send_v3 is None:
             return
-        if not self.send_message:
-            return
-        from app.transport.emitter import TransportEmitter
-        for message in TransportEmitter().emit(turn):
-            await self.send_message(message)
+        emitter = self.v3_emitter_factory(
+            session_id=turn.session_id,
+            turn_id=turn.turn_id,
+        )
+        await self.send_v3(emitter.start())
+        for event in emitter.emit_completion(turn):
+            await self.send_v3(event)

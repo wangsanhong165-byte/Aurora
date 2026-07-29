@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import logging
 import time
+import uuid
 from typing import Any, Awaitable, Callable
 
 from app.core.initiative_queue import initiative_queue
@@ -562,11 +563,12 @@ class CharacterRuntime:
 
         turn = CharacterTurn(
             input=turn_input,
+            turn_id=turn_input.turn_id or uuid.uuid4().hex,
             status_callback=status_callback,
             confirmation_callback=confirmation_callback,
-            session_id=get_session_id(),
+            session_id=turn_input.session_id or get_session_id(),
             telemetry=TurnTelemetry(
-                session_id=get_session_id(),
+                session_id=turn_input.session_id or get_session_id(),
                 turn_id="",
                 parent_span_id="",
             ),
