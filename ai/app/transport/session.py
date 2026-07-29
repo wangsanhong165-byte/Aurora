@@ -11,14 +11,14 @@ from typing import Any, Awaitable, Callable
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 
-from app.transport.protocol import OutboundMessage, serialize
+from app.transport.domain_event import DomainEvent
 from contracts.v3.envelope import EventEnvelope, error_envelope
 from contracts.v3.events import SessionOpenPayload
 from contracts.v3.registry import EventRegistry, UnsupportedEventError
 
 logger = logging.getLogger("transport.session")
 
-SessionResponse = EventEnvelope | OutboundMessage
+SessionResponse = EventEnvelope | DomainEvent
 MessageHandler = Callable[[EventEnvelope], Awaitable[list[SessionResponse] | None]]
 
 
@@ -239,49 +239,29 @@ class WebSocketSession:
             payload={"nonce": nonce},
         )
 
-    async def send(self, message: OutboundMessage) -> None:
-        """Temporary V3-2 outbound wrapper; removed by the V3-3 emitter."""
+    async def send(self, message: SessionResponse) -> None:
+        """Write one typed V3 event using this connection's identity and sequence."""
         await self._send_response(message, None)
-
-    async def send_envelope(self, envelope: EventEnvelope) -> None:
-        await self._send_envelope(envelope)
 
     async def _send_response(
         self,
         response: SessionResponse,
         request: EventEnvelope | None,
     ) -> None:
+        if isinstance(response, DomainEvent):
+            await self._send_envelope(
+                response.to_envelope(
+                    self.session_id or (
+                        request.session_id if request else "session-unbound"
+                    ),
+                    1,
+                )
+            )
+            return
         if isinstance(response, EventEnvelope):
             await self._send_envelope(response)
             return
-        payload = serialize(response)
-        old_type = str(payload.pop("type", getattr(response, "type", "")))
-        event_type = old_type
-        if old_type == "command_response":
-            event_type = "management.result"
-            payload = {
-                "requestId": payload.get("request_id", ""),
-                "action": payload.get("action", ""),
-                "data": payload.get("data", {}),
-            }
-        elif old_type == "error" and request and request.event_type == "management.requested":
-            event_type = "management.failed"
-            request_id = getattr(request.payload, "request_id", "")
-            action = getattr(request.payload, "action", "")
-            payload = {
-                "requestId": request_id,
-                "action": action,
-                "code": payload.get("code", "management_failed"),
-                "message": payload.get("message", ""),
-            }
-        await self._send_envelope(EventEnvelope(
-            session_id=self.session_id or (request.session_id if request else "session-unbound"),
-            turn_id=request.turn_id if request else None,
-            event_type=event_type,
-            sequence=1,
-            source="runtime",
-            payload=payload,
-        ))
+        raise TypeError(f"Unsupported V3 session response: {type(response).__name__}")
 
     async def _send_protocol_error(
         self,

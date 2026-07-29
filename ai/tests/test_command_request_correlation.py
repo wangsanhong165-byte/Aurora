@@ -25,5 +25,5 @@ def test_management_response_echoes_request_id():
         handler.handle_event(event)
     )
     assert responses
-    assert responses[0].type == "command_response"
-    assert responses[0].request_id == "request-42"
+    assert responses[0].event_type == "management.result"
+    assert responses[0].payload.request_id == "request-42"

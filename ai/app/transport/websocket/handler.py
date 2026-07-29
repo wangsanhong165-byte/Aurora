@@ -13,8 +13,8 @@ from app.avatar.controller import AvatarController
 from app.avatar.protocol import AvatarRequest
 from app.runtime.character_turn import CharacterTurn, TurnInput
 from app.runtime.runtime import runtime as default_runtime
-from app.transport.protocol import OutboundMessage
-from app.transport.v3_emitter import V3Emitter
+from app.transport.domain_event import DomainEvent
+from app.transport.emitter import TransportEmitter
 from contracts.v3.envelope import EventEnvelope, error_envelope
 from contracts.v3.events import (
     CharacterControlRequestedPayload,
@@ -29,8 +29,8 @@ from contracts.v3.events import (
 
 logger = logging.getLogger("transport.handler")
 
-RuntimeResponse = EventEnvelope | OutboundMessage
-PushEnvelope = Callable[[EventEnvelope], Awaitable[None]]
+RuntimeResponse = EventEnvelope | DomainEvent
+PushEvent = Callable[[RuntimeResponse], Awaitable[None]]
 
 
 class RuntimeEventHandler:
@@ -39,13 +39,12 @@ class RuntimeEventHandler:
     def __init__(
         self,
         runtime=None,
-        send_message=None,
+        send_event=None,
         avatar_controller: AvatarController | None = None,
     ):
         self.runtime = runtime or default_runtime
-        self.send_message = send_message
-        self.send_v3: PushEnvelope | None = None
-        self.v3_emitter_factory = V3Emitter
+        self.send_event: PushEvent | None = send_event
+        self.emitter_factory = TransportEmitter
         self.avatar = avatar_controller
         self._management = None
         self._audio_buffer: list[float] = []
@@ -176,7 +175,7 @@ class RuntimeEventHandler:
             )]
         self._active_turn_id = turn_input.turn_id
 
-        if self.send_v3 is not None:
+        if self.send_event is not None:
             self._active_task = asyncio.create_task(self._run_turn_and_push(turn_input))
             return []
 
@@ -199,47 +198,54 @@ class RuntimeEventHandler:
             self._active_task = None
 
     async def _run_turn(self, turn_input: TurnInput) -> list[RuntimeResponse]:
-        emitter = self.v3_emitter_factory(
-            session_id=turn_input.session_id,
-            turn_id=turn_input.turn_id,
-        )
+        emitter = self.emitter_factory()
         responses: list[RuntimeResponse] = []
-        start_event = emitter.start()
-        if self.send_v3 is not None:
-            await self.send_v3(start_event)
+        start_events = emitter.start_input(turn_input)
+        if self.send_event is not None:
+            for event in start_events:
+                await self.send_event(event)
         else:
-            responses.append(start_event)
+            responses.extend(start_events)
+
+        async def report_status(message):
+            event = DomainEvent.create(
+                "turn.progress",
+                {"stage": "runtime", "message": str(message)},
+                turn_id=turn_input.turn_id,
+            )
+            if self.send_event is not None:
+                await self.send_event(event)
+            else:
+                responses.append(event)
 
         async def confirm_tool(name, args, risk):
-            if self.send_v3 is None:
+            if self.send_event is None:
                 return False
             from app.runtime.tool_confirmation import tool_confirmation_broker
 
             async def notify(payload):
-                await self.send_v3(EventEnvelope(
-                    session_id=turn_input.session_id,
-                    turn_id=turn_input.turn_id,
-                    event_type="tool.requested",
-                    sequence=1,
-                    source="runtime",
-                    payload={
+                await self.send_event(DomainEvent.create(
+                    "tool.requested",
+                    {
                         "requestId": payload["request_id"],
                         "tool": payload["tool"],
                         "args": payload["args"],
                         "risk": payload["risk"],
                     },
+                    turn_id=turn_input.turn_id,
                 ))
 
             return await tool_confirmation_broker.request(notify, name, args, risk)
 
         turn: CharacterTurn = await self.runtime.handle_turn(
             turn_input,
+            status_callback=report_status,
             confirmation_callback=confirm_tool,
         )
         completion = emitter.emit_completion(turn)
-        if self.send_v3 is not None:
+        if self.send_event is not None:
             for event in completion:
-                await self.send_v3(event)
+                await self.send_event(event)
         else:
             responses.extend(completion)
         return responses
@@ -282,21 +288,15 @@ class RuntimeEventHandler:
         self._active_turn_id = ""
         reason = getattr(event.payload, "reason", "cancelled")
         return [
-            EventEnvelope(
-                session_id=event.session_id,
+            DomainEvent.create(
+                "tts.cancelled",
+                {"reason": reason},
                 turn_id=event.turn_id,
-                event_type="tts.cancelled",
-                sequence=1,
-                source="runtime",
-                payload={"reason": reason},
             ),
-            EventEnvelope(
-                session_id=event.session_id,
+            DomainEvent.create(
+                "turn.cancelled",
+                {"reason": reason},
                 turn_id=event.turn_id,
-                event_type="turn.cancelled",
-                sequence=2,
-                source="runtime",
-                payload={"reason": reason},
             ),
         ]
 
@@ -354,23 +354,16 @@ class RuntimeEventHandler:
                 for key, value in message.items()
                 if key not in {"type", "model_id"}
             }
-            results.append(EventEnvelope(
-                session_id=request.session_id,
+            results.append(DomainEvent.create(
+                event_type,
+                payload,
                 turn_id=request.turn_id,
-                event_type=event_type,
-                sequence=1,
-                source="runtime",
-                payload=payload,
             ))
         return results
 
     async def _on_proactive_reply(self, turn: CharacterTurn) -> None:
-        if self.send_v3 is None:
+        if self.send_event is None:
             return
-        emitter = self.v3_emitter_factory(
-            session_id=turn.session_id,
-            turn_id=turn.turn_id,
-        )
-        await self.send_v3(emitter.start())
-        for event in emitter.emit_completion(turn):
-            await self.send_v3(event)
+        emitter = self.emitter_factory()
+        for event in emitter.emit(turn):
+            await self.send_event(event)

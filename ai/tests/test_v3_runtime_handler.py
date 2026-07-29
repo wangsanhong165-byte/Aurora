@@ -52,7 +52,6 @@ def test_text_event_reaches_domain_with_session_and_turn_identity() -> None:
         TurnInput(text="hello", session_id="session-1", turn_id="turn-1")
     ]
     assert responses
-    assert all(response.session_id == "session-1" for response in responses)
     assert all(
         response.turn_id == "turn-1"
         for response in responses

@@ -1,6 +1,7 @@
 import asyncio
 
 from app.runtime.character_turn import CharacterTurn, TurnInput, TurnPhase
+from app.transport.domain_event import DomainEvent
 from app.transport.emitter import TransportEmitter
 from app.transport.websocket.handler import RuntimeEventHandler
 from contracts.v3.registry import EventRegistry
@@ -18,20 +19,23 @@ def test_success_lifecycle_has_one_canonical_order():
 
     messages = TransportEmitter().emit(turn)
 
-    assert [message.type for message in messages] == [
-        "runtime_status",
-        "assistant_message",
-        "tts_start",
-        "tts_audio",
-        "tts_end",
-        "character_update",
-        "runtime_status",
+    assert [message.event_type for message in messages] == [
+        "turn.started",
+        "assistant.text.started",
+        "assistant.text.completed",
+        "tts.started",
+        "tts.audio",
+        "tts.completed",
+        "character.intent",
+        "turn.completed",
+        "runtime.status",
     ]
-    update = messages[-2]
-    assert update.behavior == "greet"
-    assert not hasattr(update, "model_id")
-    assert not hasattr(update, "expression")
-    assert not hasattr(update, "motion")
+    assert all(isinstance(message, DomainEvent) for message in messages)
+    update = messages[-3]
+    assert update.payload.behavior == "greet"
+    assert not hasattr(update.payload, "model_id")
+    assert not hasattr(update.payload, "expression")
+    assert not hasattr(update.payload, "motion")
 
 
 def test_failure_lifecycle_is_error_then_idle():
@@ -40,8 +44,12 @@ def test_failure_lifecycle_is_error_then_idle():
 
     messages = TransportEmitter().emit(turn)
 
-    assert [message.type for message in messages] == ["error", "runtime_status"]
-    assert messages[0].code == "decision.invalid"
+    assert [message.event_type for message in messages] == [
+        "turn.started",
+        "turn.failed",
+        "runtime.status",
+    ]
+    assert messages[1].payload.code == "decision.invalid"
 
 
 def test_websocket_pushes_processing_before_runtime_work_starts():
@@ -52,16 +60,17 @@ def test_websocket_pushes_processing_before_runtime_work_starts():
 
     class RuntimeProbe:
         async def handle_turn(self, turn_input, **kwargs):
-            assert [message.event_type for message in pushed] == ["runtime.status"]
-            assert pushed[0].payload["state"] == "processing"
+            assert [message.event_type for message in pushed] == ["turn.started"]
             turn = CharacterTurn(input=turn_input)
+            turn.turn_id = turn_input.turn_id
+            turn.session_id = turn_input.session_id
             turn.transition_to(TurnPhase.PROCESSING)
             turn.reply_text = "done"
             turn.transition_to(TurnPhase.COMPLETED)
             return turn
 
     handler = RuntimeEventHandler(runtime=RuntimeProbe())
-    handler.send_v3 = push
+    handler.send_event = push
     incoming = EventRegistry.parse({
         "protocolVersion": "3.0",
         "eventId": "event-1",
@@ -83,10 +92,10 @@ def test_websocket_pushes_processing_before_runtime_work_starts():
     asyncio.run(scenario())
 
     assert [message.event_type for message in pushed] == [
-        "runtime.status",
         "turn.started",
         "assistant.text.started",
         "assistant.text.completed",
         "character.intent",
         "turn.completed",
+        "runtime.status",
     ]

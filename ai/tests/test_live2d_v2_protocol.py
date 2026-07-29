@@ -1,4 +1,4 @@
-"""Regression tests for the V2 Live2D presentation handoff."""
+"""Regression tests for the Live2D presentation handoff."""
 
 import asyncio
 import unittest
@@ -40,21 +40,20 @@ class TestLive2DV2Protocol(unittest.TestCase):
         ctx.live2d_intent = {
             "emotion": "happy",
             "intensity": 0.8,
-            "gesture": "wave",
+            "behavior": "wave",
             "speaking": True,
         }
         update = [
             message for message in TransportEmitter().emit(ctx)
-            if message.type == "character_update"
+            if message.event_type == "character.intent"
         ][0]
 
-        self.assertEqual(update.type, "character_update")
-        self.assertEqual(update.emotion, "happy")
-        self.assertEqual(update.behavior, "wave")
-        self.assertFalse(hasattr(update, "model_id"))
-        self.assertFalse(hasattr(update, "expression"))
-        self.assertFalse(hasattr(update, "motion"))
-        self.assertTrue(update.speaking)
+        self.assertEqual(update.event_type, "character.intent")
+        self.assertEqual(update.payload.emotion, "happy")
+        self.assertEqual(update.payload.behavior, "wave")
+        self.assertFalse(hasattr(update.payload, "model_id"))
+        self.assertFalse(hasattr(update.payload, "expression"))
+        self.assertFalse(hasattr(update.payload, "motion"))
 
     def test_spoken_reply_gets_semantic_speak_fallback_instead_of_idle(self):
         ctx = CharacterTurn(input=TurnInput(text="hello"))

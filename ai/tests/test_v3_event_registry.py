@@ -163,7 +163,7 @@ def test_exported_schema_matches_registry() -> None:
 
 def test_current_v3_emitter_only_emits_registered_events() -> None:
     from app.runtime.character_turn import CharacterTurn, TurnInput, TurnPhase
-    from app.transport.v3_emitter import V3Emitter
+    from app.transport.emitter import TransportEmitter
 
     turn = CharacterTurn(input=TurnInput(text="hello"))
     turn.transition_to(TurnPhase.PROCESSING)
@@ -173,8 +173,13 @@ def test_current_v3_emitter_only_emits_registered_events() -> None:
     turn.output.performance.behavior = "greet"
     turn.transition_to(TurnPhase.COMPLETED)
 
-    emitted = V3Emitter("session-1", turn.turn_id).emit_completion(turn)
-    parsed = [EventRegistry.parse(event.to_dict()) for event in emitted]
+    emitted = TransportEmitter().emit(turn)
+    parsed = [
+        EventRegistry.parse(
+            event.to_envelope("session-1", sequence).to_dict()
+        )
+        for sequence, event in enumerate(emitted, 1)
+    ]
 
     assert [event.event_type for event in parsed] == [
         "turn.started",
@@ -185,4 +190,5 @@ def test_current_v3_emitter_only_emits_registered_events() -> None:
         "tts.completed",
         "character.intent",
         "turn.completed",
+        "runtime.status",
     ]

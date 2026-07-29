@@ -61,3 +61,4 @@ class TTSStep(Step):
         except Exception as exc:
             logger.warning("TTS unavailable (%s), continuing without audio", exc)
             ctx.audio = b""
+            ctx.warnings.append(f"tts.failed:{exc}")

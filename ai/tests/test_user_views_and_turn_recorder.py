@@ -10,7 +10,6 @@ from app.runtime.user_views import (
     build_voice_status_view,
 )
 from app.transport.management import ManagementHandler
-from app.transport.protocol import Command
 
 
 def test_character_self_view_is_natural_language_projection():
@@ -183,12 +182,14 @@ def test_management_commands_extend_existing_command_protocol():
     handler = ManagementHandler()
     handler._manager = FakeManager()
 
-    response = asyncio.run(handler.handle_command(Command(
-        action="get_turn_detail", params={"turn_id": "turn-1"}
-    )))[0]
-    assert response.type == "command_response"
-    assert response.action == "get_turn_detail"
-    assert response.data["turn"]["readOnly"] is True
+    response = asyncio.run(handler.handle(
+        action="get_turn_detail",
+        params={"turn_id": "turn-1"},
+        request_id="request-1",
+    ))[0]
+    assert response.event_type == "management.result"
+    assert response.payload.action == "get_turn_detail"
+    assert response.payload.data["turn"]["readOnly"] is True
 
 
 def test_frontend_uses_app_permission_dialog_and_no_frame_replay():
