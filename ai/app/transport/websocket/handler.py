@@ -232,7 +232,8 @@ class RuntimeEventHandler:
                 await push_v3(EventEnvelope(
                     session_id=v3.session_id,
                     turn_id=v3.turn_id,
-                    type="user.text",
+                    event_type="user.text",
+                    sequence=1,
                     payload={"text": turn.user_text},
                 ))
             for envelope in v3.emit_completion(turn):

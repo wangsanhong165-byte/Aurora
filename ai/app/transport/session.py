@@ -57,6 +57,7 @@ class WebSocketSession:
         self._running = False
         self.init_config_provider = init_config_provider
         self._sequence = 0
+        self.session_id = get_session_id()
 
     async def run(self) -> None:
         """Accept the connection and enter the message loop."""
@@ -64,17 +65,17 @@ class WebSocketSession:
         self._running = True
 
         # Send init event (V3 envelope)
-        v3_session_id = get_session_id()
+        v3_session_id = self.session_id
         config = {
-            "protocol_version": "3.0",
             "capabilities": ["text", "audio", "character_update", "tts", "pet_mode", "telemetry"],
         }
         if self.init_config_provider:
             config.update(self.init_config_provider())
         init_envelope = EventEnvelope(
             session_id=v3_session_id,
-            type="session",
-            payload={"status": "init", "config": config},
+            event_type="session.opened",
+            sequence=self._next_sequence(),
+            payload={"capabilities": config.pop("capabilities"), "config": config},
             source="bridge",
         )
         await self._send_raw(init_envelope.to_dict())
@@ -139,7 +140,7 @@ class WebSocketSession:
                     continue
 
                 try:
-                    if "protocol_version" in data:
+                    if "protocolVersion" in data:
                         # V3 envelope path — direct to V3EventHandler
                         responses = await self._handle_v3(data, session_id, v3_handler)
                     else:
@@ -177,8 +178,6 @@ class WebSocketSession:
         """Parse, validate, and route a V3 envelope through V3EventHandler."""
         try:
             envelope = EventEnvelope.from_dict(data)
-            self._sequence += 1
-            envelope.sequence = self._sequence
         except Exception as exc:
             return [error_envelope(
                 "envelope_parse_error", str(exc),
@@ -196,8 +195,14 @@ class WebSocketSession:
             )]
 
         # Handle pings directly at transport level
-        if envelope.type == "ping":
-            await self._send(Pong())
+        if envelope.type == "session.ping":
+            await self._send_envelope(EventEnvelope(
+                session_id=session_id,
+                event_type="session.pong",
+                sequence=self._next_sequence(),
+                source="runtime",
+                payload={"nonce": str(envelope.payload.get("nonce", ""))},
+            ))
             return []
 
         # Route through V3EventHandler
@@ -210,7 +215,13 @@ class WebSocketSession:
             if not self._running:
                 break
             try:
-                await self.ws.send_text(json.dumps({"type": "ping"}))
+                await self._send_envelope(EventEnvelope(
+                    session_id=self.session_id,
+                    event_type="session.ping",
+                    sequence=self._next_sequence(),
+                    source="runtime",
+                    payload={"nonce": ""},
+                ))
             except Exception:
                 break
 
@@ -235,9 +246,10 @@ class WebSocketSession:
                 else ""
             )
             envelope = EventEnvelope(
-                session_id=get_session_id(),
+                session_id=self.session_id,
                 turn_id=turn_id,
-                type=msg_type,
+                event_type=msg_type,
+                sequence=self._next_sequence(),
                 payload=payload,
                 source="runtime",
             )
@@ -258,3 +270,7 @@ class WebSocketSession:
             await self.ws.send_text(json.dumps(message, ensure_ascii=False))
         except Exception:
             pass
+
+    def _next_sequence(self) -> int:
+        self._sequence += 1
+        return self._sequence

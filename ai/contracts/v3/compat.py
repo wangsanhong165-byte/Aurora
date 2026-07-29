@@ -6,7 +6,7 @@ No business code should read V2-style message formats directly.
 
 from __future__ import annotations
 
-from contracts.v3.envelope import EventEnvelope, PROTOCOL_VERSION
+from contracts.v3.envelope import EventEnvelope
 
 # ── V2 message type mapping (old string type → V3 event type) ────────────
 
@@ -88,10 +88,10 @@ def v2_flat_to_v3_envelope(raw: dict, *, default_session_id: str = "", default_t
         payload.pop(field, None)
 
     return EventEnvelope(
-        protocol_version="2.0",  # mark as converted from V2
-        session_id=default_session_id,
+        session_id=default_session_id or "session-legacy",
         turn_id=default_turn_id,
-        type=v3_type,
+        event_type=v3_type,
+        sequence=1,
         payload=payload,
     )
 

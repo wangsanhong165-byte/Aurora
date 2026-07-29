@@ -48,10 +48,11 @@ def test_session_announces_transport_protocol_v3():
     asyncio.run(WebSocketSession(websocket, handler).run())
 
     init = websocket.messages[0]
-    assert init["type"] == "session"
-    # V3 envelope: config is nested in payload
-    payload = init.get("payload", init)
-    assert payload["config"]["protocol_version"] == "3.0"
+    assert init["protocolVersion"] == "3.0"
+    assert init["eventType"] == "session.opened"
+    assert init["sessionId"]
+    assert init["turnId"] is None
+    assert init["payload"]["capabilities"]
 
 
 def test_production_runtime_has_no_legacy_turn_entrypoint():

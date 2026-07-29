@@ -2,8 +2,8 @@
 
 import { eventBus } from '../core/event-bus'
 import type { OutboundMessage } from './protocol'
-import { createEnvelope, validateEnvelope, validateVersion, SequenceTracker, type EventEnvelope } from './envelope'
-import { v2ToV3Envelope } from './compat'
+import { validateVersion, SequenceTracker } from './envelope'
+import { v2ToV3Envelope, type TransitionalEnvelope } from './compat'
 
 export class RuntimeClient {
   private ws: WebSocket | null = null
@@ -64,13 +64,12 @@ export class RuntimeClient {
       try {
         const raw = JSON.parse(event.data) as Record<string, unknown>
 
-        // Detect V3 envelope vs V2 flat message
-        if ('protocol_version' in raw) {
+        // Canonical V3 envelope or transitional V2 flat frame.
+        if ('protocolVersion' in raw) {
           this.dispatchV3Envelope(raw)
         } else {
-          // Legacy V2 flat message — convert and dispatch
           const envelope = v2ToV3Envelope(raw, this.sessionId)
-          this.dispatchV3Payload(envelope.type, envelope.payload, envelope.turn_id)
+          this.dispatchV3Payload(envelope.eventType, envelope.payload, envelope.turnId ?? '')
         }
       } catch (err) {
         console.warn('[WS] Malformed message:', err)
@@ -105,19 +104,16 @@ export class RuntimeClient {
   private sendViaEnvelope(data: Record<string, unknown>): void {
     if (this.ws?.readyState !== WebSocket.OPEN) return
     this.sequenceCounter++
-    const envelope = createEnvelope(
-      String(data.type ?? ''),
-      data,
-      {
-        session_id: this.sessionId,
-        sequence: this.sequenceCounter,
-        source: 'frontend',
-      },
-    )
-    try {
-      validateEnvelope(envelope)
-    } catch {
-      return
+    const envelope: TransitionalEnvelope = {
+      protocolVersion: '3.0',
+      eventId: `evt_${crypto.randomUUID()}`,
+      eventType: String(data.type ?? ''),
+      sessionId: this.sessionId,
+      turnId: null,
+      sequence: this.sequenceCounter,
+      timestamp: Date.now() / 1000,
+      source: 'frontend',
+      payload: data,
     }
     this.ws.send(JSON.stringify(envelope))
   }
@@ -146,33 +142,33 @@ export class RuntimeClient {
 
   private dispatchV3Envelope(raw: Record<string, unknown>): void {
     try {
-      const envelope = raw as unknown as EventEnvelope
+      const envelope = raw as unknown as TransitionalEnvelope
 
       // Validate protocol version
       try {
-        validateVersion(envelope.protocol_version)
+        validateVersion(envelope.protocolVersion)
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'unsupported version'
-        console.warn('[WS] Unsupported protocol version:', envelope.protocol_version)
+        console.warn('[WS] Unsupported protocol version:', envelope.protocolVersion)
         eventBus.emit('runtime:error', { code: 'unsupported_protocol_version', message: msg })
         return
       }
 
       // Update session ID from server
-      if (envelope.session_id && !this.sessionId) {
-        this.sessionId = envelope.session_id
+      if (envelope.sessionId && !this.sessionId) {
+        this.sessionId = envelope.sessionId
       }
 
       // Check sequence (out-of-order / duplicate detection)
-      if (envelope.type !== 'session' && envelope.type !== 'pong') {
-        if (!this.sequenceTracker.accept(envelope.source, envelope.sequence)) {
-          console.warn('[WS] Duplicate or out-of-order message:', envelope.type, envelope.sequence)
+      if (envelope.eventType !== 'session.opened' && envelope.eventType !== 'session.pong') {
+        if (!this.sequenceTracker.accept(envelope.sessionId, envelope.sequence)) {
+          console.warn('[WS] Duplicate or out-of-order message:', envelope.eventType, envelope.sequence)
           return
         }
       }
 
       // Dispatch by type
-      this.dispatchV3Payload(envelope.type, envelope.payload, envelope.turn_id)
+      this.dispatchV3Payload(envelope.eventType, envelope.payload, envelope.turnId ?? '')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'parse error'
       console.warn('[WS] Envelope error:', msg)
@@ -195,7 +191,10 @@ export class RuntimeClient {
         }
         break
 
-      case 'assistant.text':
+      case 'assistant.text.started':
+        break
+
+      case 'assistant.text.completed':
         eventBus.emit('runtime:message', {
           text: payload.text as string,
           reasoning: payload.reasoning as string | undefined,
@@ -205,7 +204,7 @@ export class RuntimeClient {
       case 'tts.started':
         eventBus.emit('runtime:tts_start', {
           format: (payload.format as string) || 'wav',
-          sequence: (payload.sequence as number) || 0,
+          sequence: (payload.audioSequence as number) || 0,
         })
         eventBus.emit('character:activity', { activity: 'speaking' })
         break
@@ -237,6 +236,10 @@ export class RuntimeClient {
 
       case 'user.text':
         eventBus.emit('runtime:user_message', { text: payload.text as string })
+        break
+
+      case 'session.opened':
+        eventBus.emit('connection:change', { connected: true })
         break
 
       // ── Legacy V2 event types (compatibility) ──
@@ -397,11 +400,11 @@ export class RuntimeClient {
         break
 
       // Keepalive
-      case 'ping':
-        this.sendViaEnvelope({ type: 'pong' })
+      case 'session.ping':
+        this.sendViaEnvelope({ type: 'session.pong', nonce: payload.nonce ?? '' })
         break
 
-      case 'pong':
+      case 'session.pong':
         this.pongPending = false
         break
 
@@ -421,7 +424,7 @@ export class RuntimeClient {
         return
       }
       this.pongPending = true
-      this.send({ type: 'ping' } as unknown as OutboundMessage)
+      this.sendViaEnvelope({ type: 'session.ping', nonce: '' })
     }, 30000)
   }
 

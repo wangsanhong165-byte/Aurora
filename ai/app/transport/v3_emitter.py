@@ -7,12 +7,12 @@ through the existing TransportEmitter for legacy clients.
 from __future__ import annotations
 
 import base64
-import time
 import logging
 from typing import Callable
 
 from contracts.v3.envelope import EventEnvelope
 from app.runtime.character_turn import CharacterTurn
+from app.telemetry import get_session_id
 
 logger = logging.getLogger("transport.v3_emitter")
 
@@ -29,7 +29,7 @@ class V3Emitter:
     """Emit V3 EventEnvelope lifecycle for a completed turn."""
 
     def __init__(self, session_id: str, turn_id: str, source: str = "runtime"):
-        self.session_id = session_id
+        self.session_id = session_id or get_session_id()
         self.turn_id = turn_id
         self.source = source
 
@@ -38,7 +38,7 @@ class V3Emitter:
             session_id=self.session_id,
             turn_id=self.turn_id,
             sequence=_next_sequence(),
-            type=event_type,
+            event_type=event_type,
             payload=payload,
             source=self.source,
         )
@@ -47,7 +47,8 @@ class V3Emitter:
         """Create V3 runtime.status event before any work begins."""
         return EventEnvelope(
             session_id=self.session_id,
-            type="runtime.status",
+            event_type="runtime.status",
+            sequence=_next_sequence(),
             payload={"state": "processing", "message": "Thinking..."},
             source=self.source,
         )
@@ -57,13 +58,13 @@ class V3Emitter:
         if turn.error:
             return [
                 self._event("turn.failed", {
-                    "turnId": turn.turn_id,
                     "code": turn.error.code,
                     "message": turn.error.message,
                 }),
                 EventEnvelope(
                     session_id=self.session_id,
-                    type="runtime.status",
+                    event_type="runtime.status",
+                    sequence=_next_sequence(),
                     payload={"state": "idle", "message": ""},
                     source=self.source,
                 ),
@@ -72,10 +73,14 @@ class V3Emitter:
         envelopes: list[EventEnvelope] = []
 
         # Turn started
-        envelopes.append(self._event("turn.started", {"turnId": turn.turn_id}))
+        envelopes.append(self._event("turn.started", {
+            "origin": "user",
+            "inputMode": "audio" if turn.input.audio else "text",
+        }))
 
         # Assistant text
-        envelopes.append(self._event("assistant.text", {
+        envelopes.append(self._event("assistant.text.started", {}))
+        envelopes.append(self._event("assistant.text.completed", {
             "text": turn.reply_text,
             "reasoning": turn.reasoning or "",
         }))
@@ -84,12 +89,12 @@ class V3Emitter:
         if turn.audio:
             envelopes.append(self._event("tts.started", {
                 "format": "wav",
-                "sequence": 0,
+                "audioSequence": 0,
             }))
             envelopes.append(self._event("tts.audio", {
                 "data": base64.b64encode(turn.audio).decode("ascii"),
                 "format": "wav",
-                "sequence": 0,
+                "audioSequence": 0,
                 "volumes": [],
             }))
             envelopes.append(self._event("tts.completed", {
@@ -103,13 +108,11 @@ class V3Emitter:
             "behavior": plan.behavior,
             "attention": plan.attention,
             "energy": plan.energy,
-            "speaking": plan.speaking,
-            "timestamp": time.time(),
             "durationMs": plan.duration_ms,
             "contextTags": list(plan.context_tags),
         }))
 
         # Turn completed
-        envelopes.append(self._event("turn.completed", {"turnId": turn.turn_id}))
+        envelopes.append(self._event("turn.completed", {"reason": "complete"}))
 
         return envelopes

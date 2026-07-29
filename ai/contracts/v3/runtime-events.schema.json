@@ -1,0 +1,1516 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Companion Runtime V3 Events",
+  "protocolVersion": "3.0",
+  "envelope": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "protocolVersion",
+      "eventId",
+      "eventType",
+      "sessionId",
+      "turnId",
+      "sequence",
+      "source",
+      "timestamp",
+      "payload"
+    ],
+    "properties": {
+      "protocolVersion": {
+        "const": "3.0"
+      },
+      "eventId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "eventType": {
+        "enum": [
+          "asr.failed",
+          "asr.result",
+          "asr.started",
+          "assistant.failed",
+          "assistant.text.chunk",
+          "assistant.text.completed",
+          "assistant.text.started",
+          "character.component",
+          "character.control.requested",
+          "character.expression",
+          "character.intent",
+          "character.motion",
+          "character.snapshot",
+          "character.suggestion",
+          "character.suggestion.accepted",
+          "character.suggestion.rejected",
+          "configuration.updated",
+          "management.failed",
+          "management.requested",
+          "management.result",
+          "protocol.error",
+          "runtime.degraded",
+          "runtime.ready",
+          "runtime.status",
+          "service.status",
+          "session.closed",
+          "session.open",
+          "session.opened",
+          "session.ping",
+          "session.pong",
+          "telemetry.batch",
+          "tool.failed",
+          "tool.requested",
+          "tool.result",
+          "tool.started",
+          "tts.audio",
+          "tts.cancelled",
+          "tts.completed",
+          "tts.failed",
+          "tts.started",
+          "turn.cancelled",
+          "turn.completed",
+          "turn.failed",
+          "turn.progress",
+          "turn.started",
+          "user.audio.cancelled",
+          "user.audio.chunk",
+          "user.audio.completed",
+          "user.audio.started",
+          "user.text"
+        ]
+      },
+      "sessionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "turnId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "sequence": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "source": {
+        "enum": [
+          "frontend",
+          "runtime",
+          "bridge",
+          "lifecycle",
+          "platform"
+        ]
+      },
+      "timestamp": {
+        "type": "number",
+        "exclusiveMinimum": 0
+      },
+      "payload": {
+        "type": "object"
+      }
+    }
+  },
+  "events": {
+    "asr.failed": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "FailurePayload",
+        "type": "object"
+      }
+    },
+    "asr.result": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Confidence"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Language"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "AsrResultPayload",
+        "type": "object"
+      }
+    },
+    "asr.started": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Language"
+          }
+        },
+        "title": "AsrStartedPayload",
+        "type": "object"
+      }
+    },
+    "assistant.failed": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "FailurePayload",
+        "type": "object"
+      }
+    },
+    "assistant.text.chunk": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "delta": {
+            "title": "Delta",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "delta",
+          "text"
+        ],
+        "title": "AssistantTextChunkPayload",
+        "type": "object"
+      }
+    },
+    "assistant.text.completed": {
+      "scope": "turn",
+      "payload": {
+        "$defs": {
+          "AssistantSegment": {
+            "additionalProperties": false,
+            "properties": {
+              "text": {
+                "title": "Text",
+                "type": "string"
+              },
+              "emotion": {
+                "title": "Emotion",
+                "type": "string"
+              },
+              "behavior": {
+                "title": "Behavior",
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "emotion",
+              "behavior"
+            ],
+            "title": "AssistantSegment",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "reasoning": {
+            "default": "",
+            "title": "Reasoning",
+            "type": "string"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/$defs/AssistantSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "AssistantTextCompletedPayload",
+        "type": "object"
+      }
+    },
+    "assistant.text.started": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {},
+        "title": "EmptyPayload",
+        "type": "object"
+      }
+    },
+    "character.component": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "displayName": {
+            "default": "",
+            "title": "Displayname",
+            "type": "string"
+          },
+          "controller": {
+            "default": "",
+            "title": "Controller",
+            "type": "string"
+          },
+          "priority": {
+            "default": 0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "expression": {
+            "default": "",
+            "title": "Expression",
+            "type": "string"
+          },
+          "paramIds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Paramids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "enabled"
+        ],
+        "title": "CharacterComponentPayload",
+        "type": "object"
+      }
+    },
+    "character.control.requested": {
+      "scope": "system",
+      "payload": {
+        "$defs": {
+          "JsonValue": {}
+        },
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Params",
+            "type": "object"
+          },
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "requestId"
+        ],
+        "title": "CharacterControlRequestedPayload",
+        "type": "object"
+      }
+    },
+    "character.expression": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "intensity": {
+            "default": 1.0,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Intensity",
+            "type": "number"
+          },
+          "controller": {
+            "default": "",
+            "title": "Controller",
+            "type": "string"
+          },
+          "priority": {
+            "default": 0,
+            "title": "Priority",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CharacterExpressionPayload",
+        "type": "object"
+      }
+    },
+    "character.intent": {
+      "scope": "turn",
+      "payload": {
+        "$defs": {
+          "NaturalVadPayload": {
+            "additionalProperties": false,
+            "properties": {
+              "valence": {
+                "title": "Valence",
+                "type": "number"
+              },
+              "arousal": {
+                "title": "Arousal",
+                "type": "number"
+              },
+              "dominance": {
+                "title": "Dominance",
+                "type": "number"
+              }
+            },
+            "required": [
+              "valence",
+              "arousal",
+              "dominance"
+            ],
+            "title": "NaturalVadPayload",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "emotion": {
+            "title": "Emotion",
+            "type": "string"
+          },
+          "behavior": {
+            "title": "Behavior",
+            "type": "string"
+          },
+          "attention": {
+            "default": "user",
+            "enum": [
+              "user",
+              "screen",
+              "away",
+              "neutral"
+            ],
+            "title": "Attention",
+            "type": "string"
+          },
+          "energy": {
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Energy",
+            "type": "number"
+          },
+          "durationMs": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Durationms"
+          },
+          "naturalVAD": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/NaturalVadPayload"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "contextTags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Contexttags",
+            "type": "array"
+          }
+        },
+        "required": [
+          "emotion",
+          "behavior",
+          "energy"
+        ],
+        "title": "CharacterIntentPayload",
+        "type": "object"
+      }
+    },
+    "character.motion": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "controller": {
+            "default": "",
+            "title": "Controller",
+            "type": "string"
+          },
+          "priority": {
+            "default": 0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "loop": {
+            "default": false,
+            "title": "Loop",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "CharacterMotionPayload",
+        "type": "object"
+      }
+    },
+    "character.snapshot": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "components": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Components",
+            "type": "object"
+          },
+          "expression": {
+            "default": "",
+            "title": "Expression",
+            "type": "string"
+          },
+          "expressionIntensity": {
+            "default": 0.0,
+            "title": "Expressionintensity",
+            "type": "number"
+          },
+          "motion": {
+            "default": "",
+            "title": "Motion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "components"
+        ],
+        "title": "CharacterSnapshotPayload",
+        "type": "object"
+      }
+    },
+    "character.suggestion": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "suggestionId": {
+            "title": "Suggestionid",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "suggestionId",
+          "target",
+          "name",
+          "action",
+          "reason"
+        ],
+        "title": "CharacterSuggestionPayload",
+        "type": "object"
+      }
+    },
+    "character.suggestion.accepted": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "suggestionId": {
+            "title": "Suggestionid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "suggestionId"
+        ],
+        "title": "CharacterSuggestionAcceptedPayload",
+        "type": "object"
+      }
+    },
+    "character.suggestion.rejected": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "suggestionId": {
+            "title": "Suggestionid",
+            "type": "string"
+          },
+          "reason": {
+            "default": "",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "suggestionId"
+        ],
+        "title": "CharacterSuggestionRejectedPayload",
+        "type": "object"
+      }
+    },
+    "configuration.updated": {
+      "scope": "system",
+      "payload": {
+        "$defs": {
+          "JsonValue": {}
+        },
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Config",
+            "type": "object"
+          }
+        },
+        "required": [
+          "config"
+        ],
+        "title": "ConfigurationUpdatedPayload",
+        "type": "object"
+      }
+    },
+    "management.failed": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "action",
+          "code",
+          "message"
+        ],
+        "title": "ManagementFailedPayload",
+        "type": "object"
+      }
+    },
+    "management.requested": {
+      "scope": "system",
+      "payload": {
+        "$defs": {
+          "JsonValue": {}
+        },
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Params",
+            "type": "object"
+          }
+        },
+        "required": [
+          "requestId",
+          "action"
+        ],
+        "title": "ManagementRequestedPayload",
+        "type": "object"
+      }
+    },
+    "management.result": {
+      "scope": "system",
+      "payload": {
+        "$defs": {
+          "JsonValue": {}
+        },
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Data",
+            "type": "object"
+          }
+        },
+        "required": [
+          "requestId",
+          "action",
+          "data"
+        ],
+        "title": "ManagementResultPayload",
+        "type": "object"
+      }
+    },
+    "protocol.error": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "requestId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Requestid"
+          },
+          "offendingEventId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Offendingeventid"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ProtocolErrorPayload",
+        "type": "object"
+      }
+    },
+    "runtime.degraded": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "services": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Services",
+            "type": "array"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RuntimeDegradedPayload",
+        "type": "object"
+      }
+    },
+    "runtime.ready": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "services": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Services",
+            "type": "array"
+          }
+        },
+        "title": "RuntimeReadyPayload",
+        "type": "object"
+      }
+    },
+    "runtime.status": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "message": {
+            "default": "",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "RuntimeStatusPayload",
+        "type": "object"
+      }
+    },
+    "service.status": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "starting",
+              "ready",
+              "degraded",
+              "failed",
+              "stopped"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "service",
+          "state"
+        ],
+        "title": "ServiceStatusPayload",
+        "type": "object"
+      }
+    },
+    "session.closed": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "SessionClosedPayload",
+        "type": "object"
+      }
+    },
+    "session.open": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          }
+        },
+        "title": "SessionOpenPayload",
+        "type": "object"
+      }
+    },
+    "session.opened": {
+      "scope": "system",
+      "payload": {
+        "$defs": {
+          "JsonValue": {}
+        },
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "config": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Config",
+            "type": "object"
+          }
+        },
+        "title": "SessionOpenedPayload",
+        "type": "object"
+      }
+    },
+    "session.ping": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "nonce": {
+            "default": "",
+            "title": "Nonce",
+            "type": "string"
+          }
+        },
+        "title": "SessionProbePayload",
+        "type": "object"
+      }
+    },
+    "session.pong": {
+      "scope": "system",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "nonce": {
+            "default": "",
+            "title": "Nonce",
+            "type": "string"
+          }
+        },
+        "title": "SessionProbePayload",
+        "type": "object"
+      }
+    },
+    "telemetry.batch": {
+      "scope": "system",
+      "payload": {
+        "$defs": {
+          "JsonValue": {},
+          "TelemetryEventPayload": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "timestamp": {
+                "title": "Timestamp",
+                "type": "number"
+              },
+              "data": {
+                "additionalProperties": {
+                  "$ref": "#/$defs/JsonValue"
+                },
+                "title": "Data",
+                "type": "object"
+              }
+            },
+            "required": [
+              "name",
+              "timestamp"
+            ],
+            "title": "TelemetryEventPayload",
+            "type": "object"
+          }
+        },
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/$defs/TelemetryEventPayload"
+            },
+            "title": "Events",
+            "type": "array"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "title": "TelemetryBatchPayload",
+        "type": "object"
+      }
+    },
+    "tool.failed": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "tool",
+          "code",
+          "message"
+        ],
+        "title": "ToolFailedPayload",
+        "type": "object"
+      }
+    },
+    "tool.requested": {
+      "scope": "turn",
+      "payload": {
+        "$defs": {
+          "JsonValue": {}
+        },
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          },
+          "args": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Args",
+            "type": "object"
+          },
+          "risk": {
+            "title": "Risk",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "tool",
+          "args",
+          "risk"
+        ],
+        "title": "ToolRequestedPayload",
+        "type": "object"
+      }
+    },
+    "tool.result": {
+      "scope": "turn",
+      "payload": {
+        "$defs": {
+          "JsonValue": {}
+        },
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          },
+          "result": {
+            "additionalProperties": {
+              "$ref": "#/$defs/JsonValue"
+            },
+            "title": "Result",
+            "type": "object"
+          }
+        },
+        "required": [
+          "requestId",
+          "tool",
+          "result"
+        ],
+        "title": "ToolResultPayload",
+        "type": "object"
+      }
+    },
+    "tool.started": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requestId",
+          "tool"
+        ],
+        "title": "ToolStartedPayload",
+        "type": "object"
+      }
+    },
+    "tts.audio": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "title": "Data",
+            "type": "string"
+          },
+          "format": {
+            "default": "wav",
+            "title": "Format",
+            "type": "string"
+          },
+          "audioSequence": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Audiosequence",
+            "type": "integer"
+          },
+          "volumes": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Volumes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "TtsAudioPayload",
+        "type": "object"
+      }
+    },
+    "tts.cancelled": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "default": "cancelled",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "CancelledPayload",
+        "type": "object"
+      }
+    },
+    "tts.completed": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "default": "complete",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "TurnCompletedPayload",
+        "type": "object"
+      }
+    },
+    "tts.failed": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "FailurePayload",
+        "type": "object"
+      }
+    },
+    "tts.started": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "default": "wav",
+            "title": "Format",
+            "type": "string"
+          },
+          "audioSequence": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Audiosequence",
+            "type": "integer"
+          }
+        },
+        "title": "TtsStartedPayload",
+        "type": "object"
+      }
+    },
+    "turn.cancelled": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "default": "cancelled",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "CancelledPayload",
+        "type": "object"
+      }
+    },
+    "turn.completed": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "default": "complete",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "TurnCompletedPayload",
+        "type": "object"
+      }
+    },
+    "turn.failed": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "FailurePayload",
+        "type": "object"
+      }
+    },
+    "turn.progress": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "message": {
+            "default": "",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage"
+        ],
+        "title": "TurnProgressPayload",
+        "type": "object"
+      }
+    },
+    "turn.started": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "origin": {
+            "default": "user",
+            "enum": [
+              "user",
+              "initiative",
+              "tool",
+              "system"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "inputMode": {
+            "default": "text",
+            "enum": [
+              "text",
+              "audio",
+              "initiative"
+            ],
+            "title": "Inputmode",
+            "type": "string"
+          }
+        },
+        "title": "TurnStartedPayload",
+        "type": "object"
+      }
+    },
+    "user.audio.cancelled": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "default": "cancelled",
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "title": "CancelledPayload",
+        "type": "object"
+      }
+    },
+    "user.audio.chunk": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "samples": {
+            "items": {
+              "type": "number"
+            },
+            "title": "Samples",
+            "type": "array"
+          }
+        },
+        "required": [
+          "samples"
+        ],
+        "title": "UserAudioChunkPayload",
+        "type": "object"
+      }
+    },
+    "user.audio.completed": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "sampleRate": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Samplerate"
+          }
+        },
+        "title": "UserAudioCompletedPayload",
+        "type": "object"
+      }
+    },
+    "user.audio.started": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "sampleRate": {
+            "exclusiveMinimum": 0,
+            "title": "Samplerate",
+            "type": "integer"
+          },
+          "channels": {
+            "default": 1,
+            "exclusiveMinimum": 0,
+            "title": "Channels",
+            "type": "integer"
+          },
+          "format": {
+            "default": "pcm_f32",
+            "enum": [
+              "pcm_f32",
+              "pcm_s16",
+              "wav"
+            ],
+            "title": "Format",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sampleRate"
+        ],
+        "title": "UserAudioStartedPayload",
+        "type": "object"
+      }
+    },
+    "user.text": {
+      "scope": "turn",
+      "payload": {
+        "additionalProperties": false,
+        "properties": {
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "UserTextPayload",
+        "type": "object"
+      }
+    }
+  }
+}

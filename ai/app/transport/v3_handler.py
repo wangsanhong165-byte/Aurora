@@ -68,14 +68,15 @@ class V3EventHandler:
 
     def _handle_system(self, envelope: EventEnvelope) -> list[EventEnvelope]:
         """Handle system-level events that require no turn or pipeline."""
-        if envelope.type == "ping":
+        if envelope.type == "session.ping":
             # Build a V3 pong response
             return [EventEnvelope(
                 session_id=envelope.session_id,
-                type="pong",
+                event_type="session.pong",
+                sequence=envelope.sequence + 1,
                 source="runtime",
             )]
-        if envelope.type == "pong":
+        if envelope.type == "session.pong":
             return []
         # Other system events are informational — no response needed
         return []
@@ -128,7 +129,8 @@ class V3EventHandler:
             protocol_version="3.0",
             session_id=request.session_id,
             turn_id=request.turn_id,
-            type=getattr(message, "type", ""),
+            event_type=getattr(message, "type", ""),
+            sequence=max(1, request.sequence + 1),
             payload=payload,
             source="runtime",
         )
