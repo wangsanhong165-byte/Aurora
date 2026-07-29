@@ -96,6 +96,12 @@ class EnvelopeValidationError(ValueError):
     """Raised when an envelope fails validation."""
 
 
+# Event types that do not require a turn_id (system-level events)
+SYSTEM_EVENT_TYPES = frozenset({
+    "session.opened", "runtime.status", "ping", "pong", "error",
+})
+
+
 def validate_version(version: str) -> None:
     """Raise EnvelopeValidationError if the protocol version is unsupported."""
     if version in SUPPORTED_VERSIONS:
@@ -117,8 +123,8 @@ def validate_envelope(envelope: EventEnvelope) -> None:
     Checks performed:
       - protocol_version is supported
       - event_id is non-empty
-      - session_id is non-empty
-      - turn_id is non-empty
+      - session_id is non-empty for turn events
+      - turn_id is non-empty for turn events (system events exempt)
       - type is non-empty
       - sequence >= 0
     """
@@ -127,14 +133,17 @@ def validate_envelope(envelope: EventEnvelope) -> None:
     validate_version(envelope.protocol_version)
     if not envelope.event_id:
         raise EnvelopeValidationError("event_id is required")
-    if not envelope.session_id:
-        raise EnvelopeValidationError("session_id is required")
-    if not envelope.turn_id:
-        raise EnvelopeValidationError("turn_id is required")
     if not envelope.type:
         raise EnvelopeValidationError("type is required")
     if envelope.sequence < 0:
         raise EnvelopeValidationError("sequence must be >= 0")
+    # System-level events do not require a turn_id or session_id.
+    # Turn events must carry both so the runtime can route correctly.
+    if envelope.type not in SYSTEM_EVENT_TYPES:
+        if not envelope.session_id:
+            raise EnvelopeValidationError("session_id is required for turn events")
+        if not envelope.turn_id:
+            raise EnvelopeValidationError("turn_id is required for turn events")
 
 
 # ── Error response helper ───────────────────────────────────────────────
