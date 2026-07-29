@@ -96,6 +96,10 @@ function createWindow() {
 
 function loadAppUrl() {
   // Load the app URL (only call AFTER services are ready)
+  if (statusTimer) {
+    clearInterval(statusTimer)
+    statusTimer = null
+  }
   const targetUrl = isDev ? DEV_URL : PROD_URL
   mainUiLoaded = true
   mainWindow.loadURL(targetUrl).catch(error => {
@@ -236,7 +240,7 @@ function setupIPC() {
 
   // ProcessManager / lifecycle IPC (new)
   ipcMain.handle('get-status', () => {
-    return pm.getStatus()
+    return pm.refresh()
   })
   ipcMain.handle('lifecycle:getSnapshot', () => pm.refresh())
   ipcMain.handle('lifecycle:command', async (_event, command) => {
@@ -291,7 +295,6 @@ app.whenReady().then(async () => {
   // The bootstrap page will then receive live lifecycle:snapshot events
   // showing real-time service startup progress instead of stale "blocked".
   const startPromise = pm.startAll()
-  const startTime = Date.now()
 
   // Startup timeout: force the main UI to load after STARTUP_TIMEOUT_MS
   // even if services aren't fully ready. The UI can show its own degraded state.
@@ -302,14 +305,10 @@ app.whenReady().then(async () => {
     }
   }, STARTUP_TIMEOUT_MS)
 
-  // Start the readiness polling loop — use cached status, no subprocess spawn.
-  // Full refresh (pm.refresh()) spawns a Python subprocess; rate-limited by
-  // ProcessManager to 15s minimum. Every 15th cycle (~30s) does a forced fresh.
-  let loadGen = 0
-  statusTimer = setInterval(async () => {
-    const status = loadGen++ % 15 === 0 && mainUiLoaded
-      ? await pm.refresh(true)   // force fresh every ~30s
-      : pm.getStatus()           // cached, no subprocess
+  // Poll only the in-memory startup snapshot. loadAppUrl() clears this timer,
+  // so the stable renderer never triggers background lifecycle subprocesses.
+  statusTimer = setInterval(() => {
+    const status = pm.getStatus()
     if (mainWindow?.isDestroyed?.()) return
     mainWindow?.webContents.send('lifecycle:snapshot', status)
     // TEXT_READY is sufficient — the UI works for text chat while
@@ -318,7 +317,7 @@ app.whenReady().then(async () => {
       clearTimeout(startupTimer)
       loadAppUrl()
     }
-  }, mainUiLoaded ? 2000 : 500)
+  }, 500)
 
   // Now show the window — services are already starting in the background.
   mainWindow.show()
