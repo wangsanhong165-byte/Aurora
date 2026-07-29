@@ -353,10 +353,10 @@ def test_character_state_machine_exists():
 
 def test_character_controller_consumes_runtime_character_intents():
     """Backend character updates must reach the Live2D character controller."""
-    client = (FRONTEND / "src" / "runtime" / "client.ts").read_text(encoding="utf-8")
+    adapter = (FRONTEND / "src" / "runtime" / "adapter.ts").read_text(encoding="utf-8")
     controllers = (
         FRONTEND / "src" / "character" / "controllers.ts"
     ).read_text(encoding="utf-8")
 
-    assert "eventBus.emit('runtime:character_intent'" in client
-    assert "eventBus.on('runtime:character_intent'" in controllers
+    assert "eventBus.emit('runtime:character.intent'" in adapter
+    assert "eventBus.on('runtime:character.intent'" in controllers

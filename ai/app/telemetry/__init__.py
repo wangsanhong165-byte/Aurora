@@ -26,7 +26,7 @@ class TelemetryStage(str, Enum):
     TURN_CANCELLED = "turn.cancelled"
 
     ASR_STARTED = "asr.started"
-    ASR_COMPLETED = "asr.completed"
+    ASR_RESULT = "asr.result"
 
     MEMORY_RETRIEVE_STARTED = "memory.retrieve.started"
     MEMORY_RETRIEVE_COMPLETED = "memory.retrieve.completed"
@@ -38,7 +38,7 @@ class TelemetryStage(str, Enum):
     LLM_COMPLETED = "llm.completed"
 
     TOOL_STARTED = "tool.started"
-    TOOL_COMPLETED = "tool.completed"
+    TOOL_RESULT = "tool.result"
 
     INTENT_CREATED = "intent.created"
 
@@ -48,8 +48,8 @@ class TelemetryStage(str, Enum):
     AUDIO_STARTED = "audio.started"
     AUDIO_COMPLETED = "audio.completed"
 
-    CHARACTER_UPDATE_SENT = "character.update.sent"
-    CHARACTER_UPDATE_RECEIVED = "character.update.received"
+    CHARACTER_INTENT_SENT = "character.intent.sent"
+    CHARACTER_INTENT_RECEIVED = "character.intent.received"
 
     ACTION_ENQUEUED = "action.enqueued"
     MOTION_STARTED = "motion.started"

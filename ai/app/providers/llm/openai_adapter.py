@@ -1,7 +1,7 @@
 """OpenAILLMProvider — implements LLMInterface via OpenAI-compatible HTTP API.
 
 Wraps the existing OpenAILLMAdapter (from app.models.http_adapters) into
-the v2 LLMInterface. Handles the sync-to-async bridge via asyncio.to_thread.
+the canonical LLMInterface. Handles sync-to-async bridge via asyncio.to_thread.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from app.models.http_adapters import OpenAILLMAdapter
 
 
 class OpenAILLMProvider(LLMInterface):
-    """Async wrapper around OpenAILLMAdapter for the v2 Runtime.
+    """Async wrapper around OpenAILLMAdapter for the CharacterTurn Runtime.
 
     Runs the synchronous OpenAILLMAdapter.generate() in a thread pool
-    via asyncio.to_thread so the v2 pipeline stays async.
+    via asyncio.to_thread so the CharacterTurn pipeline stays async.
 
     Response normalization:
       The DefaultPlanner instructs the LLM to output structured JSON:

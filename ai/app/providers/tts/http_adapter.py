@@ -1,7 +1,7 @@
 """HTTPTTSProvider — implements TTSInterface via HTTP TTS service.
 
 Wraps the existing HTTPTTSAdapter (from app.models.http_adapters) into
-the v2 TTSInterface. Handles sync-to-async bridge via asyncio.to_thread.
+the canonical TTSInterface. Handles sync-to-async bridge via asyncio.to_thread.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from app.models.http_adapters import HTTPTTSAdapter
 
 
 class HTTPTTSProvider(TTSInterface):
-    """Async wrapper around HTTPTTSAdapter for the v2 Runtime."""
+    """Async wrapper around HTTPTTSAdapter for the CharacterTurn Runtime."""
 
     def __init__(self, base_url: str | None = None):
         self._adapter = HTTPTTSAdapter(base_url=base_url)

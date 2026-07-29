@@ -15,11 +15,12 @@ def test_only_adapter_owns_model_update_and_parameter_writes():
     assert "model.update()" not in renderer
 
 
-def test_avatar_protocol_does_not_send_model_specific_or_realtime_parameters():
-    protocol = (ROOT / "app/avatar/protocol.py").read_text(encoding="utf-8")
+def test_avatar_domain_events_do_not_send_model_specific_or_realtime_parameters():
+    events = (ROOT / "app/avatar/events.py").read_text(encoding="utf-8")
 
-    assert "AvatarLipSync" not in protocol
-    assert 'preset: str = ""' not in protocol
+    assert "AvatarLipSync" not in events
+    assert 'preset: str = ""' not in events
+    assert 'type: str = "avatar_' not in events
 
 
 def test_behavior_resolver_stays_between_intent_and_live2d_controllers():
@@ -46,9 +47,9 @@ def test_live2d_config_declares_behavior_mapping_without_parameter_ids():
 
 def test_runtime_client_has_no_legacy_character_action_protocol():
     client = (ROOT / "frontend/src/runtime/client.ts").read_text(encoding="utf-8")
-    protocol = (ROOT / "frontend/src/runtime/protocol.ts").read_text(encoding="utf-8")
+    registry = (ROOT / "frontend/src/runtime/registry.ts").read_text(encoding="utf-8")
     assert "case 'character_action':" not in client
-    assert "CharacterAction" not in protocol
+    assert "CharacterAction" not in registry
 
 
 def test_mixer_declares_contribution_lifecycle_and_blend_modes():
@@ -84,12 +85,16 @@ def test_pipeline_idle_does_not_cancel_an_active_presentation_motion():
 
 
 def test_tts_keeps_character_speaking_until_browser_audio_ends():
-    client = (ROOT / "frontend/src/runtime/client.ts").read_text(encoding="utf-8")
+    adapter = (ROOT / "frontend/src/runtime/adapter.ts").read_text(encoding="utf-8")
 
-    tts_start = client.split("case 'tts_start':", 1)[1].split("case 'tts_audio':", 1)[0]
-    idle_status = client.split("case 'runtime_status':", 1)[1].split("case 'assistant_message':", 1)[0]
-    assert "character:activity', { activity: 'speaking'" in tts_start
-    assert "activity: 'idle'" not in idle_status
+    tts_started = adapter.split("case 'tts.started':", 1)[1].split(
+        "case 'tts.audio':", 1
+    )[0]
+    runtime_status = adapter.split("case 'runtime.status':", 1)[1].split(
+        "case 'runtime.ready':", 1
+    )[0]
+    assert "runtime:tts.started" in tts_started
+    assert "activity: 'idle'" not in runtime_status
 
 
 def test_llm_prompt_uses_semantic_intent_not_legacy_model_controls():
@@ -732,8 +737,10 @@ def test_initial_idle_starts_authored_native_idle_and_looping_motion_stays_alive
 def test_authored_native_idle_resumes_after_temporary_motion_finishes():
     controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
 
-    assert "resume authored idle after transient motion" in controllers
-    assert "if (this.currentActivity === 'idle' && !this.motionArbiter.isPlaying())" in controllers
+    assert "this._wasPlaying && !this.motionArbiter.isPlaying()" in controllers
+    assert "this._lastMotionEnded = true" in controllers
+    assert "this.startNativeIdleIfAvailable()" in controllers
+    assert "this.currentActivity === 'idle' && !this.motionArbiter.isPlaying()" in controllers
 
 
 def test_model_specific_idle_mouth_baseline_only_applies_outside_speech():

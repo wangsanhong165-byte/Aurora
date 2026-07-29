@@ -14,15 +14,15 @@ from app.avatar.motion_manager import MotionManager
 from app.avatar.parameter_mixer import ParameterMixer
 from app.avatar.natural_behavior import NaturalBehaviorManager
 from app.avatar.state import AvatarState, AvatarStateStore
-from app.avatar.protocol import (
+from app.avatar.events import (
+    AvatarEvent,
     AvatarRequest,
     AvatarSuggestion,
-    AvatarComponentUpdate,
-    AvatarExpressionUpdate,
-    AvatarMotionUpdate,
-    AvatarStateSnapshot,
-    AvatarSuggestionMsg,
-    serialize_avatar_message,
+    AvatarComponentChanged,
+    AvatarExpressionChanged,
+    AvatarMotionChanged,
+    AvatarStateRestored,
+    AvatarSuggestionCreated,
 )
 
 logger = logging.getLogger("avatar.controller")
@@ -83,12 +83,12 @@ class AvatarController:
 
     # ── Request Handling ───────────────────────────────────────────────
 
-    async def handle_request(self, request: AvatarRequest) -> list[dict]:
+    async def handle_request(self, request: AvatarRequest) -> list[AvatarEvent]:
         """Process an avatar control request with permission arbitration.
 
         Returns list of outgoing messages to send to frontend.
         """
-        responses: list[dict] = []
+        responses: list[AvatarEvent] = []
 
         allowed, reason = self.permission.authorize(
             request.source, request.priority, request.name,
@@ -116,8 +116,8 @@ class AvatarController:
 
         return responses
 
-    def _handle_component_request(self, req: AvatarRequest) -> list[dict]:
-        responses: list[dict] = []
+    def _handle_component_request(self, req: AvatarRequest) -> list[AvatarEvent]:
+        responses: list[AvatarEvent] = []
         comp = self.components.get_def(req.name)
 
         if req.action == "toggle":
@@ -133,7 +133,7 @@ class AvatarController:
         self.permission.claim(req.source, req.priority, req.name)
         state = self.components.get_state(req.name)
         if state:
-            responses.append(serialize_avatar_message(AvatarComponentUpdate(
+            responses.append(AvatarComponentChanged(
                 name=req.name,
                 display_name=comp.display_name if comp else req.name,
                 enabled=state.enabled,
@@ -141,45 +141,45 @@ class AvatarController:
                 priority=state.priority,
                 expression=comp.expression if comp else "",
                 param_ids=comp.param_ids if comp else [],
-            )))
+            ))
 
         return responses
 
-    def _handle_expression_request(self, req: AvatarRequest) -> list[dict]:
-        responses: list[dict] = []
+    def _handle_expression_request(self, req: AvatarRequest) -> list[AvatarEvent]:
+        responses: list[AvatarEvent] = []
         intensity = 1.0
         state = self.expressions.set(req.name, intensity, req.source, req.priority)
         self.permission.claim(req.source, req.priority, req.name)
-        responses.append(serialize_avatar_message(AvatarExpressionUpdate(
+        responses.append(AvatarExpressionChanged(
             name=state.name,
             intensity=state.intensity,
             controller=state.controller,
             priority=state.priority,
-        )))
+        ))
         return responses
 
-    def _handle_motion_request(self, req: AvatarRequest) -> list[dict]:
-        responses: list[dict] = []
+    def _handle_motion_request(self, req: AvatarRequest) -> list[AvatarEvent]:
+        responses: list[AvatarEvent] = []
         ok = self.motions.play(req.name, req.source, req.priority)
         if ok:
             self.permission.claim(req.source, req.priority, req.name)
             state = self.motions.get_current()
-            responses.append(serialize_avatar_message(AvatarMotionUpdate(
+            responses.append(AvatarMotionChanged(
                 name=state.name,
                 controller=state.controller,
                 priority=state.priority,
                 loop=state.loop,
-            )))
+            ))
         return responses
 
     # ── AI Suggestion ──────────────────────────────────────────────────
 
-    def suggest(self, suggestion: AvatarSuggestion) -> list[dict]:
+    def suggest(self, suggestion: AvatarSuggestion) -> list[AvatarEvent]:
         """Send an AI suggestion to the frontend for user approval."""
         sid = suggestion.suggestion_id or str(uuid.uuid4())[:8]
         suggestion.suggestion_id = sid
         self._pending_suggestions[sid] = suggestion
-        msg = AvatarSuggestionMsg(
+        event = AvatarSuggestionCreated(
             target=suggestion.target,
             name=suggestion.name,
             action=suggestion.action,
@@ -189,9 +189,9 @@ class AvatarController:
         logger.info("AI suggestion: %s.%s → %s (reason: %s, id=%s)",
                      suggestion.target, suggestion.name, suggestion.action,
                      suggestion.reason, sid)
-        return [serialize_avatar_message(msg)]
+        return [event]
 
-    async def handle_accept(self, suggestion_id: str) -> list[dict]:
+    async def handle_accept(self, suggestion_id: str) -> list[AvatarEvent]:
         """User accepted an AI suggestion. Convert to request and execute."""
         suggestion = self._pending_suggestions.pop(suggestion_id, None)
         if suggestion is None:
@@ -207,7 +207,7 @@ class AvatarController:
         )
         return await self.handle_request(request)
 
-    async def handle_reject(self, suggestion_id: str) -> list[dict]:
+    async def handle_reject(self, suggestion_id: str) -> list[AvatarEvent]:
         """User rejected an AI suggestion. Just remove it."""
         suggestion = self._pending_suggestions.pop(suggestion_id, None)
         if suggestion:
@@ -231,12 +231,12 @@ class AvatarController:
     def _save_state(self) -> None:
         self.state_store.save(self.get_state_snapshot())
 
-    def restore_state(self, state: AvatarState | None = None) -> list[dict]:
+    def restore_state(self, state: AvatarState | None = None) -> list[AvatarEvent]:
         """Restore avatar state from disk or provided state. Returns init messages."""
         if state is None:
             state = self.state_store.load()
 
-        responses: list[dict] = []
+        responses: list[AvatarEvent] = []
 
         # Restore components
         for name, enabled in state.components.items():
@@ -254,25 +254,24 @@ class AvatarController:
         self.motions.play(state.motion, "SYSTEM", PermissionLevel.SYSTEM)
 
         # Build state snapshot for frontend
-        responses.append(serialize_avatar_message(AvatarStateSnapshot(
+        responses.append(AvatarStateRestored(
             components=self.components.get_all_states(),
             expression=state.expression,
             expression_intensity=state.expression_intensity,
             motion=state.motion,
-            model_id=state.model_id,
-        )))
+        ))
 
         # Also send component payload
         payload = self.components.to_frontend_payload()
         for name, enabled in payload["state"].items():
-            responses.append(serialize_avatar_message(AvatarComponentUpdate(
+            responses.append(AvatarComponentChanged(
                 name=name,
                 display_name=name,
                 enabled=enabled,
                 controller="SYSTEM",
                 priority=80,
                 expression=payload["parts"].get(name, ""),
-            )))
+            ))
 
         return responses
 

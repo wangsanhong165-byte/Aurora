@@ -1,5 +1,5 @@
-# Motion Manager — manages gesture/motion playback with priority queue
-# Supports idle (looping), gesture (one-shot), and special action categories.
+# Motion Manager — manages behavior/motion playback with priority queue
+# Supports idle (looping), behavior (one-shot), and special action categories.
 
 from dataclasses import dataclass, field
 import time
@@ -10,12 +10,12 @@ logger = logging.getLogger("avatar.motion")
 
 @dataclass
 class MotionDef:
-    """Definition of a motion/gesture."""
+    """Definition of a character motion."""
     name: str
     priority: int = 50
     duration_ms: int = 500
     loop: bool = False
-    category: str = "gesture"     # "idle" | "gesture" | "special"
+    category: str = "behavior"    # "idle" | "behavior" | "special"
     motion_file: str = ""         # .motion3.json file name
 
     @classmethod
@@ -25,7 +25,7 @@ class MotionDef:
             priority=cfg.get("priority", 50),
             duration_ms=cfg.get("duration_ms", 500),
             loop=cfg.get("loop", False),
-            category=cfg.get("category", "gesture"),
+            category=cfg.get("category", "behavior"),
             motion_file=cfg.get("motion_file", ""),
         )
 
@@ -52,14 +52,14 @@ class MotionState:
 
 
 class MotionManager:
-    """Manages motion/gesture playback with priority-based queue.
+    """Manages character motion playback with a priority-based queue.
 
     Categories:
     - idle: looping idle animations, lowest priority, interrupted by anything
-    - gesture: one-shot gestures (wave, nod, tilt), medium priority
+    - behavior: one-shot actions (wave, nod, tilt), medium priority
     - special: high-priority special actions, interrupt everything lower
 
-    Only one motion plays at a time (exclusive). Gestures and specials
+    Only one motion plays at a time (exclusive). Behaviors and specials
     auto-return to idle when finished.
     """
 

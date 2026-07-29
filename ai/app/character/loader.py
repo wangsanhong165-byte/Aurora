@@ -93,7 +93,7 @@ class CharacterPackLoader:
         else:
             name_dict = {"zh": str(name_raw), "ja": str(name_raw)}
 
-        # Parse emotion_tags -> sprite tone mapping
+        # Parse emotion_tags into semantic emotion sprites
         sprites: dict[str, dict] = {}
         emotion_text = raw.get("emotion_tags", "")
         raw_sprites = raw.get("sprites", [])
@@ -125,13 +125,13 @@ class CharacterPackLoader:
         if refer: tts_config["ref_audio"]["neutral"] = "voice/" + Path(refer).name
         # Build rules
         rules = {
-            "tone_words": list(sprites.keys()) if sprites else ["neutral"],
+            "emotion_words": list(sprites.keys()) if sprites else ["neutral"],
             "max_segments_per_reply": 5,
             "avoid": ["避免不必要的动作描述", "避免角色崩坏", "Markdown"],
         }
 
         return {
-            "$schema": "character/v2",
+            "$schema": "character/v3",
             "id": char_id,
             "name": name_dict,
             "color": raw.get("color", "#888888"),
@@ -147,7 +147,7 @@ class CharacterPackLoader:
     def _parse_emotion_tags(
         text: str, sprites: list[dict]
     ) -> dict[str, dict]:
-        tone_map = {
+        emotion_map = {
             "平静": "neutral",
             "害羞": "shy",
             "开心": "happy",
@@ -169,10 +169,13 @@ class CharacterPackLoader:
             match = re.search(r"(\d+)\s*[?:：]\s*(.+)", line)
             if match:
                 label = match.group(2).strip()
-                tone = tone_map.get(label, "neutral")
+                emotion = emotion_map.get(label, "neutral")
                 sprite = sprites[i]
                 path = sprite.get("path", "")
-                result[tone] = {"path": f"portrait/{path}", "label": label}
+                result[emotion] = {
+                    "path": f"portrait/{path}",
+                    "label": label,
+                }
         if not result and sprites:
             result["neutral"] = {"path": f"portrait/{sprites[0].get('path', '')}", "label": "neutral"}
         return result

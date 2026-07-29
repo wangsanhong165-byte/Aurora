@@ -510,7 +510,6 @@ class CharacterRuntime:
             async def execute(self, *a, **kw): return ""
             async def list_tools(self, *a, **kw): return []
             async def set_expression(self, *a, **kw): pass
-            async def set_gesture(self, *a, **kw): pass
         return _Fallback()
 
     async def handle_turn(

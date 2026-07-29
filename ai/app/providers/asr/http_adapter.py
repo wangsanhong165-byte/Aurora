@@ -1,7 +1,7 @@
 """HTTPASRProvider — implements ASRInterface via HTTP ASR service.
 
 Wraps the existing HTTPASRAdapter (from app.models.http_adapters) into
-the v2 ASRInterface. Handles sync-to-async bridge via asyncio.to_thread.
+the canonical ASRInterface. Handles sync-to-async bridge via asyncio.to_thread.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from app.models.http_adapters import HTTPASRAdapter
 
 
 class HTTPASRProvider(ASRInterface):
-    """Async wrapper around HTTPASRAdapter for the v2 Runtime.
+    """Async wrapper around HTTPASRAdapter for the CharacterTurn Runtime.
 
     Bridges the gap between ASRInterface (takes audio bytes) and
     HTTPASRAdapter (takes a file path) by writing audio to a temp file.

@@ -1,5 +1,5 @@
 {
-  "$schema": "character/v2",
+  "$schema": "character/v3",
   "id": "monika",
   "name": {
     "zh": "Monika",

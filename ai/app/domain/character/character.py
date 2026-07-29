@@ -95,5 +95,5 @@ class Character:
 
     @property
     def raw_card(self) -> dict:
-        """Access the original card data for backward compatibility."""
+        """Access the validated raw card for provider adapters."""
         return self._raw_card

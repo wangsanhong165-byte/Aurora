@@ -18,4 +18,4 @@ final_reply 必须是所有 segment text 的拼接。不要使用 emoji 或颜�
 - 情绪关键词必须来自可用情绪列表。
 
 可用情绪：{emotions}
-可用行为：{gestures}
+可用行为：{behaviors}

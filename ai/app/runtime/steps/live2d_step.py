@@ -7,7 +7,7 @@ class Live2DStep(Step):
     """Update Live2D character expression and play audio.
 
     Populates ctx.live2d_intent with AI emotion/behavior decisions.
-    The actual delivery is handled by RuntimeEventHandler._character_update(),
+    The actual delivery is handled by the V3 RuntimeEventHandler,
     which routes through the AvatarController permission system:
       - AI requests (priority=50) are submitted as AvatarRequest objects
       - PermissionManager arbitrates if USER (priority=100) has taken control
@@ -27,8 +27,8 @@ class Live2DStep(Step):
         if isinstance(segment, dict) and not segment.get("emotion"):
             segment = {**segment, "emotion": ctx.emotion or "neutral"}
 
-        # The runtime owns intent, not delivery. The V2 transport maps this
-        # to a model-specific expression and sends it to the frontend.
+        # The runtime owns intent, not delivery. V3 transport sends the
+        # semantic intent without renderer-specific parameters.
         intent = CharacterIntent.from_llm_segment(segment or {"emotion": ctx.emotion or "neutral"}, ctx.emotion_intensity)
         # Spoken output must retain a semantic presentation behavior even when
         # an older LLM response omits it or emits its former `idle` default.

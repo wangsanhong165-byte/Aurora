@@ -54,11 +54,6 @@ class EventEnvelope(BaseModel, Generic[PayloadT]):
             raise ValueError(f"turnId is required for {self.event_type}")
         return self
 
-    @property
-    def type(self) -> str:
-        """Temporary internal alias while V2 handlers are removed in later phases."""
-        return self.event_type
-
     def to_dict(self) -> dict[str, JsonValue]:
         return self.model_dump(mode="json", by_alias=True, exclude_none=False)
 

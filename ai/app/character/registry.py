@@ -60,11 +60,14 @@ class CharacterRegistry:
         if "system_prompt" not in card and "character_setting" not in card:
             raise ValueError(f"missing system_prompt or character_setting in {card['id']}")
         rules = card.get("rules", {})
-        tones = rules.get("tone_words", [])
+        emotions = rules.get("emotion_words", [])
         sprites = card.get("sprites", card.get("portraits", {}))
-        for tone in tones:
-            if tone not in sprites:
-                print(f"[CharacterRegistry] warn: sprite missing for tone '{tone}' in {card['id']}")
+        for emotion in emotions:
+            if emotion not in sprites:
+                print(
+                    "[CharacterRegistry] warn: sprite missing for emotion "
+                    f"'{emotion}' in {card['id']}"
+                )
 
     # ---- public API -----------------------------------------------------
     def list_ids(self) -> list[str]:
@@ -101,19 +104,22 @@ class CharacterRegistry:
         return self._active_id
 
     @property
-    def tone_words(self) -> list[str]:
-        return self.active.get("rules", {}).get("tone_words", ["neutral"])
+    def emotion_words(self) -> list[str]:
+        return self.active.get("rules", {}).get(
+            "emotion_words",
+            ["neutral"],
+        )
 
-    def portrait_for(self, tone: str) -> str | None:
+    def portrait_for(self, emotion: str) -> str | None:
         sprites = self.active.get("sprites", self.active.get("portraits", {}))
-        match = sprites.get(tone, sprites.get("neutral", {}))
+        match = sprites.get(emotion, sprites.get("neutral", {}))
         if isinstance(match, dict):
             return match.get("path")
         return match
 
-    def tts_ref_for(self, tone: str) -> str | None:
+    def tts_ref_for(self, emotion: str) -> str | None:
         refs = self.active.get("tts", {}).get("ref_audio", {})
-        return refs.get(tone) or refs.get("neutral")
+        return refs.get(emotion) or refs.get("neutral")
 
     def __repr__(self) -> str:
         return f"CharacterRegistry(active={self._active_id!r}, chars={list(self._characters)!r})"

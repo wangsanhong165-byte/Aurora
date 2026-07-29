@@ -15,7 +15,6 @@ Search strategy (two-tier, same as openhanako v2):
 from __future__ import annotations
 
 import json
-import shutil
 import sqlite3
 import threading
 import re
@@ -61,15 +60,7 @@ class MemoryStore:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = str(db_path)
         self._local = threading.local()
-        self._backup_before_v3()
         self._init_db()
-
-    def _backup_before_v3(self) -> None:
-        """Create one recoverable copy before the first V3 schema migration."""
-        db_path = Path(self._db_path)
-        backup_path = db_path.with_suffix(".v2-backup.db")
-        if db_path.exists() and db_path.stat().st_size and not backup_path.exists():
-            shutil.copy2(db_path, backup_path)
 
     # ── connection management ──────────────────────────────────────────
 

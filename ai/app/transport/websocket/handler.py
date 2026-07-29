@@ -10,7 +10,15 @@ import wave
 from typing import Awaitable, Callable
 
 from app.avatar.controller import AvatarController
-from app.avatar.protocol import AvatarRequest
+from app.avatar.events import (
+    AvatarComponentChanged,
+    AvatarEvent,
+    AvatarExpressionChanged,
+    AvatarMotionChanged,
+    AvatarRequest,
+    AvatarStateRestored,
+    AvatarSuggestionCreated,
+)
 from app.runtime.character_turn import CharacterTurn, TurnInput
 from app.runtime.runtime import runtime as default_runtime
 from app.transport.domain_event import DomainEvent
@@ -329,31 +337,58 @@ class RuntimeEventHandler:
     def _avatar_responses(
         self,
         request: EventEnvelope,
-        messages: list[dict],
+        messages: list[AvatarEvent],
     ) -> list[RuntimeResponse]:
-        mapping = {
-            "avatar_component": "character.component",
-            "avatar_expression": "character.expression",
-            "avatar_motion": "character.motion",
-            "avatar_state": "character.snapshot",
-            "avatar_suggestion": "character.suggestion",
-        }
         results: list[RuntimeResponse] = []
         for message in messages:
-            old_type = str(message.get("type", ""))
-            event_type = mapping.get(old_type)
-            if not event_type:
-                continue
-            payload = {
-                {
-                    "display_name": "displayName",
-                    "param_ids": "paramIds",
-                    "expression_intensity": "expressionIntensity",
-                    "suggestion_id": "suggestionId",
-                }.get(key, key): value
-                for key, value in message.items()
-                if key not in {"type", "model_id"}
-            }
+            if isinstance(message, AvatarComponentChanged):
+                event_type = "character.component"
+                payload = {
+                    "name": message.name,
+                    "enabled": message.enabled,
+                    "displayName": message.display_name,
+                    "controller": message.controller,
+                    "priority": message.priority,
+                    "expression": message.expression,
+                    "paramIds": message.param_ids,
+                }
+            elif isinstance(message, AvatarExpressionChanged):
+                event_type = "character.expression"
+                payload = {
+                    "name": message.name,
+                    "intensity": message.intensity,
+                    "controller": message.controller,
+                    "priority": message.priority,
+                }
+            elif isinstance(message, AvatarMotionChanged):
+                event_type = "character.motion"
+                payload = {
+                    "name": message.name,
+                    "controller": message.controller,
+                    "priority": message.priority,
+                    "loop": message.loop,
+                }
+            elif isinstance(message, AvatarStateRestored):
+                event_type = "character.snapshot"
+                payload = {
+                    "components": message.components,
+                    "expression": message.expression,
+                    "expressionIntensity": message.expression_intensity,
+                    "motion": message.motion,
+                }
+            elif isinstance(message, AvatarSuggestionCreated):
+                event_type = "character.suggestion"
+                payload = {
+                    "suggestionId": message.suggestion_id,
+                    "target": message.target,
+                    "name": message.name,
+                    "action": message.action,
+                    "reason": message.reason,
+                }
+            else:
+                raise TypeError(
+                    f"Unsupported avatar domain event: {type(message).__name__}"
+                )
             results.append(DomainEvent.create(
                 event_type,
                 payload,

@@ -20,19 +20,15 @@ from app.avatar.natural_behavior import (
     IdleMicroState,
 )
 from app.avatar.state import AvatarState, AvatarStateStore
-from app.avatar.protocol import (
+from app.avatar.events import (
+    AvatarEvent,
     AvatarRequest,
     AvatarSuggestion,
-    AvatarComponentUpdate,
-    AvatarExpressionUpdate,
-    AvatarMotionUpdate,
-    AvatarStateSnapshot,
-    AvatarSuggestionMsg,
-    AvatarRequestMsg,
-    AvatarAcceptMsg,
-    AvatarRejectMsg,
-    AVATAR_MESSAGE_TYPES,
-    serialize_avatar_message,
+    AvatarComponentChanged,
+    AvatarExpressionChanged,
+    AvatarMotionChanged,
+    AvatarStateRestored,
+    AvatarSuggestionCreated,
 )
 
 __all__ = [
@@ -61,14 +57,10 @@ __all__ = [
     "AvatarStateStore",
     "AvatarRequest",
     "AvatarSuggestion",
-    "AvatarComponentUpdate",
-    "AvatarExpressionUpdate",
-    "AvatarMotionUpdate",
-    "AvatarStateSnapshot",
-    "AvatarSuggestionMsg",
-    "AvatarRequestMsg",
-    "AvatarAcceptMsg",
-    "AvatarRejectMsg",
-    "AVATAR_MESSAGE_TYPES",
-    "serialize_avatar_message",
+    "AvatarEvent",
+    "AvatarComponentChanged",
+    "AvatarExpressionChanged",
+    "AvatarMotionChanged",
+    "AvatarStateRestored",
+    "AvatarSuggestionCreated",
 ]

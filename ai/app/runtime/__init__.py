@@ -1,4 +1,4 @@
-# New v2 runtime exports
+# Canonical CharacterTurn runtime exports
 from app.runtime.character_turn import (
     CharacterTurn,
     PerformancePlan,

@@ -19,7 +19,7 @@ class EmotionState:
         # Universal basics
         "neutral", "happy", "sad", "angry", "surprised",
         "worried", "shy", "gentle", "serious", "jealous",
-        # Monika tone words
+        # Character-specific emotion words
         "playful", "explaining", "smile", "cheerful",
         "cold", "stern", "emphasizing", "happy_closed",
         "laughing", "awkward_smile", "awkward", "nervous",

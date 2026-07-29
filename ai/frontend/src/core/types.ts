@@ -24,7 +24,7 @@ export interface CharacterState {
   activity: AiActivity
   /** Specific expression name (may differ from emotion, e.g. "smile") */
   expression: string
-  /** Current gesture/motion name (e.g. "wave", "nod") */
+  /** Current behavior/motion name (e.g. "wave", "nod") */
   motion: string
   /** Idle animation variant */
   idlePose: string

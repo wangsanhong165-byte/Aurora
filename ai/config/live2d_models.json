@@ -40,7 +40,7 @@
       "cry": "哭哭",
       "worried": "哭哭"
     },
-    "gestures": [
+    "behaviors": [
       "wave",
       "tilt",
       "nod",
@@ -91,7 +91,7 @@
       "cry": "cry",
       "dizzy": "dizzy"
     },
-    "gestures": [
+    "behaviors": [
       "wave",
       "tilt",
       "nod",
@@ -109,7 +109,7 @@
       "love": "爱心眼",
       "surprised": "圈圈眼"
     },
-    "gestures": []
+    "behaviors": []
   },
   "mao_zh-Hans": {
     "prompt_emotions": [
@@ -154,7 +154,7 @@
       "angry": "exp_08",
       "pout": "exp_08"
     },
-    "gestures": [
+    "behaviors": [
       "wave",
       "tilt",
       "nod",

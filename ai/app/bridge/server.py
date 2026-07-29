@@ -6,7 +6,6 @@ import logging
 import os
 import struct
 import time
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -110,7 +109,7 @@ def _build_model_info() -> dict[str, Any]:
         "name": _live2d_model,
         "url": f"/live2d-models/{_live2d_model}/{_live2d_model}.model3.json",
         "emotionMap": model_cfg.get("emotion_map", {}),
-        "gestures": model_cfg.get("gestures", []),
+        "behaviors": model_cfg.get("behaviors", []),
         "accessories": model_cfg.get("accessories", {}),
         "behaviorConfig": {
             name: {
@@ -459,65 +458,6 @@ async def save_settings(data: dict):
     return {"status": "ok"}
 
 
-# ── WebSocket Helpers ───────────────────────────────────────────────────
-
-async def _ws_send(websocket: WebSocket, msg: dict) -> None:
-    """Send a JSON message to a WebSocket client."""
-    try:
-        await websocket.send_text(json.dumps(msg, ensure_ascii=False))
-    except Exception:
-        pass
-
-
-# Per-client audio buffers: {client_id: {"samples": [float, ...], "sample_rate": int}}
-_mic_buffers: dict[str, dict] = {}
-
-
-def _get_mic_buffer(client_id: str) -> dict:
-    if client_id not in _mic_buffers:
-        _mic_buffers[client_id] = {"samples": [], "sample_rate": 16000}
-    return _mic_buffers[client_id]
-
-
-# ── Initialization ──────────────────────────────────────────────────────
-
-async def _send_init_conf(websocket: WebSocket) -> None:
-    """Send initial configuration to the frontend, including emotion and gesture maps."""
-    cfg = _load_live2d_config()
-    model_cfg = cfg.get(_live2d_model, {})
-    emotion_map = model_cfg.get("emotion_map", {})
-    gestures = model_cfg.get("gestures", [])
-    accessories = model_cfg.get("accessories", {})
-    behavior_config = {
-        name: {
-            "emotionMap": value.get("emotion_map", {}),
-            "behaviorMap": value.get("behavior_map", {}),
-            "personality": value.get("personality", {}),
-        }
-        for name, value in cfg.items()
-    }
-    avatar_cfg = _load_avatar_config()
-    avatar_profiles = _load_avatar_profiles()
-    motion_presets = _load_motion_presets()
-    await _ws_send(websocket, {
-        "type": "set-model-and-conf",
-        "conf_name": "default",
-        "conf_uid": str(uuid.uuid4()),
-        "client_uid": str(uuid.uuid4()),
-        "model_info": {
-            "name": _live2d_model,
-            "url": f"/live2d-models/{_live2d_model}/{_live2d_model}.model3.json",
-            "emotionMap": emotion_map,
-            "gestures": gestures,
-            "accessories": accessories,
-            "behaviorConfig": behavior_config,
-            "avatarProfiles": avatar_profiles,
-            "motionPresets": motion_presets,
-            "avatar": avatar_cfg,  # full per-model config
-        },
-    })
-
-
 # ── Canonical Runtime V3 WebSocket ─────────────────────────────────────
 
 @app.websocket("/client-ws")
@@ -579,11 +519,11 @@ async def serve_index():
         content = index.read_text(encoding="utf-8")
 
         # Inject model config into HTML so Live2D renders immediately
-        # without waiting for WebSocket set-model-and-conf
+        # without waiting for a WebSocket configuration event
         cfg = _load_live2d_config()
         model_cfg = cfg.get(_live2d_model, {})
         emotion_map = model_cfg.get("emotion_map", {})
-        gestures = model_cfg.get("gestures", [])
+        behaviors = model_cfg.get("behaviors", [])
         accessories = model_cfg.get("accessories", {})
         behavior_config = {
             name: {
@@ -607,7 +547,7 @@ async def serve_index():
                 "name": _live2d_model,
                 "url": model_url,
                 "emotionMap": emotion_map,
-                "gestures": gestures,
+                "behaviors": behaviors,
                 "accessories": accessories,
                 "behaviorConfig": behavior_config,
                 "avatarProfiles": avatar_profiles,

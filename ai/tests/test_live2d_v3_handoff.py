@@ -15,7 +15,7 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-class TestLive2DV2Protocol(unittest.TestCase):
+class TestLive2DV3Handoff(unittest.TestCase):
     def test_cubism_core_library_is_served_from_frontend_assets(self):
         response = _run(serve_libs("live2dcubismcore.min.js"))
 
@@ -34,7 +34,7 @@ class TestLive2DV2Protocol(unittest.TestCase):
         self.assertEqual(ctx.live2d_intent["behavior"], "wave")
         self.assertEqual(ctx.live2d_intent["speaking"], False)
 
-    def test_emitter_maps_runtime_intent_to_one_semantic_character_update(self):
+    def test_emitter_maps_runtime_intent_to_one_semantic_character_event(self):
         ctx = CharacterTurn(input=TurnInput(text="hello"))
         ctx.audio = b"wav"
         ctx.live2d_intent = {

@@ -25,7 +25,7 @@ from app.avatar.parameter_mixer import ParameterMixer, ParameterOwner, Parameter
 from app.avatar.natural_behavior import NaturalBehaviorManager
 from app.avatar.state import AvatarState, AvatarStateStore
 from app.avatar.controller import AvatarController
-from app.avatar.protocol import AvatarRequest
+from app.avatar.events import AvatarRequest, AvatarSuggestion
 
 
 # ── PermissionManager Tests ──────────────────────────────────────────────
@@ -426,8 +426,6 @@ class TestAvatarControllerIntegration:
             }
         })
 
-        from app.avatar.protocol import AvatarSuggestion
-
         suggestion = AvatarSuggestion(
             target="component", name="goggles", action="enable",
             reason="thinking_mode",
@@ -455,8 +453,6 @@ class TestAvatarControllerIntegration:
                 "motions": {"idle": {"priority": 10, "category": "idle"}},
             }
         })
-
-        from app.avatar.protocol import AvatarSuggestion
 
         suggestion = AvatarSuggestion(
             target="component", name="goggles", action="enable",

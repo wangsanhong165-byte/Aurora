@@ -19,7 +19,7 @@ export interface ModelInfo {
   name: string
   url: string
   emotionMap?: Record<string, string>
-  gestures?: string[]
+  behaviors?: string[]
 }
 
 /**
