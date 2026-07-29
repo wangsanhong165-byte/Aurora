@@ -182,6 +182,64 @@ export class RuntimeClient {
 
   private dispatchV3Payload(type: string, payload: Record<string, unknown>, _turnId: string = ''): void {
     switch (type) {
+      // ── V3 event types ──
+      case 'runtime.status':
+        eventBus.emit('runtime:status', {
+          status: payload.state as string,
+          message: payload.message as string,
+        })
+        if (payload.state === 'speaking') {
+          eventBus.emit('character:activity', { activity: 'speaking' })
+        } else if (payload.state === 'processing') {
+          eventBus.emit('character:activity', { activity: 'thinking' })
+        }
+        break
+
+      case 'assistant.text':
+        eventBus.emit('runtime:message', {
+          text: payload.text as string,
+          reasoning: payload.reasoning as string | undefined,
+        })
+        break
+
+      case 'tts.started':
+        eventBus.emit('runtime:tts_start', {
+          format: (payload.format as string) || 'wav',
+          sequence: (payload.sequence as number) || 0,
+        })
+        eventBus.emit('character:activity', { activity: 'speaking' })
+        break
+
+      case 'tts.audio':
+        eventBus.emit('audio:play', {
+          audio: payload.data as string,
+          format: (payload.format as string) || 'wav',
+          volumeArray: payload.volumes as number[] | undefined,
+        })
+        break
+
+      case 'tts.completed':
+        eventBus.emit('runtime:tts_end', { reason: (payload.reason as string) || 'complete' })
+        break
+
+      case 'character.intent':
+        eventBus.emit('runtime:character_intent', {
+          emotion: payload.emotion as string,
+          behavior: (payload.behavior as string) || 'speak',
+          attention: (payload.attention as string) || 'user',
+          energy: (payload.energy ?? payload.intensity) as number,
+          intensity: (payload.intensity as number) ?? 0.5,
+          durationMs: payload.durationMs as number | undefined,
+          naturalVAD: payload.naturalVAD as { valence: number; arousal: number; dominance: number } | undefined,
+          contextTags: payload.contextTags as string[] | undefined,
+        })
+        break
+
+      case 'user.text':
+        eventBus.emit('runtime:user_message', { text: payload.text as string })
+        break
+
+      // ── Legacy V2 event types (compatibility) ──
       case 'session':
         if (payload.status === 'init') {
           eventBus.emit('connection:change', { connected: true })
