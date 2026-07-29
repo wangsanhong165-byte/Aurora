@@ -1,7 +1,7 @@
 # Architecture — CharacterTurn Runtime V3
 
-> Date: 2026-07-26
-> Branch: `2.3`
+> Date: 2026-07-29
+> Branch: `2.5`
 > This document describes the current implementation. Code and tests remain authoritative.
 
 ## Runtime ownership
@@ -53,26 +53,35 @@ or model identifiers as part of a Runtime presentation update.
 
 ## Transport
 
-`app/transport/protocol.py` is the server-side V2 protocol source. Both
-`/client-ws` is the only WebSocket route. It runs `WebSocketSession` and
-`RuntimeEventHandler`, then maps every interaction to `CharacterRuntime.handle_turn()`.
-The old bridge Runtime handler and all duplicate WebSocket routes were removed.
+`contracts/v3/envelope.py`, `contracts/v3/events.py`, and
+`contracts/v3/registry.py` are the canonical server-side protocol sources.
+`/client-ws` is the only WebSocket route. `WebSocketSession` validates the
+V3 envelope, session identity, `eventId`, and contiguous inbound sequence
+before `RuntimeEventHandler` maps an event to
+`CharacterRuntime.handle_turn()`. The old bridge Runtime handler, V2 protocol
+module, compatibility adapter, and duplicate WebSocket routes were removed.
 
-`TransportEmitter` is the only normal turn-to-wire emitter:
+`TransportEmitter` is the only normal turn-to-domain-event emitter. It never
+constructs WebSocket JSON; the connection-local session writer is the only
+owner of outbound `eventId`, `sessionId`, `sequence`, timestamp, and send
+serialization:
 
 ```text
 success:
-runtime_status(processing)
-→ assistant_message
-→ [tts_start → tts_audio → tts_end]
-→ character_update
-→ runtime_status(idle)
+turn.started
+→ [asr.started → asr.result]
+→ [tool.started → tool.result | tool.failed]
+→ assistant.text.started → assistant.text.completed
+→ [tts.started → tts.audio → tts.completed | tts.failed]
+→ character.intent
+→ turn.completed
+→ runtime.status(idle)
 
 failure:
-error → runtime_status(idle)
+turn.failed → runtime.status(idle)
 ```
 
-`character_update` is renderer independent. The frontend resolves it through:
+`character.intent` is renderer independent. The frontend resolves it through:
 
 ```text
 CharacterBehaviorResolver

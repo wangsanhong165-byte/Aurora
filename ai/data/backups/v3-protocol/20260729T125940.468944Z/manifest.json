@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 3,
+  "createdAt": "2026-07-29T12:59:40.611535+00:00",
+  "files": [
+    {
+      "original": "data/memory/memory.db",
+      "backup": "data/backups/v3-protocol/20260729T125940.468944Z/data/memory/memory.db",
+      "beforeSha256": "8957dee0ddfe289a1fcf7f79b6702426e4a01bcf9259fb8b58589af46516fa2f",
+      "afterSha256": "82934750024fa4d4506a9c00ade86c18c66330295ed78a3092ebba31627b4eab",
+      "rowsChanged": 83
+    },
+    {
+      "original": "data/runtime/turns.db",
+      "backup": "data/backups/v3-protocol/20260729T125940.468944Z/data/runtime/turns.db",
+      "beforeSha256": "4dc5b24bad434196c739641018b917a5747e686f1d23cdd225a08b94b5c1a3cb",
+      "afterSha256": "eac655a432f4d457477715e753b53b325172da5d71d5513bc2831df71154715c",
+      "rowsChanged": 500
+    }
+  ],
+  "historyArchives": []
+}

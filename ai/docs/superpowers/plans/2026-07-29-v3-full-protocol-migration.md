@@ -2,6 +2,10 @@
 
 > **面向 AI 代理的工作者：** 必须使用 `executing-plans` 在当前项目中逐阶段实施。每个阶段严格执行红灯测试、最小实现、阶段验证、真实运行检查和独立提交；当前阶段出现回归时不得继续叠加后续阶段。
 
+> **状态说明（2026-07-29）：** 本文件是实施时的任务清单，未回填的复选框保留为
+> 历史计划记录，不再代表当前源码状态。协议迁移结论、验证结果、计划偏差和待补
+> 的实机验收，以 [V3 迁移报告](../../runtime/V3_MIGRATION_REPORT.md) 为准。
+
 **目标：** 将生产交互链从 V3 信封包裹 V2 消息，迁移为端到端强类型 V3 RuntimeEvent，并在最终阶段删除所有生产 V2 类型、flat WebSocket、兼容适配器、旧 dispatch 和 `tone`/`gesture` 业务字段 fallback。
 
 **架构：** WebSocket Transport 只负责验证、会话顺序和发送；`EventRegistry` 将不可信 JSON 解析成强类型 V3 RuntimeEvent；`RuntimeEventHandler` 将输入事件映射到现有 `TurnInput`/`CharacterTurn`，现有 Pipeline 保持不变；`TransportEmitter` 将 CharacterTurn 转成强类型 V3 领域事件，再由每连接的 Session Writer 添加 eventId、sessionId、turnId 和 sequence。前端 `RuntimeClient` 只验证并交付 RuntimeEvent，`RuntimeEventAdapter` 将事件送入现有 Character、Audio、Session 和 UI 模块。

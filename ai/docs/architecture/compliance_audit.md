@@ -1,5 +1,10 @@
 # Architecture Compliance Audit
 
+> **历史快照：** 本审计记录的是 2026-06-29 的 v1 Phase 5.6 冻结状态，
+> 其中 `CompanionRuntime.dispatch()`、旧 Bridge Handler 等结论不再描述当前
+> Runtime V3。当前架构请以根目录 [ARCHITECTURE.md](../../ARCHITECTURE.md)
+> 和 [V3 迁移报告](../runtime/V3_MIGRATION_REPORT.md) 为准。
+>
 > **Date**: 2026-06-29
 > **Scope**: All `app/` Python modules
 > **Constitution version**: v1 (Phase 5.6 Freeze)

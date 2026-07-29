@@ -1,7 +1,7 @@
 {
   "llm": {
-    "pid": 27168,
-    "create_time": 1785255554.8752613,
+    "pid": 27696,
+    "create_time": 1785337658.1315827,
     "executable": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
     "command": [
       "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
@@ -15,11 +15,11 @@
       "9102"
     ],
     "port": 9102,
-    "owner": "electron-49500-f98d40ea-1034-42aa-99ad-975c6df9d065"
+    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
   },
   "memory": {
-    "pid": 32448,
-    "create_time": 1785255557.2821157,
+    "pid": 93620,
+    "create_time": 1785337660.0740707,
     "executable": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
     "command": [
       "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
@@ -31,11 +31,11 @@
       "9104"
     ],
     "port": 9104,
-    "owner": "electron-49500-f98d40ea-1034-42aa-99ad-975c6df9d065"
+    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
   },
   "bridge": {
-    "pid": 19752,
-    "create_time": 1785255560.7595813,
+    "pid": 84664,
+    "create_time": 1785337661.874715,
     "executable": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
     "command": [
       "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
@@ -43,11 +43,11 @@
       "app.bridge.server"
     ],
     "port": 9528,
-    "owner": "electron-49500-f98d40ea-1034-42aa-99ad-975c6df9d065"
+    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
   },
   "asr": {
-    "pid": 24240,
-    "create_time": 1785255569.3199615,
+    "pid": 21764,
+    "create_time": 1785337668.8219368,
     "executable": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
     "command": [
       "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
@@ -59,11 +59,11 @@
       "9101"
     ],
     "port": 9101,
-    "owner": "electron-49500-f98d40ea-1034-42aa-99ad-975c6df9d065"
+    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
   },
   "gsvi": {
-    "pid": 38244,
-    "create_time": 1785255592.8677795,
+    "pid": 45348,
+    "create_time": 1785337697.508134,
     "executable": "C:\\Users\\LENOVO\\Desktop\\c++\\ai\\models\\tts\\GPT-SoVITS-v2pro-20250604-nvidia50\\runtime\\python.exe",
     "command": [
       "C:\\Users\\LENOVO\\Desktop\\c++\\ai/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/runtime/python.exe",
@@ -76,11 +76,11 @@
       "C:\\Users\\LENOVO\\Desktop\\c++\\ai/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/configs/tts_infer.yaml"
     ],
     "port": 9105,
-    "owner": "electron-49500-f98d40ea-1034-42aa-99ad-975c6df9d065"
+    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
   },
   "tts": {
-    "pid": 27020,
-    "create_time": 1785255614.7399316,
+    "pid": 85376,
+    "create_time": 1785337741.6422253,
     "executable": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
     "command": [
       "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
@@ -94,6 +94,6 @@
       "9103"
     ],
     "port": 9103,
-    "owner": "electron-49500-f98d40ea-1034-42aa-99ad-975c6df9d065"
+    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
   }
 }

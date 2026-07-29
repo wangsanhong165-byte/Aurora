@@ -29,10 +29,11 @@ class DefaultPlanner:
             if isinstance(card, dict):
                 prompt_lang = card.get("tts", {}).get("prompt_lang", "en")
         native_map = {"en": "English", "ja": "Japanese", "zh": "Chinese", "ko": "Korean"}
+        native_override = {"en": "你只能用 English 输出", "ja": "日本語のみで出力してください", "zh": "请用中文输出", "ko": "한국어로만 출력하세요"}
         nl = native_map.get(prompt_lang, "English")
         messages.append({
             "role": "system",
-            "content": f"LANGUAGE LOCK: You must output {nl} only. Never use Chinese — even if the user writes in Chinese.",
+            "content": f"LANGUAGE LOCK: Your native language is {nl}. Even if the user writes to you in another language like Chinese, you MUST reply in {nl} ONLY. {native_override.get(prompt_lang, f'You must output {nl} only.')} The user will understand your {nl} reply even if they wrote in another language. This rule is NON-NEGOTIABLE — do not mirror the user's language.",
         })
 
         # 1. System prompt from character
@@ -97,11 +98,11 @@ class DefaultPlanner:
             card = character.raw_card if hasattr(character, 'raw_card') else {}
             if isinstance(card, dict):
                 tts_cfg = card.get('tts', {})
-                prompt_lang = tts_cfg.get('prompt_lang', 'ja')
+                prompt_lang = tts_cfg.get('prompt_lang', 'en')
             else:
-                prompt_lang = 'ja'
+                prompt_lang = 'en'
         else:
-            prompt_lang = 'ja'
+            prompt_lang = 'en'
 
         native_map = {'en': 'English', 'ja': 'Japanese', 'zh': 'Chinese', 'ko': 'Korean'}
         nl = native_map.get(prompt_lang, prompt_lang)
@@ -110,7 +111,7 @@ class DefaultPlanner:
 
         format_instruction = (
             '\n[Output Instructions]\n'
-            f'1. LANGUAGE: Write all text in {nl}. Every "text" field MUST be in {nl}.\n'
+            f'1. LANGUAGE: Write ALL text in {nl}. Every "text" field MUST be in {nl}. CRITICAL: The user may write in Chinese, but you MUST respond in {nl}. Never mirror the user language.\n'
             '2. Keep your response SHORT — 1-2 sentences max, or a single brief paragraph.\n'
             '3. All JSON keys MUST be in English.\n'
             '4. Return ONLY valid JSON, no commentary.\n'

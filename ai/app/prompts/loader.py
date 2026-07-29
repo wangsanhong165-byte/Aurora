@@ -6,7 +6,7 @@ variable substitution. Caches loaded templates for performance.
 Usage:
     from app.prompts.loader import render, render_optional
 
-    system = render("role_setting", name="Monika", lang="中文")
+    system = render("identity_ishiki", identity="...", ishiki="...")
     pinned = render_optional("pinned_memories", content="...")
 """
 
