@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   close: () => ipcRenderer.invoke('window:close'),
   setAlwaysOnTop: (value) => ipcRenderer.invoke('window:setAlwaysOnTop', value),
   setPetMode: (enabled) => ipcRenderer.invoke('window:setPetMode', enabled),
+  startWindowDrag: () => ipcRenderer.send('window:dragStart'),
+  endWindowDrag: () => ipcRenderer.send('window:dragEnd'),
   getSettings: () => ipcRenderer.invoke('app:getSettings'),
 
   // ── ProcessManager / backend lifecycle ──

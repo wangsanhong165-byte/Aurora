@@ -160,5 +160,31 @@
       "nod",
       "shrug"
     ]
+  },
+  "hiyori_zh-Hans": {
+    "prompt_emotions": [
+      "neutral",
+      "happy",
+      "angry",
+      "sad",
+      "surprised",
+      "shy",
+      "worried"
+    ],
+    "emotion_map": {
+      "neutral": "",
+      "happy": "",
+      "angry": "",
+      "sad": "",
+      "surprised": "",
+      "shy": "",
+      "worried": ""
+    },
+    "behaviors": [
+      "wave",
+      "tilt",
+      "nod",
+      "shrug"
+    ]
   }
 }

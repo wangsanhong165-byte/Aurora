@@ -1,8 +1,16 @@
-export interface NativeMotionContribution {
-  parameterId: string
-  value: number
-  weight: number
-}
+export type NativeMotionContribution =
+  | {
+      target: 'parameter'
+      parameterId: string
+      value: number
+      weight: number
+    }
+  | {
+      target: 'partOpacity'
+      partId: string
+      opacity: number
+      weight: number
+    }
 
 interface NativeMotionCurve {
   Target: string
@@ -33,13 +41,14 @@ export class NativeMotionPlayer {
   private activeName: string | null = null
   private elapsed = 0
   private intensity = 1
+  private hasLooped = false
 
   register(name: string, json: NativeMotionJson, aliases: string[] = []): void {
     const motion: RegisteredMotion = {
       json,
       duration: Math.max(0.001, json.Meta?.Duration ?? inferDuration(json.Curves ?? [])),
-      fadeIn: Math.max(0, json.FadeInTime ?? 0.25),
-      fadeOut: Math.max(0, json.FadeOutTime ?? 0.35),
+      fadeIn: Math.max(0.18, json.FadeInTime ?? 0.25),
+      fadeOut: Math.max(0.3, Math.min(0.6, json.FadeOutTime ?? 0.35)),
       loop: Boolean(json.Meta?.Loop),
     }
     for (const key of [name, ...aliases]) {
@@ -61,6 +70,7 @@ export class NativeMotionPlayer {
     this.active = motion
     this.activeName = name
     this.elapsed = 0
+    this.hasLooped = false
     this.intensity = clamp(intensity, 0, 2)
     return true
   }
@@ -69,6 +79,7 @@ export class NativeMotionPlayer {
     this.active = null
     this.activeName = null
     this.elapsed = 0
+    this.hasLooped = false
   }
 
   update(dt: number): { contributions: NativeMotionContribution[]; done: boolean } {
@@ -77,18 +88,34 @@ export class NativeMotionPlayer {
     const motion = this.active
     if (motion.loop && this.elapsed >= motion.duration) {
       this.elapsed %= motion.duration
+      this.hasLooped = true
     }
-    const fadeInWeight = motion.fadeIn <= 0 ? 1 : smoothstep(this.elapsed / motion.fadeIn)
+    const fadeInWeight = this.hasLooped ? 1 : smoothstep(this.elapsed / motion.fadeIn)
     const remaining = motion.duration - this.elapsed
-    const fadeOutWeight = motion.fadeOut <= 0 ? 1 : smoothstep(remaining / motion.fadeOut)
+    const fadeOutWeight = motion.loop ? 1 : smoothstep(remaining / motion.fadeOut)
     const weight = clamp(Math.min(fadeInWeight, fadeOutWeight) * this.intensity, 0, 1)
-    const contributions = (motion.json.Curves ?? [])
-      .filter(curve => curve.Target === 'Parameter')
-      .map(curve => ({
-        parameterId: curve.Id,
-        value: sampleCurve(curve.Segments, Math.min(this.elapsed, motion.duration)),
-        weight: curveWeight(curve, this.elapsed, motion.duration) * weight,
-      }))
+    const contributions: NativeMotionContribution[] = []
+    for (const curve of motion.json.Curves ?? []) {
+      const value = sampleCurve(curve.Segments, Math.min(this.elapsed, motion.duration))
+      const contributionWeight = curveWeight(
+        curve, this.elapsed, motion.duration, motion.loop, this.hasLooped,
+      ) * weight
+      if (curve.Target === 'Parameter') {
+        contributions.push({
+          target: 'parameter',
+          parameterId: curve.Id,
+          value,
+          weight: contributionWeight,
+        })
+      } else if (curve.Target === 'PartOpacity') {
+        contributions.push({
+          target: 'partOpacity',
+          partId: curve.Id,
+          opacity: clamp(value, 0, 1),
+          weight: contributionWeight,
+        })
+      }
+    }
     const done = !motion.loop && this.elapsed >= motion.duration
     if (done) this.stop()
     return { contributions, done }
@@ -148,12 +175,19 @@ export function sampleCurve(segments: number[], time: number): number {
   return previousValue
 }
 
-function curveWeight(curve: NativeMotionCurve, elapsed: number, duration: number): number {
+function curveWeight(
+  curve: NativeMotionCurve,
+  elapsed: number,
+  duration: number,
+  loop: boolean,
+  hasLooped: boolean,
+): number {
   const fadeIn = curve.FadeInTime
   const fadeOut = curve.FadeOutTime
-  const inWeight = fadeIn === undefined || fadeIn < 0 ? 1 : smoothstep(elapsed / Math.max(.001, fadeIn))
-  const outWeight = fadeOut === undefined || fadeOut < 0
-    ? 1 : smoothstep((duration - elapsed) / Math.max(.001, fadeOut))
+  const inWeight = hasLooped || fadeIn === undefined || fadeIn < 0
+    ? 1 : smoothstep(elapsed / Math.max(.18, fadeIn))
+  const outWeight = loop || fadeOut === undefined || fadeOut < 0
+    ? 1 : smoothstep((duration - elapsed) / Math.max(.3, Math.min(.6, fadeOut)))
   return clamp(Math.min(inWeight, outWeight), 0, 1)
 }
 function inferDuration(curves: NativeMotionCurve[]): number {

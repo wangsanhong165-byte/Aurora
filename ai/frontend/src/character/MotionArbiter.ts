@@ -5,6 +5,7 @@ import type {
 } from './live2d/NativeMotionPlayer'
 
 export type MotionSource = 'ai' | 'system' | 'pet' | 'idle'
+export type MotionChannel = 'head' | 'body' | 'gaze' | 'expression' | 'mouth' | 'full'
 
 export interface MotionKeyframe { time: number; parameter: string; value: number }
 export interface SequenceStep { time: number; type: 'attention' | 'expression' | 'motion' | 'behavior'; value: string }
@@ -15,11 +16,47 @@ export interface MotionPreset {
   keyframes: MotionKeyframe[]
   steps?: SequenceStep[]
 }
-export interface LogicalParameterContribution { logicalParameter: string; value: number; source: string; priority: number }
+export interface LogicalParameterContribution {
+  logicalParameter: string
+  value: number
+  source: string
+  priority: number
+}
+export interface MotionRequest {
+  name: string
+  owner: string
+  source: MotionSource
+  priority: number
+  channels?: MotionChannel[]
+  turnId?: string
+  timeoutMs?: number
+  intensity?: number
+  durationMs?: number
+}
 export type ArbiterState = 'idle' | 'playing'
 
+interface ActiveMotion {
+  request: {
+    name: string
+    owner: string
+    source: MotionSource
+    priority: number
+    channels: MotionChannel[]
+    turnId?: string
+    timeoutMs?: number
+    intensity: number
+    durationMs?: number
+  }
+  preset?: MotionPreset
+  nativeName?: string
+  startedAt: number
+  duration: number
+  expiresAt: number
+  executedSteps: Set<number>
+}
+
 export function smoothstep(value: number): number {
-  const t = Math.max(0, Math.min(1, value))
+  const t = clamp(value, 0, 1)
   return t * t * (3 - 2 * t)
 }
 
@@ -54,153 +91,301 @@ export function sampleMotionKeyframes(
   return sampled
 }
 
+/**
+ * Arbitrates semantic/native motion ownership. Multiple logical motions may
+ * coexist when their channels do not overlap. Cubism writes remain outside
+ * this module and flow through ParameterMixer.
+ */
 export class MotionArbiter {
-  private _presets: Record<string, MotionPreset> = {}
-  private _queue: string[] = []
-  private _currentMotion: string | null = null
-  private _motionStartTime = 0
-  private _motionDuration = 0
-  private _state: ArbiterState = 'idle'
-  private _intensity = 1
-  private _executedSteps = new Set<number>()
-  private _source: MotionSource = 'ai'
-  private _nativePlayer: NativeMotionPlayer | null = null
-  private _motionMap: Record<string, string> = {}
-  private _nativeFrame: NativeMotionContribution[] = []
-  private _nativeFallbackReason = ''
+  private presets: Record<string, MotionPreset> = {}
+  private queue: Array<{ name: string; source: MotionSource; intensity: number }> = []
+  private active = new Map<string, ActiveMotion>()
+  private nativePlayer: NativeMotionPlayer | null = null
+  private motionMap: Record<string, string> = {}
+  private nativeFrame: NativeMotionContribution[] = []
+  private nativeFallbackReason = ''
+  private readonly clock: () => number
+
+  constructor(clock: () => number = () => performance.now()) {
+    this.clock = clock
+  }
 
   setPresets(presets: Record<string, MotionPreset> | undefined): void {
-    this._presets = presets ?? {}
+    this.presets = presets ?? {}
+  }
+
+  registerPreset(preset: MotionPreset): void {
+    this.presets[preset.name.toLowerCase()] = preset
   }
 
   setNativeMotionPlayer(
     player: NativeMotionPlayer | null,
     motionMap: Record<string, string> = {},
   ): void {
-    this._nativePlayer = player
-    this._motionMap = motionMap
-    this._nativeFrame = []
+    this.stop()
+    this.nativePlayer = player
+    this.motionMap = motionMap
   }
 
-  play(name: string, source: MotionSource = 'ai', intensity = 1, durationOverride?: number): boolean {
-    const normalized = name.toLowerCase()
-    if (normalized === 'idle') {
-      this.stop()
-      this._nativeFallbackReason = ''
-      return true
+  request(input: MotionRequest): boolean {
+    const name = input.name.toLowerCase()
+    const nativeName = this.motionMap[name] ?? name
+    const nativeAvailable = Boolean(this.nativePlayer?.has(nativeName))
+    const preset = this.presets[name]
+    if (!nativeAvailable && !preset) {
+      if (name === 'idle') {
+        this.stop()
+        this.nativeFallbackReason = ''
+        return true
+      }
+      this.nativeFallbackReason = this.nativePlayer
+        ? `native motion '${nativeName}' unavailable; logical preset missing`
+        : 'native motion player unavailable; logical preset missing'
+      console.warn('[MotionArbiter] Unknown motion:', input.name)
+      return false
     }
-    const nativeName = this._motionMap[normalized] ?? normalized
-    if (this._nativePlayer?.has(nativeName) && this._nativePlayer.play(nativeName, intensity)) {
-      this._currentMotion = `native:${nativeName}`
-      this._motionDuration = durationOverride ?? 0
-      this._motionStartTime = performance.now()
-      this._intensity = intensity
-      this._source = source
-      this._state = 'playing'
-      this._nativeFallbackReason = ''
-      return true
+
+    const channels = normalizeChannels(
+      input.channels?.length
+        ? input.channels
+        : nativeAvailable
+          ? ['full']
+          : inferChannels(preset!),
+    )
+    const request: ActiveMotion['request'] = {
+      name,
+      owner: input.owner,
+      source: input.source,
+      priority: input.priority,
+      channels,
+      turnId: input.turnId,
+      timeoutMs: input.timeoutMs,
+      durationMs: input.durationMs,
+      intensity: clamp(input.intensity ?? 1, 0, 2),
     }
-    this._nativeFallbackReason = this._nativePlayer
-      ? `native motion '${nativeName}' unavailable; using logical preset`
-      : 'native motion player unavailable; using logical preset'
-    const preset = this._presets[name.toLowerCase()]
-    if (!preset) { console.warn('[MotionArbiter] Unknown motion:', name); return false }
-    this._currentMotion = name.toLowerCase()
-    this._motionDuration = durationOverride ?? preset.duration
-    this._motionStartTime = performance.now()
-    this._intensity = intensity
-    this._source = source
-    this._executedSteps.clear()
-    this._state = 'playing'
-    console.log('[MotionArbiter] play:', name, source)
+    const conflicts = [...this.active.values()].filter(active =>
+      active.request.owner !== request.owner
+      && channelsOverlap(active.request.channels, request.channels))
+    if (conflicts.some(active => active.request.priority > request.priority)) return false
+
+    this.cancelOwner(request.owner)
+    for (const conflict of conflicts) this.cancelOwner(conflict.request.owner)
+
+    if (nativeAvailable && !this.nativePlayer!.play(nativeName, request.intensity)) {
+      this.nativeFallbackReason = `native motion '${nativeName}' failed to start`
+      return false
+    }
+
+    const now = this.clock()
+    const duration = input.durationMs ?? preset?.duration ?? 0
+    this.active.set(request.owner, {
+      request,
+      preset: nativeAvailable ? undefined : preset,
+      nativeName: nativeAvailable ? nativeName : undefined,
+      startedAt: now,
+      duration,
+      expiresAt: input.timeoutMs === undefined
+        ? Infinity
+        : now + Math.max(0, input.timeoutMs),
+      executedSteps: new Set(),
+    })
+    this.nativeFallbackReason = nativeAvailable
+      ? ''
+      : this.nativePlayer
+        ? `native motion '${nativeName}' unavailable; using logical preset`
+        : 'native motion player unavailable; using logical preset'
     return true
   }
 
-  enqueue(name: string): void { if (this._presets[name.toLowerCase()]) this._queue.push(name) }
-  stop(): void {
-    this._nativePlayer?.stop()
-    this._nativeFrame = []
-    this._currentMotion = null
-    this._queue = []
-    this._state = 'idle'
+  play(
+    name: string,
+    source: MotionSource = 'ai',
+    intensity = 1,
+    durationOverride?: number,
+  ): boolean {
+    return this.request({
+      name,
+      owner: `legacy:${source}`,
+      source,
+      priority: sourcePriority(source),
+      intensity,
+      durationMs: durationOverride,
+    })
   }
-  clearQueue(): void { this._queue = [] }
-  isPlaying(): boolean { return this._state === 'playing' }
-  get currentMotion(): string | null { return this._currentMotion }
-  get state(): ArbiterState { return this._state }
-  listMotions(): string[] { return Object.keys(this._presets) }
 
-  update(_dt: number): LogicalParameterContribution[] {
-    if (!this._currentMotion) return []
-    if (this._currentMotion.startsWith('native:')) {
-      const result = this._nativePlayer?.update(_dt) ?? { contributions: [], done: true }
-      this._nativeFrame = result.contributions
-      if (result.done) {
-        const next = this._queue.shift()
-        if (next) this.play(next, this._source)
-        else {
-          this._currentMotion = null
-          this._state = 'idle'
-        }
+  enqueue(name: string, source: MotionSource = 'ai', intensity = 1): void {
+    const normalized = name.toLowerCase()
+    const nativeName = this.motionMap[normalized] ?? normalized
+    if (this.presets[normalized] || this.nativePlayer?.has(nativeName)) {
+      this.queue.push({ name, source, intensity })
+    }
+  }
+
+  stop(): void {
+    this.nativePlayer?.stop()
+    this.nativeFrame = []
+    this.active.clear()
+    this.queue = []
+  }
+
+  cancelOwner(owner: string): boolean {
+    const active = this.active.get(owner)
+    if (!active) return false
+    if (active.nativeName) {
+      this.nativePlayer?.stop()
+      this.nativeFrame = []
+    }
+    this.active.delete(owner)
+    return true
+  }
+
+  cancelTurn(turnId: string): number {
+    const owners = [...this.active.values()]
+      .filter(active => active.request.turnId === turnId)
+      .map(active => active.request.owner)
+    owners.forEach(owner => this.cancelOwner(owner))
+    return owners.length
+  }
+
+  clearQueue(): void { this.queue = [] }
+  isPlaying(): boolean { return this.active.size > 0 }
+  get currentMotion(): string | null {
+    const active = this.primaryActive()
+    if (!active) return null
+    return active.nativeName ? `native:${active.nativeName}` : active.request.name
+  }
+  get state(): ArbiterState { return this.isPlaying() ? 'playing' : 'idle' }
+  listMotions(): string[] { return Object.keys(this.presets) }
+
+  update(dt: number): LogicalParameterContribution[] {
+    const now = this.clock()
+    const contributions: LogicalParameterContribution[] = []
+    for (const active of [...this.active.values()]) {
+      if (now >= active.expiresAt) {
+        this.cancelOwner(active.request.owner)
+        continue
       }
-      return []
+      if (active.nativeName) {
+        const result = this.nativePlayer?.update(dt) ?? { contributions: [], done: true }
+        this.nativeFrame = result.contributions
+        if (result.done) this.cancelOwner(active.request.owner)
+        continue
+      }
+      const preset = active.preset
+      if (!preset) {
+        this.cancelOwner(active.request.owner)
+        continue
+      }
+      const elapsed = now - active.startedAt
+        const recoveryMs = Math.max(300, Math.min(600, preset.recoveryMs ?? 420))
+      if (elapsed >= active.duration + recoveryMs) {
+        this.cancelOwner(active.request.owner)
+        continue
+      }
+      const current = sampleMotionKeyframes(
+        preset.keyframes,
+        Math.min(elapsed, active.duration),
+      )
+      const recoveryWeight = elapsed <= active.duration || recoveryMs === 0
+        ? 1
+        : 1 - smoothstep((elapsed - active.duration) / recoveryMs)
+      for (const [logicalParameter, value] of Object.entries(current)) {
+        contributions.push({
+          logicalParameter,
+          value: value * active.request.intensity * recoveryWeight,
+          source: `motion:${preset.name}:${active.request.owner}`,
+          priority: active.request.priority,
+        })
+      }
     }
-    const preset = this._presets[this._currentMotion]
-    const elapsed = performance.now() - this._motionStartTime
-    if (!preset) {
-      this.stop()
-      return []
-    }
-    const recoveryMs = Math.max(0, preset.recoveryMs ?? 180)
-    if (elapsed >= this._motionDuration + recoveryMs) {
-      const next = this._queue.shift()
-      if (next) this.play(next)
-      else this.stop()
-      return []
-    }
-    const current = sampleMotionKeyframes(
-      preset.keyframes,
-      Math.min(elapsed, this._motionDuration),
-    )
-    const recoveryWeight = elapsed <= this._motionDuration || recoveryMs === 0
-      ? 1
-      : 1 - smoothstep((elapsed - this._motionDuration) / recoveryMs)
-    return Object.entries(current).map(([logicalParameter, value]) => ({
-      logicalParameter,
-      value: value * this._intensity * recoveryWeight,
-      source: `motion:${preset.name}:${this._source}`,
-      priority: 50,
-    }))
+    if (!this.active.size) this.startNextQueued()
+    return contributions
   }
 
   drainNativeContributions(): NativeMotionContribution[] {
-    const result = this._nativeFrame
-    this._nativeFrame = []
-    return result
+    return this.nativeFrame.splice(0)
   }
 
   getDebugState() {
-    const elapsed = this._currentMotion ? performance.now() - this._motionStartTime : 0
+    const now = this.clock()
+    const primary = this.primaryActive()
+    const elapsed = primary ? now - primary.startedAt : 0
     return {
-      state: this._state,
-      motion: this._currentMotion,
+      state: this.state,
+      motion: this.currentMotion,
       elapsedMs: Math.round(elapsed),
-      durationMs: this._motionDuration,
-      progress: this._motionDuration ? Math.min(1, elapsed / this._motionDuration) : 0,
-      queue: [...this._queue],
-      native: this._nativePlayer?.getDebugState() ?? null,
-      nativeFallbackReason: this._nativeFallbackReason,
+      durationMs: primary?.duration ?? 0,
+      progress: primary?.duration ? Math.min(1, elapsed / primary.duration) : 0,
+      queue: this.queue.map(item => item.name),
+      activeRequests: [...this.active.values()].map(active => ({
+        name: active.request.name,
+        owner: active.request.owner,
+        source: active.request.source,
+        priority: active.request.priority,
+        channels: [...active.request.channels],
+        turnId: active.request.turnId ?? '',
+        remainingMs: Number.isFinite(active.expiresAt)
+          ? Math.max(0, Math.round(active.expiresAt - now))
+          : null,
+      })),
+      native: this.nativePlayer?.getDebugState() ?? null,
+      nativeFallbackReason: this.nativeFallbackReason,
     }
   }
 
   drainDueSteps(): SequenceStep[] {
-    if (!this._currentMotion) return []
-    const preset = this._presets[this._currentMotion]
-    const elapsed = performance.now() - this._motionStartTime
-    return (preset?.steps ?? []).filter((step, index) => {
-      if (step.time > elapsed || this._executedSteps.has(index)) return false
-      this._executedSteps.add(index)
-      return true
+    const now = this.clock()
+    return [...this.active.values()].flatMap(active => {
+      const elapsed = now - active.startedAt
+      return (active.preset?.steps ?? []).filter((step, index) => {
+        if (step.time > elapsed || active.executedSteps.has(index)) return false
+        active.executedSteps.add(index)
+        return true
+      })
     })
   }
+
+  private primaryActive(): ActiveMotion | undefined {
+    return [...this.active.values()].sort((left, right) =>
+      right.request.priority - left.request.priority
+      || right.startedAt - left.startedAt)[0]
+  }
+
+  private startNextQueued(): void {
+    const next = this.queue.shift()
+    if (next) this.play(next.name, next.source, next.intensity)
+  }
+}
+
+function inferChannels(preset: MotionPreset): MotionChannel[] {
+  const channels = new Set<MotionChannel>()
+  for (const frame of preset.keyframes) {
+    if (frame.parameter.startsWith('head.')) channels.add('head')
+    else if (frame.parameter.startsWith('body.')) channels.add('body')
+    else if (frame.parameter.startsWith('eye.')) channels.add('gaze')
+    else if (frame.parameter.startsWith('mouth.')) channels.add('mouth')
+    else if (frame.parameter.startsWith('blink.')) channels.add('expression')
+    else channels.add('full')
+  }
+  return channels.size ? [...channels] : ['full']
+}
+
+function normalizeChannels(channels: MotionChannel[]): MotionChannel[] {
+  return channels.includes('full') ? ['full'] : [...new Set(channels)]
+}
+
+function channelsOverlap(left: MotionChannel[], right: MotionChannel[]): boolean {
+  return left.includes('full') || right.includes('full')
+    || left.some(channel => right.includes(channel))
+}
+
+function sourcePriority(source: MotionSource): number {
+  if (source === 'pet') return 60
+  if (source === 'system') return 55
+  if (source === 'ai') return 50
+  return 10
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
 }

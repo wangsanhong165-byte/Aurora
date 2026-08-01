@@ -13,7 +13,18 @@ def test_success_lifecycle_has_one_canonical_order():
     turn.reply_text = "world"
     turn.audio = b"wav"
     turn.output.performance.emotion = "happy"
+    turn.output.performance.intensity = 0.85
+    turn.output.performance.energy = 0.35
     turn.output.performance.behavior = "greet"
+    turn.output.performance.motion_plan = {
+        "durationMs": 900,
+        "steps": [{
+            "atMs": 0,
+            "durationMs": 600,
+            "primitive": "nod",
+            "intensity": 0.5,
+        }],
+    }
     turn.output.performance.speaking = True
     turn.transition_to(TurnPhase.COMPLETED)
 
@@ -33,9 +44,12 @@ def test_success_lifecycle_has_one_canonical_order():
     assert all(isinstance(message, DomainEvent) for message in messages)
     update = messages[-3]
     assert update.payload.behavior == "greet"
+    assert update.payload.intensity == 0.85
+    assert update.payload.energy == 0.35
     assert not hasattr(update.payload, "model_id")
     assert not hasattr(update.payload, "expression")
     assert not hasattr(update.payload, "motion")
+    assert update.payload.motion_plan.steps[0].primitive == "nod"
 
 
 def test_failure_lifecycle_is_error_then_idle():

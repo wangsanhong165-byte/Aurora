@@ -28,12 +28,25 @@ interface DiagState {
   runtimeEvents: string[]
 }
 
+const CALIBRATION_CONTROLS = [
+  { logical: 'head.x', min: -20, max: 20, step: .5 },
+  { logical: 'head.y', min: -16, max: 16, step: .5 },
+  { logical: 'head.z', min: -14, max: 14, step: .5 },
+  { logical: 'body.x', min: -9, max: 9, step: .25 },
+  { logical: 'body.y', min: -7, max: 7, step: .25 },
+  { logical: 'eye.x', min: -1, max: 1, step: .05 },
+  { logical: 'eye.y', min: -1, max: 1, step: .05 },
+  { logical: 'mouth.open', min: 0, max: 1, step: .05 },
+  { logical: 'mouth.form', min: -1, max: 1, step: .05 },
+] as const
+
 export function DebugPanel() {
   const [visible, setVisible] = useState(false)
   const [parameterGain, setParameterGain] = useState(1.45)
   const [bodyMotionGain, setBodyMotionGain] = useState(1.25)
   const [nativeMotions, setNativeMotions] = useState<string[]>([])
   const [nativeExpressions, setNativeExpressions] = useState<string[]>([])
+  const [calibrationValues, setCalibrationValues] = useState<Record<string, number>>({})
   const [state, setState] = useState<DiagState>({
     connected: false,
     wsProtocol: '—',
@@ -224,12 +237,42 @@ export function DebugPanel() {
                 eventBus.emit('character:performance_tuning', { bodyMotionGain: value })
               }} />
           </label>
-          {(['happy', 'sad', 'angry', 'surprised', 'shy'] as const).map(emotion => (
+          {(['happy', 'sad', 'angry', 'surprised', 'shy', 'neutral'] as const).map(emotion => (
             <button key={emotion} onClick={() => eventBus.emit('character:intent', {
               emotion, behavior: 'react', intensity: 0.85,
             })}>{emotion}</button>
           ))}
         </div>
+        <details style={styles.calibration}>
+          <summary>Parameter calibration</summary>
+          <button onClick={() => {
+            setCalibrationValues({})
+            eventBus.emit('character:calibration_override', { clear: true })
+          }}>Reset parameters</button>
+          {CALIBRATION_CONTROLS.map(control => {
+            const value = calibrationValues[control.logical] ?? 0
+            return (
+              <label key={control.logical} style={styles.calibrationRow}>
+                <span>{control.logical} {value.toFixed(2)}</span>
+                <input
+                  type="range"
+                  min={control.min}
+                  max={control.max}
+                  step={control.step}
+                  value={value}
+                  onChange={event => {
+                    const next = Number(event.target.value)
+                    setCalibrationValues(current => ({ ...current, [control.logical]: next }))
+                    eventBus.emit('character:calibration_override', {
+                      logicalParameter: control.logical,
+                      value: next,
+                    })
+                  }}
+                />
+              </label>
+            )
+          })}
+        </details>
         <div style={styles.catalog}>
           <span>Native motions</span>
           {nativeMotions.map(name => (
@@ -309,6 +352,18 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: 12,
     maxHeight: 110,
     overflowY: 'auto',
+  },
+  calibration: {
+    marginBottom: 12,
+    border: '1px solid rgba(255,255,255,0.08)',
+    padding: 8,
+  },
+  calibrationRow: {
+    display: 'grid',
+    gridTemplateColumns: '150px 1fr',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
   },
   table: {
     width: '100%',

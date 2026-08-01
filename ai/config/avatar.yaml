@@ -88,7 +88,6 @@ Design_genius_White:
       duration_ms: 0
       loop: true
       category: "idle"
-      motion_file: "idle.motion3.json"
     wave:
       priority: 50
       duration_ms: 800
@@ -355,6 +354,91 @@ mao_zh-Hans:
       priority: 20
     expression:
       owns: ["ParamBrowLY", "ParamBrowRY", "ParamMouthForm", "ParamCheek"]
+      priority: 30
+
+# ── hiyori_zh-Hans ────────────────────────────────────────────────────────────
+
+hiyori_zh-Hans:
+  expressions:
+    neutral:
+      preset: ""
+      params: {}
+      default: true
+
+  motions:
+    idle:
+      priority: 10
+      duration_ms: 0
+      loop: true
+      category: "idle"
+      motion_file: "motion/hiyori_m01.motion3.json"
+    m02_idle:
+      priority: 10
+      duration_ms: 0
+      loop: true
+      category: "idle"
+      motion_file: "motion/hiyori_m02.motion3.json"
+    m05_idle:
+      priority: 10
+      duration_ms: 0
+      loop: true
+      category: "idle"
+      motion_file: "motion/hiyori_m05.motion3.json"
+    flick:
+      priority: 50
+      duration_ms: 800
+      loop: false
+      category: "gesture"
+      motion_file: "motion/hiyori_m03.motion3.json"
+    flick_down:
+      priority: 50
+      duration_ms: 800
+      loop: false
+      category: "gesture"
+      motion_file: "motion/hiyori_m04.motion3.json"
+    flick_up:
+      priority: 50
+      duration_ms: 800
+      loop: false
+      category: "gesture"
+      motion_file: "motion/hiyori_m06.motion3.json"
+    tap:
+      priority: 40
+      duration_ms: 600
+      loop: false
+      category: "gesture"
+      motion_file: "motion/hiyori_m07.motion3.json"
+    tap2:
+      priority: 40
+      duration_ms: 600
+      loop: false
+      category: "gesture"
+      motion_file: "motion/hiyori_m08.motion3.json"
+    tap_body:
+      priority: 40
+      duration_ms: 600
+      loop: false
+      category: "gesture"
+      motion_file: "motion/hiyori_m09.motion3.json"
+    flick_body:
+      priority: 50
+      duration_ms: 800
+      loop: false
+      category: "gesture"
+      motion_file: "motion/hiyori_m10.motion3.json"
+
+  parameters:
+    lip_sync:
+      owns: ["ParamMouthOpenY"]
+      priority: 60
+    blink:
+      owns: ["ParamEyeLOpen", "ParamEyeROpen"]
+      priority: 40
+    breath:
+      owns: ["ParamBreath"]
+      priority: 20
+    expression:
+      owns: ["ParamBrowLY", "ParamBrowRY", "ParamMouthForm", "ParamCheek", "ParamEyeLSmile", "ParamEyeRSmile"]
       priority: 30
 
 # ── ariu ────────────────────────────────────────────────────────────────────

@@ -1,6 +1,4 @@
-// Enforces mutually-exclusive Cubism pose groups behind adapter ownership.
-
-import type { CubismModelHandle } from './core'
+// Enforces mutually-exclusive Cubism pose groups as mixer contributions.
 
 interface PoseMember {
   id: string
@@ -14,7 +12,6 @@ interface PoseGroup {
 
 export class PoseController {
   private groups: PoseGroup[] = []
-  private initialized = false
 
   load(poseJson: Record<string, unknown>): void {
     this.groups = []
@@ -32,33 +29,19 @@ export class PoseController {
         this.groups.push({ members, activeId: members[0].id })
       }
     }
-    this.initialized = false
     console.log('[Pose] Loaded %d exclusive pose groups', this.groups.length)
   }
 
-  applyInitial(handle: CubismModelHandle): void {
-    if (this.initialized) return
-    this.apply(handle)
-    this.initialized = true
-    console.log('[Pose] Applied initial state for %d groups', this.groups.length)
-  }
-
-  update(handle: CubismModelHandle): void {
-    if (!this.initialized) {
-      this.applyInitial(handle)
-      return
-    }
-    this.apply(handle)
-  }
-
-  private apply(handle: CubismModelHandle): void {
+  getContributions(): Array<{ partId: string; opacity: number }> {
+    const contributions: Array<{ partId: string; opacity: number }> = []
     for (const group of this.groups) {
       for (const member of group.members) {
         const opacity = member.id === group.activeId ? 1 : 0
-        handle.setPartOpacity(member.id, opacity)
-        for (const link of member.links) handle.setPartOpacity(link, opacity)
+        contributions.push({ partId: member.id, opacity })
+        for (const link of member.links) contributions.push({ partId: link, opacity })
       }
     }
+    return contributions
   }
 
   select(partId: string): boolean {

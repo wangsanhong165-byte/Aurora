@@ -13,6 +13,9 @@ export interface AvatarPerformanceCapabilities {
   gazeControl?: boolean
   browControl?: boolean
   eyeBlink?: boolean
+  mouthControl?: boolean
+  mouthForm?: boolean
+  breathControl?: boolean
 }
 
 export interface AvatarParameterBinding {
@@ -26,6 +29,22 @@ export interface AvatarParameterBinding {
 }
 
 export type PerformanceMode = 'legacy' | 'enhanced' | 'calibration'
+
+export interface AvatarLipSyncConfig {
+  min?: number
+  max?: number
+  inputGain?: number
+  noiseGate?: number
+  attackMs?: number
+  releaseMs?: number
+  peakBoost?: number
+}
+
+export interface AvatarViewportConfig {
+  x?: number
+  y?: number
+  scale?: number
+}
 
 export interface AvatarPrivateEmotionBinding {
   target: string
@@ -58,8 +77,34 @@ export interface AvatarCapabilityProfile {
   bodyMotionGain?: number
   performanceMode?: PerformanceMode
   privateEmotionMap?: AvatarPrivateEmotionMap
+  /** Logical parameters that semantic/native motion plans may not own. */
+  protectedMotionParameters?: string[]
+  lipSync?: AvatarLipSyncConfig
   /** Small per-model silent opening used only while authored native idle is active. */
   idleMouthOpen?: number
+  /** Model-specific initial framing for assets whose Cubism canvas origin is off-center. */
+  viewport?: AvatarViewportConfig
+}
+
+export function normalizeAvatarViewport(
+  value: AvatarViewportConfig | undefined,
+): { x: number; y: number; scale: number } {
+  return {
+    x: clampFinite(value?.x, -1.5, 1.5, 0),
+    y: clampFinite(value?.y, -1.5, 1.5, 0),
+    scale: clampFinite(value?.scale, 0.35, 2.5, 1),
+  }
+}
+
+function clampFinite(
+  value: number | undefined,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(min, Math.min(max, value))
+    : fallback
 }
 
 export function supportsExpression(profile: AvatarCapabilityProfile | undefined, name: string): boolean {
@@ -68,6 +113,12 @@ export function supportsExpression(profile: AvatarCapabilityProfile | undefined,
 
 export function supportsMotion(profile: AvatarCapabilityProfile | undefined, name: string): boolean {
   return !profile || profile.motions.length === 0 || profile.motions.includes(name)
+}
+
+export function shouldStartAuthoredIdle(
+  profile: Pick<AvatarCapabilityProfile, 'motions'> | undefined,
+): boolean {
+  return Boolean(profile?.motions.includes('idle'))
 }
 
 export function supportsSequence(profile: AvatarCapabilityProfile | undefined, name: string): boolean {

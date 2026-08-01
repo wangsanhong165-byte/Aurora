@@ -2,10 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "app",
-      "runtimeExecutable": "node",
-      "runtimeArgs": ["-e", "setTimeout(()=>{},999999)"],
-      "port": 9528
+      "name": "Vite",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["vite", "--port", "5174", "--strictPort"],
+      "port": 5174,
+      "url": "http://localhost:5174"
     }
   ]
 }

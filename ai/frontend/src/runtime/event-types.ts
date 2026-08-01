@@ -1,3 +1,5 @@
+import type { MotionPlan } from '../character/MotionAction'
+
 export type JsonValue =
   | string
   | number
@@ -114,14 +116,16 @@ export interface EventPayloadMap {
     segments: Array<{ text: string; emotion: string; behavior: string }>
   }
   'assistant.failed': FailurePayload
-  'character.intent': {
-    emotion: string
-    behavior: string
-    attention: 'user' | 'screen' | 'away' | 'neutral'
+    'character.intent': {
+      emotion: string
+      behavior: string
+      intensity: number
+      attention: 'user' | 'screen' | 'away' | 'neutral'
     energy: number
     durationMs?: number | null
     naturalVAD?: { valence: number; arousal: number; dominance: number } | null
     contextTags: string[]
+    motionPlan?: MotionPlan | null
   }
   'character.expression': { name: string; intensity: number; controller: string; priority: number }
   'character.motion': { name: string; controller: string; priority: number; loop: boolean }

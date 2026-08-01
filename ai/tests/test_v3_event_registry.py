@@ -48,6 +48,15 @@ VALID_PAYLOADS: dict[str, dict] = {
         "behavior": "speak",
         "attention": "user",
         "energy": 0.7,
+        "motionPlan": {
+            "durationMs": 900,
+            "steps": [{
+                "atMs": 0,
+                "durationMs": 600,
+                "primitive": "nod",
+                "intensity": 0.5,
+            }],
+        },
     },
     "character.expression": {"name": "smile", "intensity": 0.8},
     "character.motion": {"name": "wave", "priority": 2, "loop": False},
@@ -192,3 +201,16 @@ def test_current_v3_emitter_only_emits_registered_events() -> None:
         "turn.completed",
         "runtime.status",
     ]
+
+
+def test_character_intent_defaults_intensity_without_reusing_energy() -> None:
+    event = EventRegistry.parse(raw_event("character.intent", {
+        "emotion": "calm",
+        "behavior": "speak",
+        "attention": "user",
+        "energy": 0.9,
+        "contextTags": [],
+    }))
+
+    assert event.payload.intensity == 0.5
+    assert event.payload.energy == 0.9

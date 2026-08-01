@@ -137,14 +137,31 @@ class NaturalVadPayload(PayloadModel):
     dominance: float
 
 
+class MotionPlanStepPayload(PayloadModel):
+    at_ms: int = Field(alias="atMs", ge=0)
+    duration_ms: int = Field(alias="durationMs", ge=120, le=2500)
+    primitive: Literal[
+        "nod", "tilt_left", "tilt_right", "lean_forward", "lean_back",
+        "sway", "look_left", "look_right", "breathe", "shrug",
+    ]
+    intensity: float = Field(ge=0, le=1)
+
+
+class MotionPlanPayload(PayloadModel):
+    duration_ms: int = Field(alias="durationMs", ge=300, le=8000)
+    steps: list[MotionPlanStepPayload] = Field(min_length=1, max_length=16)
+
+
 class CharacterIntentPayload(PayloadModel):
     emotion: str
     behavior: str
+    intensity: float = Field(default=0.5, ge=0, le=1)
     attention: Literal["user", "screen", "away", "neutral"] = "user"
     energy: float = Field(ge=0, le=1)
     duration_ms: int | None = Field(default=None, alias="durationMs", ge=0)
     natural_vad: NaturalVadPayload | None = Field(default=None, alias="naturalVAD")
     context_tags: list[str] = Field(default_factory=list, alias="contextTags")
+    motion_plan: MotionPlanPayload | None = Field(default=None, alias="motionPlan")
 
 
 class CharacterExpressionPayload(PayloadModel):

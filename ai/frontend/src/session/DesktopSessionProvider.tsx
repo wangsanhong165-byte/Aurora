@@ -3,6 +3,11 @@ import { useActions, useSelector, selectSettings } from '../core/store'
 import { eventBus } from '../core/event-bus'
 import { RuntimeAdapter } from '../runtime/adapter'
 import { AudioPlayer } from '../audio/player'
+import {
+  bytesToBase64,
+  createDiagnosticWavBytes,
+  LipSyncDiagnosticProbe,
+} from '../audio/diagnostic'
 import { AudioRecorder, type RecorderState } from '../audio/recorder'
 import { StatusBar } from '../ui/StatusBar'
 import { TitleBar } from '../ui/TitleBar'
@@ -13,6 +18,11 @@ import type { ChatMessage } from '../core/types'
 import { CompanionWorkspace } from '../ui/CompanionWorkspace'
 import { resolveHistoryCommand } from '../conversation/history-command'
 import { PermissionDialog } from '../ui/PermissionDialog'
+import {
+  normalizeLive2DPerformanceSettings,
+  readModelPerformanceDefaults,
+  resolvePersistedLive2DModel,
+} from '../character/Live2DPerformanceSettings'
 
 const WS_URL = `ws://${location.hostname}:9528/client-ws`
 let idCounter = 0
@@ -39,6 +49,13 @@ export function DesktopSessionWorkspace() {
   useEffect(() => {
     const client = new RuntimeAdapter(WS_URL)
     const audio = new AudioPlayer()
+    let diagnosticRun: {
+      requestId: string
+      turnId: string
+      probe: LipSyncDiagnosticProbe
+      stopTimer?: ReturnType<typeof setTimeout>
+      finishTimer?: ReturnType<typeof setTimeout>
+    } | null = null
     clientRef.current = client
     audioRef.current = audio
 
@@ -79,21 +96,97 @@ export function DesktopSessionWorkspace() {
       setSubtitleText(text)
     })
 
-    const unsub5 = eventBus.on('audio:play', ({ audio: b64, format }) => {
+    const unsub5 = eventBus.on('audio:play', ({ audio: b64, format, turnId, sequence }) => {
       actions.setAudioPlaying(true)
-      audio.enqueue(b64, format)
+      audio.enqueue(b64, format, turnId, sequence)
     })
 
-    const unsub6 = eventBus.on('audio:stop', () => {
-      void audio.dispose()
-      actions.setAudioPlaying(false)
+    const unsub6 = eventBus.on('audio:stop', ({ turnId }) => {
+      if (audio.stop(turnId)) actions.setAudioPlaying(false)
     })
 
-    const unsub7 = eventBus.on('runtime:tts.started', () => {
+    const unsub7 = eventBus.on('runtime:tts.started', ({ turnId, sequence }) => {
+      audio.beginTurn(turnId, sequence)
       actions.setAudioPlaying(true)
     })
 
     const unsub8 = eventBus.on('runtime:tts.completed', () => {})
+
+    const finishDiagnostic = (
+      run: NonNullable<typeof diagnosticRun>,
+      error?: unknown,
+    ) => {
+      if (diagnosticRun !== run) return
+      const result = run.probe.finish()
+      eventBus.emit('runtime:turn.completed', {
+        turnId: run.turnId,
+        reason: error ? 'diagnostic_failed' : 'diagnostic_completed',
+      })
+      eventBus.emit('audio:diagnostic.result', {
+        requestId: run.requestId,
+        phase: !error && result.passed ? 'passed' : 'failed',
+        message: error
+          ? `诊断失败：${error instanceof Error ? error.message : String(error)}`
+          : result.passed
+            ? '真实音频播放、口型响应和中断闭嘴均通过'
+            : '未达到音量、开口或闭嘴阈值，请检查浏览器音频权限和模型嘴型画像',
+        ...result,
+      })
+      diagnosticRun = null
+    }
+
+    const unsubDiagnosticDebug = eventBus.on('character:performance_debug', ({ lipSync }) => {
+      diagnosticRun?.probe.recordMouth(Number(lipSync.smoothedMouth ?? 0))
+    })
+
+    const unsubDiagnostic = eventBus.on('audio:diagnostic.request', ({ requestId }) => {
+      void (async () => {
+        if (diagnosticRun) {
+          if (diagnosticRun.stopTimer) clearTimeout(diagnosticRun.stopTimer)
+          if (diagnosticRun.finishTimer) clearTimeout(diagnosticRun.finishTimer)
+          eventBus.emit('audio:stop', {
+            turnId: diagnosticRun.turnId,
+            reason: 'diagnostic_restarted',
+          })
+        }
+        const run = {
+          requestId,
+          turnId: `diagnostic_${requestId}`,
+          probe: new LipSyncDiagnosticProbe(),
+        } as NonNullable<typeof diagnosticRun>
+        diagnosticRun = run
+        eventBus.emit('audio:diagnostic.result', {
+          requestId,
+          phase: 'running',
+          message: '正在播放确定性测试音频，并在中途执行打断……',
+        })
+        try {
+          await audio.resume()
+          eventBus.emit('runtime:turn.started', {
+            turnId: run.turnId,
+            inputMode: 'text',
+            origin: 'system',
+          })
+          audio.beginTurn(run.turnId, 0)
+          const accepted = audio.enqueue(
+            bytesToBase64(createDiagnosticWavBytes()),
+            'wav',
+            run.turnId,
+            0,
+          )
+          if (!accepted) throw new Error('测试音频被播放队列拒绝')
+          run.stopTimer = setTimeout(() => {
+            eventBus.emit('audio:stop', {
+              turnId: run.turnId,
+              reason: 'diagnostic_interrupt',
+            })
+            run.finishTimer = setTimeout(() => finishDiagnostic(run), 350)
+          }, 850)
+        } catch (error) {
+          finishDiagnostic(run, error)
+        }
+      })()
+    })
 
     const unsub11 = eventBus.on('runtime:asr.result', ({ text }) => {
       if (!text) return
@@ -155,9 +248,20 @@ export function DesktopSessionWorkspace() {
     })
 
     audio.setHandlers({
-      onStart() { actions.setAudioPlaying(true); eventBus.emit('audio:start', undefined) },
-      onEnd() { actions.setAudioPlaying(false); actions.setAudioVolume(0); eventBus.emit('audio:end', undefined) },
-      onVolume(vol) { actions.setAudioVolume(vol); eventBus.emit('audio:volume', { volume: vol }) },
+      onStart(item) {
+        actions.setAudioPlaying(true)
+        eventBus.emit('audio:start', { turnId: item.turnId, sequence: item.sequence })
+      },
+      onEnd(turnId) {
+        actions.setAudioPlaying(false)
+        actions.setAudioVolume(0)
+        eventBus.emit('audio:end', { turnId })
+      },
+      onVolume(vol) {
+        diagnosticRun?.probe.recordVolume(vol)
+        actions.setAudioVolume(vol)
+        eventBus.emit('audio:volume', { volume: vol })
+      },
     })
 
     // Load persisted settings on startup
@@ -181,6 +285,12 @@ export function DesktopSessionWorkspace() {
       if ('windowMode' in s) {
         window.electronAPI?.setPetMode(s.windowMode === 'pet')
       }
+      const persistedModel = resolvePersistedLive2DModel(s)
+      const startupModel = localStorage.getItem('live2d_model_name')
+        || (window as any).__INITIAL_MODEL_INFO__?.name
+      if (persistedModel && persistedModel !== startupModel) {
+        eventBus.emit('character:switch_model', { name: persistedModel })
+      }
     }).catch(() => {})
 
     client.connect()
@@ -198,9 +308,12 @@ export function DesktopSessionWorkspace() {
     return () => {
       unsub1(); unsub2(); unsub3(); unsub4(); unsub5(); unsub6()
       unsub7(); unsub8(); unsub10(); unsub11(); unsub12()
+      unsubDiagnostic(); unsubDiagnosticDebug()
       unsubActivity(); unsubIntent()
       unsubAccessoryLoaded(); unsubAccessoryChanged()
-      client.disconnect(); audio.stop()
+      if (diagnosticRun?.stopTimer) clearTimeout(diagnosticRun.stopTimer)
+      if (diagnosticRun?.finishTimer) clearTimeout(diagnosticRun.finishTimer)
+      client.disconnect(); void audio.dispose()
     }
   }, [])
 
@@ -287,6 +400,22 @@ export function DesktopSessionWorkspace() {
     }, 500)
     return () => clearTimeout(timer)
   }, [settings])
+
+  // Apply model-specific performance tuning after settings/model/profile changes.
+  useEffect(() => {
+    const tuning = normalizeLive2DPerformanceSettings(
+      settings.live2dPerformanceProfiles?.[settings.live2dModel],
+      readModelPerformanceDefaults(settings.live2dModel),
+    )
+    eventBus.emit('character:performance_tuning', tuning)
+  }, [settings.live2dModel, settings.live2dPerformanceProfiles])
+
+  useEffect(() => {
+    eventBus.emit('character:actions_update', {
+      model: settings.live2dModel,
+      actions: settings.live2dActions?.[settings.live2dModel] ?? [],
+    })
+  }, [settings.live2dModel, settings.live2dActions])
 
   // Resume AudioContext on first user gesture (browser autoplay policy)
   const handleUserGesture = useCallback(() => {

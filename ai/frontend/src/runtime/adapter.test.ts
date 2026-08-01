@@ -28,10 +28,22 @@ function runtimeEvent<K extends EventType>(
 test('adapter routes V3 turn, character and audio events without V2 payload recovery', () => {
   const adapter = new RuntimeEventAdapter()
   const received: string[] = []
+  let receivedIntent: { intensity: number; energy: number; attention: string } | null = null
+  let audioOwner: { turnId: string; sequence: number } | null = null
   const unsubs = [
     eventBus.on('runtime:turn.started', () => received.push('turn')),
-    eventBus.on('runtime:character.intent', () => received.push('intent')),
-    eventBus.on('audio:play', () => received.push('audio')),
+    eventBus.on('runtime:character.intent', (intent) => {
+      received.push('intent')
+      receivedIntent = {
+        intensity: intent.intensity,
+        energy: intent.energy,
+        attention: intent.attention,
+      }
+    }),
+    eventBus.on('audio:play', ({ turnId, sequence }) => {
+      received.push('audio')
+      audioOwner = { turnId, sequence }
+    }),
   ]
 
   adapter.dispatch(runtimeEvent(
@@ -45,6 +57,7 @@ test('adapter routes V3 turn, character and audio events without V2 payload reco
       emotion: 'happy',
       behavior: 'greet',
       attention: 'user',
+      intensity: 0.65,
       energy: 0.8,
       durationMs: null,
       naturalVAD: null,
@@ -59,6 +72,8 @@ test('adapter routes V3 turn, character and audio events without V2 payload reco
   ))
 
   assert.deepEqual(received, ['turn', 'intent', 'audio'])
+  assert.deepEqual(receivedIntent, { intensity: 0.65, energy: 0.8, attention: 'user' })
+  assert.deepEqual(audioOwner, { turnId: 'turn-1', sequence: 0 })
   unsubs.forEach(unsub => unsub())
 })
 
@@ -87,6 +102,7 @@ test('adapter rejects stale assistant, character and audio events after a new tu
       emotion: 'sad',
       behavior: 'idle',
       attention: 'user',
+      intensity: 0.4,
       energy: 0.2,
       durationMs: null,
       naturalVAD: null,
@@ -107,7 +123,11 @@ test('adapter rejects stale assistant, character and audio events after a new tu
 test('cancel stops current audio generation', () => {
   const adapter = new RuntimeEventAdapter()
   let stops = 0
-  const unsub = eventBus.on('audio:stop', () => { stops += 1 })
+  let stoppedTurn = ''
+  const unsub = eventBus.on('audio:stop', ({ turnId }) => {
+    stops += 1
+    stoppedTurn = turnId ?? ''
+  })
   adapter.dispatch(runtimeEvent(
     'turn.started',
     { origin: 'user', inputMode: 'text' },
@@ -115,5 +135,6 @@ test('cancel stops current audio generation', () => {
   ))
   adapter.dispatch(runtimeEvent('tts.cancelled', { reason: 'interrupted' }, 'turn-1'))
   assert.equal(stops, 1)
+  assert.equal(stoppedTurn, 'turn-1')
   unsub()
 })

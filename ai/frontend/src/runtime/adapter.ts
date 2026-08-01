@@ -128,6 +128,12 @@ export class RuntimeEventAdapter {
 
       case 'turn.started':
         if (this.closedTurnIds.has(event.turnId!)) return
+        if (this.activeTurnId && this.activeTurnId !== event.turnId) {
+          eventBus.emit('audio:stop', {
+            turnId: this.activeTurnId,
+            reason: 'superseded',
+          })
+        }
         this.activeTurnId = event.turnId!
         eventBus.emit('runtime:turn.started', {
           turnId: event.turnId!,
@@ -158,7 +164,10 @@ export class RuntimeEventAdapter {
         this.closeTurn(event.turnId!)
         return
       case 'turn.cancelled':
-        eventBus.emit('audio:stop', undefined)
+        eventBus.emit('audio:stop', {
+          turnId: event.turnId!,
+          reason: event.payload.reason,
+        })
         eventBus.emit('runtime:turn.cancelled', {
           turnId: event.turnId!,
           reason: event.payload.reason,
@@ -203,6 +212,8 @@ export class RuntimeEventAdapter {
         eventBus.emit('audio:play', {
           audio: event.payload.data,
           format: event.payload.format,
+          turnId: event.turnId!,
+          sequence: event.payload.audioSequence,
           volumeArray: event.payload.volumes,
         })
         return
@@ -216,7 +227,10 @@ export class RuntimeEventAdapter {
         eventBus.emit('runtime:error', event.payload)
         return
       case 'tts.cancelled':
-        eventBus.emit('audio:stop', undefined)
+        eventBus.emit('audio:stop', {
+          turnId: event.turnId!,
+          reason: event.payload.reason,
+        })
         return
 
       case 'character.intent':
@@ -226,10 +240,11 @@ export class RuntimeEventAdapter {
           behavior: event.payload.behavior,
           attention: event.payload.attention,
           energy: event.payload.energy,
-          intensity: event.payload.energy,
+          intensity: event.payload.intensity,
           durationMs: event.payload.durationMs ?? undefined,
           naturalVAD: event.payload.naturalVAD ?? undefined,
           contextTags: event.payload.contextTags,
+          motionPlan: event.payload.motionPlan ?? undefined,
         })
         return
       case 'character.expression':

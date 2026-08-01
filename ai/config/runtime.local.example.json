@@ -1,8 +1,9 @@
 {
   "python": {
-    "default": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+    "default": "D:\\conda\\envs\\qwen3-asr\\python.exe",
     "services": {
-      "asr": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe"
+      "asr": "D:\\conda\\envs\\qwen3-asr\\python.exe",
+      "gsvi": "C:\\Users\\LENOVO\\Desktop\\c++\\ai\\models\\tts\\GPT-SoVITS-v2pro-20250604-nvidia50\\runtime\\python.exe"
     }
   },
   "preferredMode": "electron",

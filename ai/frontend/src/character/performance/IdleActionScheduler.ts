@@ -63,7 +63,7 @@ const labels: IdleActionLabel[] = [
 export class IdleActionScheduler {
   private random: RandomSource
   private active: ActiveAction | null = null
-  private nextActionAt = 5
+  private nextActionAt = 8
   private recentActions: IdleActionLabel[] = []
   private recentDirections: Array<-1 | 1> = []
   private lastProgress = 0
@@ -141,8 +141,8 @@ export class IdleActionScheduler {
   }
 
   private sampleInterval(focusLevel: number): number {
-    const activity = clamp(this.spontaneity, 0.1, 2)
-    return (4.8 + this.random() * 6.7) / activity + clamp(focusLevel, 0, 1) * 2
+    const activity = clamp(this.spontaneity, 0.1, 1.25)
+    return (8 + this.random() * 8) / activity + clamp(focusLevel, 0, 1) * 2
   }
 }
 

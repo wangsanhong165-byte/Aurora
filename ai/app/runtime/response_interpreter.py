@@ -7,6 +7,7 @@ from typing import Any
 
 from app.interfaces.llm import LLMResponse
 from app.runtime.character_turn import CharacterTurn, PerformancePlan
+from app.runtime.character_intent import CharacterIntent
 
 def _is_renderer_key(key: Any) -> bool:
     normalized = str(key).casefold()
@@ -47,18 +48,25 @@ class ResponseInterpreter:
                 warnings.append("renderer_details_removed")
             segments.append(cleaned)
 
-        last = segments[-1] if segments else {}
-        emotion = str(last.get("emotion", "neutral"))
-        behavior = str(last.get("behavior", "speak" if response.reply else ""))
-        energy = float(last.get("energy", last.get("intensity", 0.5)))
+        dominant = max(
+            enumerate(segments),
+            key=lambda item: (
+                float(item[1].get("intensity", 0.5)),
+                float(item[1].get("energy", item[1].get("intensity", 0.5))),
+                -item[0],
+            ),
+        )[1] if segments else {}
+        intent = CharacterIntent.from_llm_segment(dominant)
         performance = PerformancePlan(
-            emotion=emotion,
-            behavior=behavior,
-            attention=str(last.get("attention", "user")),
-            energy=max(0.0, min(1.0, energy)),
+            emotion=intent.emotion,
+            behavior=intent.behavior or ("speak" if response.reply else ""),
+            intensity=intent.intensity,
+            attention=intent.attention,
+            energy=intent.energy,
             speaking=bool(response.reply),
-            duration_ms=last.get("duration_ms"),
-            context_tags=list(last.get("contextTags", last.get("context_tags", ())))[:8],
+            duration_ms=intent.duration_ms,
+            context_tags=list(intent.context_tags),
+            motion_plan=intent.motion_plan,
         )
         return InterpretedResponse(
             reply_text=response.reply,

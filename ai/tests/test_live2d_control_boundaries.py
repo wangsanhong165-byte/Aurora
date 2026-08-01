@@ -32,7 +32,10 @@ def test_behavior_resolver_stays_between_intent_and_live2d_controllers():
     assert "behaviorResolver.resolve(intent)" in controllers
     assert "performancePolicy.evaluate(intent, basePlan" in controllers
     assert "exprCtrl.apply(policy.expression" in controllers
-    assert "motionArbiter.play(policy.motion" in controllers
+    assert "this.motionArbiter.request({" in controllers
+    assert "name: policy.motion" in controllers
+    assert "owner: `intent:${intent.turnId" in controllers
+    assert "source: 'ai'" in controllers
 
 
 def test_live2d_config_declares_behavior_mapping_without_parameter_ids():
@@ -546,16 +549,16 @@ def test_native_motion_is_authorized_by_arbiter_with_logical_fallback():
     assert "channel: 'motion'" in controllers
 
 
-def test_semantic_idle_stops_business_motion_without_preset_lookup():
+def test_semantic_idle_stops_business_motion_when_no_native_or_preset_exists():
     arbiter = (
         ROOT / "frontend/src/character/MotionArbiter.ts"
     ).read_text(encoding="utf-8")
 
-    idle_guard = arbiter.index("if (normalized === 'idle')")
+    idle_guard = arbiter.index("if (name === 'idle')")
     native_lookup = arbiter.index("const nativeName")
     unknown_warning = arbiter.index("Unknown motion:")
-    assert idle_guard < native_lookup < unknown_warning
-    assert "this.stop()" in arbiter[idle_guard:native_lookup]
+    assert native_lookup < idle_guard < unknown_warning
+    assert "this.stop()" in arbiter[idle_guard:unknown_warning]
 
 
 def test_profile_inspector_reports_model_assets_and_binding_coverage():
@@ -729,7 +732,13 @@ def test_initial_idle_starts_authored_native_idle_and_looping_motion_stays_alive
     ).read_text(encoding="utf-8")
 
     assert "startNativeIdleIfAvailable" in controllers
-    assert "this.motionArbiter.play('idle', 'system'" in controllers
+    idle_start = controllers.index("private startNativeIdleIfAvailable")
+    idle_end = controllers.index("\n  }", idle_start)
+    idle_block = controllers[idle_start:idle_end]
+    assert "this.motionArbiter.request({" in idle_block
+    assert "name: 'idle'" in idle_block
+    assert "owner: 'idle:native'" in idle_block
+    assert "channels: ['full']" in idle_block
     assert "loop: Boolean(json.Meta?.Loop)" in player
     assert "this.elapsed %= motion.duration" in player
 
@@ -785,4 +794,4 @@ def test_audio_decode_failure_does_not_emit_end_between_queued_segments():
     source = (ROOT / "frontend/src/audio/player.ts").read_text(encoding="utf-8")
     assert "private playbackGeneration = 0" in source
     assert "if (this.queue.length > 0)" in source
-    assert "} else {\n        this.handlers.onEnd?.()" in source
+    assert "} else {\n        this.handlers.onEnd?.(item.turnId)" in source

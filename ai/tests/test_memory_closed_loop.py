@@ -27,16 +27,26 @@ def test_structured_memory_upsert_conflicts_and_hybrid_recall(tmp_path):
         importance=0.9,
         confidence=0.95,
     )
+    reactivated_id = store.upsert_memory(
+        memory_type="preference",
+        subject="user",
+        predicate="likes",
+        content="用户最喜欢草莓蛋糕",
+        character_id="monika",
+        importance=0.95,
+        confidence=0.98,
+    )
 
     assert first_id != second_id
+    assert reactivated_id == first_id
     active = store.list_memories(
         character_id="monika", memory_type="preference", active_only=True
     )
-    assert [item["content"] for item in active] == ["用户现在最喜欢巧克力蛋糕"]
+    assert [item["content"] for item in active] == ["用户最喜欢草莓蛋糕"]
 
     results = store.search_memories("我喜欢吃什么", character_id="monika", limit=5)
     assert results
-    assert results[0]["content"] == "用户现在最喜欢巧克力蛋糕"
+    assert results[0]["content"] == "用户最喜欢草莓蛋糕"
     assert results[0]["score"] > 0
     assert results[0]["reasons"]
 

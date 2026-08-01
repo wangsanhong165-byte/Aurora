@@ -1,14 +1,62 @@
 // Audio player with queue, interrupt, and volume analysis for lip sync
 
 export type AudioPlaybackHandler = {
-  onStart?: () => void
-  onEnd?: () => void
+  onStart?: (item: AudioPlaybackItem) => void
+  onEnd?: (turnId: string) => void
   onVolume?: (volume: number) => void
 }
 
-interface QueuedAudio {
+export interface AudioPlaybackItem {
   audio: string // base64 data
   format: string
+  turnId: string
+  sequence: number
+}
+
+/** Pure ownership/order module used by AudioPlayer and its tests. */
+export class AudioPlaybackQueue {
+  private pending = new Map<number, AudioPlaybackItem>()
+  private ready: AudioPlaybackItem[] = []
+  private expectedSequence = 0
+  private _activeTurnId: string | null = null
+
+  get activeTurnId(): string | null {
+    return this._activeTurnId
+  }
+
+  beginTurn(turnId: string, firstSequence = 0): void {
+    if (this._activeTurnId === turnId) return
+    this.pending.clear()
+    this.ready = []
+    this._activeTurnId = turnId
+    this.expectedSequence = Math.max(0, Math.floor(firstSequence))
+  }
+
+  push(item: AudioPlaybackItem): boolean {
+    if (!this._activeTurnId || item.turnId !== this._activeTurnId) return false
+    if (item.sequence < this.expectedSequence || this.pending.has(item.sequence)) return false
+    if (this.ready.some(ready => ready.sequence === item.sequence)) return false
+    this.pending.set(item.sequence, item)
+    while (this.pending.has(this.expectedSequence)) {
+      this.ready.push(this.pending.get(this.expectedSequence)!)
+      this.pending.delete(this.expectedSequence)
+      this.expectedSequence += 1
+    }
+    return true
+  }
+
+  drainReady(): AudioPlaybackItem[] {
+    return this.ready.splice(0)
+  }
+
+  stopTurn(turnId?: string): boolean {
+    if (!this._activeTurnId || (turnId && turnId !== this._activeTurnId)) return false
+    this.pending.clear()
+    this.ready = []
+    this._activeTurnId = null
+    this.expectedSequence = 0
+    return true
+  }
 }
 
 export class AudioPlayer {
@@ -17,9 +65,12 @@ export class AudioPlayer {
   private analyserNode: AnalyserNode | null = null
   private handlers: AudioPlaybackHandler = {}
   private animFrameId: number | null = null
-  private queue: QueuedAudio[] = []
+  private queue: AudioPlaybackItem[] = []
+  private ordering = new AudioPlaybackQueue()
+  private currentItem: AudioPlaybackItem | null = null
   private _isPlaying = false
   private playbackGeneration = 0
+  private legacySequence = 0
 
 
 
@@ -31,29 +82,55 @@ export class AudioPlayer {
     return this.queue.length
   }
 
+  get activeTurnId(): string | null {
+    return this.ordering.activeTurnId
+  }
+
   setHandlers(h: AudioPlaybackHandler): void {
     this.handlers = h
   }
 
-  /** Enqueue TTS audio for playback */
-  enqueue(base64Audio: string, format: string): void {
-    this.queue.push({ audio: base64Audio, format })
-    if (!this._isPlaying) {
-      this.playNext()
+  beginTurn(turnId: string, firstSequence = 0): void {
+    if (this.ordering.activeTurnId && this.ordering.activeTurnId !== turnId) {
+      this.stop()
     }
+    this.ordering.beginTurn(turnId, firstSequence)
+  }
+
+  /** Enqueue TTS audio for playback */
+  enqueue(base64Audio: string, format: string, turnId = 'legacy', sequence?: number): boolean {
+    const resolvedSequence = sequence ?? this.legacySequence++
+    if (!this.ordering.activeTurnId) this.ordering.beginTurn(turnId, resolvedSequence)
+    const accepted = this.ordering.push({
+      audio: base64Audio,
+      format,
+      turnId,
+      sequence: resolvedSequence,
+    })
+    if (!accepted) return false
+    this.queue.push(...this.ordering.drainReady())
+    if (!this._isPlaying) {
+      void this.playNext()
+    }
+    return true
   }
 
   /** Stop current playback and clear queue */
-  stop(): void {
+  stop(turnId?: string): boolean {
+    if (turnId && this.ordering.activeTurnId !== turnId) return false
     this.playbackGeneration += 1
     this.queue = []
+    this.ordering.stopTurn(turnId)
     this.stopCurrent()
+    return true
   }
 
   private stopCurrent(): void {
     const source = this.currentSource
+    const owner = this.currentItem?.turnId ?? ''
     const wasActive = this._isPlaying || Boolean(source)
     this.currentSource = null
+    this.currentItem = null
     if (source) {
       source.onended = null
       try {
@@ -66,7 +143,7 @@ export class AudioPlayer {
     this.analyserNode = null
     this._isPlaying = false
     this.stopVolumeAnalysis()
-    if (wasActive) this.handlers.onEnd?.()
+    if (wasActive) this.handlers.onEnd?.(owner)
   }
 
   private async playNext(): Promise<void> {
@@ -94,11 +171,13 @@ export class AudioPlayer {
       analyser.connect(ctx.destination)
 
       this.currentSource = source
+      this.currentItem = item
       this.analyserNode = analyser
 
       source.onended = () => {
         if (generation !== this.playbackGeneration || this.currentSource !== source) return
         this.currentSource = null
+        this.currentItem = null
         this.stopVolumeAnalysis()
         this._isPlaying = false
 
@@ -106,11 +185,11 @@ export class AudioPlayer {
         if (this.queue.length > 0) {
           this.playNext()
         } else {
-          this.handlers.onEnd?.()
+          this.handlers.onEnd?.(item.turnId)
         }
       }
 
-      this.handlers.onStart?.()
+      this.handlers.onStart?.(item)
       source.start()
       this.startVolumeAnalysis()
     } catch {
@@ -120,7 +199,7 @@ export class AudioPlayer {
       if (this.queue.length > 0) {
         this.playNext()
       } else {
-        this.handlers.onEnd?.()
+        this.handlers.onEnd?.(item.turnId)
       }
     }
   }

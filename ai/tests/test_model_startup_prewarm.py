@@ -32,6 +32,8 @@ def test_manifest_declares_memory_safe_gpu_service_order():
     assert "warmup" in manifest["tts"]
     assert "depends_on" not in manifest["asr"]
     assert manifest["gsvi"]["readiness"] is True
+    assert manifest["gsvi"]["command"]["executable"] == "{python}"
+    assert manifest["gsvi"]["env"]["PATH"].startswith("{python_dir};")
     ordered = [
         service.name
         for service in ServiceManifest.load(

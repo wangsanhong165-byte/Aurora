@@ -20,7 +20,6 @@ from app.avatar.events import (
     AvatarSuggestionCreated,
 )
 from app.runtime.character_turn import CharacterTurn, TurnInput
-from app.runtime.runtime import runtime as default_runtime
 from app.transport.domain_event import DomainEvent
 from app.transport.emitter import TransportEmitter
 from contracts.v3.envelope import EventEnvelope, error_envelope
@@ -50,7 +49,10 @@ class RuntimeEventHandler:
         send_event=None,
         avatar_controller: AvatarController | None = None,
     ):
-        self.runtime = runtime or default_runtime
+        if runtime is None:
+            from app.runtime.runtime import runtime as default_runtime
+            runtime = default_runtime
+        self.runtime = runtime
         self.send_event: PushEvent | None = send_event
         self.emitter_factory = TransportEmitter
         self.avatar = avatar_controller

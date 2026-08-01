@@ -1,100 +1,107 @@
-// Audio Analyzer — extracts mouth-open values from audio volume for lip sync.
-//
-// Takes raw volume (0-1) from the AudioPlayer, applies smoothing and decay,
-// and produces stable ParamMouthOpenY values through the ParameterMixer.
-//
-// Debug info exposed for the debug panel: current volume, mouth value.
+import type { AvatarLipSyncConfig } from './AvatarCapabilityProfile'
 
 export interface LipSyncDebugInfo {
   rawVolume: number
+  peakVolume: number
   smoothedMouth: number
   targetMouth: number
   enabled: boolean
+  gated: boolean
 }
 
+const DEFAULT_CONFIG: Required<AvatarLipSyncConfig> = {
+  min: 0,
+  max: 0.82,
+  inputGain: 6.5,
+  noiseGate: 0.012,
+  attackMs: 42,
+  releaseMs: 145,
+  peakBoost: 0.16,
+}
+
+/** Converts measured browser audio energy into a frame-rate independent mouth envelope. */
 export class AudioAnalyzer {
-  private _currentMouthOpen = 0
-  private _targetMouthOpen = 0
-  private _enabled = true
-
-  // Smoothing: higher = faster response
-  private _attackFactor = 0.35    // fast attack (mouth opens quickly)
-  private _releaseFactor = 0.08   // slow release (mouth closes naturally)
-
-  // Mouth range mapping
-  private _mouthRange = { min: 0, max: 0.82 }
-
-  // Silence threshold — below this, decay kicks in
-  private _silenceThreshold = 0.012
-  private _decayRate = 0.16
-
-  // Debug info
-  private _debug: LipSyncDebugInfo = {
+  private current = 0
+  private target = 0
+  private enabled = true
+  private config = { ...DEFAULT_CONFIG }
+  private debug: LipSyncDebugInfo = {
     rawVolume: 0,
+    peakVolume: 0,
     smoothedMouth: 0,
     targetMouth: 0,
     enabled: true,
+    gated: true,
+  }
+
+  configure(config: AvatarLipSyncConfig): void {
+    const min = clamp(config.min ?? this.config.min, 0, 1)
+    this.config = {
+      min,
+      max: clamp(config.max ?? this.config.max, min, 1),
+      inputGain: Math.max(0.1, config.inputGain ?? this.config.inputGain),
+      noiseGate: Math.max(0, config.noiseGate ?? this.config.noiseGate),
+      attackMs: Math.max(1, config.attackMs ?? this.config.attackMs),
+      releaseMs: Math.max(1, config.releaseMs ?? this.config.releaseMs),
+      peakBoost: Math.max(0, config.peakBoost ?? this.config.peakBoost),
+    }
+    this.current = clamp(this.current, min, this.config.max)
   }
 
   setEnabled(enabled: boolean): void {
-    this._enabled = enabled
-    if (!enabled) {
-      this._currentMouthOpen = 0
-      this._targetMouthOpen = 0
-    }
+    this.enabled = enabled
+    this.debug.enabled = enabled
+    if (!enabled) this.reset()
   }
 
-  /** Feed raw audio volume (0-1) and get smoothed mouth-open value (0-1). */
-  analyze(volume: number): number {
-    this._debug.rawVolume = volume
+  analyze(volume: number, dt = 1 / 60, peak = volume): number {
+    const raw = clamp(volume, 0, 1)
+    const measuredPeak = clamp(peak, 0, 1)
+    const gated = raw < this.config.noiseGate && measuredPeak < this.config.noiseGate
+    this.debug.rawVolume = raw
+    this.debug.peakVolume = measuredPeak
+    this.debug.gated = gated
+    if (!this.enabled) return 0
 
-    if (!this._enabled) {
-      this._currentMouthOpen = 0
-      this._debug.smoothedMouth = 0
-      this._debug.targetMouth = 0
-      return 0
-    }
-
-    // Map volume to target mouth open
-    // Browser RMS is usually a small value (roughly 0.02-0.15), not a full
-    // 0-1 envelope. A square-root curve gives quiet syllables visible motion
-    // while preserving a natural ceiling for loud consonants.
-    const normalized = Math.max(0, Math.min(1, volume * 6.5))
-    const shaped = Math.sqrt(normalized)
-    this._targetMouthOpen = this._mouthRange.min + shaped * (this._mouthRange.max - this._mouthRange.min)
-    this._debug.targetMouth = this._targetMouthOpen
-
-    // Attack/release smoothing: different rates for opening vs closing
-    if (this._targetMouthOpen > this._currentMouthOpen) {
-      // Opening — fast attack
-      this._currentMouthOpen += (this._targetMouthOpen - this._currentMouthOpen) * this._attackFactor
+    if (gated) {
+      this.target = this.config.min
     } else {
-      // Closing — slower release
-      this._currentMouthOpen += (this._targetMouthOpen - this._currentMouthOpen) * this._releaseFactor
+      const energy = clamp((raw - this.config.noiseGate) * this.config.inputGain, 0, 1)
+      const transient = Math.max(0, measuredPeak - raw) * this.config.peakBoost
+      const shaped = clamp(Math.sqrt(energy) + transient, 0, 1)
+      this.target = this.config.min
+        + shaped * (this.config.max - this.config.min)
     }
 
-    // Decay to zero when silent (anti-jitter)
-    if (volume < this._silenceThreshold) {
-      this._currentMouthOpen *= 1 - this._decayRate
+    const responseMs = this.target > this.current
+      ? this.config.attackMs
+      : this.config.releaseMs
+    const response = 1 - Math.exp(-Math.max(0, dt) * 1000 / responseMs)
+    this.current += (this.target - this.current) * response
+    if (gated && Math.abs(this.current - this.config.min) < 0.001) {
+      this.current = this.config.min
     }
-
-    this._currentMouthOpen = Math.max(0, Math.min(1, this._currentMouthOpen))
-    this._debug.smoothedMouth = this._currentMouthOpen
-
-    return this._currentMouthOpen
+    this.current = clamp(this.current, this.config.min, this.config.max)
+    this.debug.targetMouth = this.target
+    this.debug.smoothedMouth = this.current
+    return this.current
   }
 
-  /** Reset to zero (call when audio stops). */
   reset(): void {
-    this._currentMouthOpen = 0
-    this._targetMouthOpen = 0
-    this._debug.rawVolume = 0
-    this._debug.smoothedMouth = 0
-    this._debug.targetMouth = 0
+    this.current = 0
+    this.target = 0
+    this.debug.rawVolume = 0
+    this.debug.peakVolume = 0
+    this.debug.smoothedMouth = 0
+    this.debug.targetMouth = 0
+    this.debug.gated = true
   }
 
-  /** Get current debug info. */
   getDebugInfo(): LipSyncDebugInfo {
-    return { ...this._debug }
+    return { ...this.debug }
   }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
 }

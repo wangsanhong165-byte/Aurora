@@ -224,13 +224,14 @@ class MemoryStore:
     ) -> int:
         now = datetime.now(timezone.utc).isoformat()
         key = stable_key or f"{memory_type}:{subject}:{predicate}"
+        normalized_content = content.strip()
         conn = self._get_conn()
         current = conn.execute(
             "SELECT id, content FROM memories "
             "WHERE character_id = ? AND stable_key = ? AND active = 1",
             (character_id, key),
         ).fetchone()
-        if current and current["content"] == content.strip():
+        if current and current["content"] == normalized_content:
             conn.execute(
                 "UPDATE memories SET importance = MAX(importance, ?), "
                 "confidence = MAX(confidence, ?), updated_at = ? WHERE id = ?",
@@ -238,18 +239,36 @@ class MemoryStore:
             )
             conn.commit()
             return int(current["id"])
-        if current:
-            conn.execute("UPDATE memories SET active = 0, updated_at = ? WHERE id = ?",
-                         (now, current["id"]))
-        cursor = conn.execute(
-            "INSERT INTO memories(memory_type, subject, predicate, content, "
-            "character_id, stable_key, importance, confidence, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (memory_type, subject, predicate, content.strip(), character_id, key,
-             importance, confidence, now, now),
-        )
-        conn.commit()
-        return int(cursor.lastrowid)
+        existing = conn.execute(
+            "SELECT id FROM memories "
+            "WHERE character_id = ? AND stable_key = ? AND content = ?",
+            (character_id, key, normalized_content),
+        ).fetchone()
+        with conn:
+            if current:
+                conn.execute(
+                    "UPDATE memories SET active = 0, updated_at = ? WHERE id = ?",
+                    (now, current["id"]),
+                )
+            if existing:
+                conn.execute(
+                    "UPDATE memories SET active = 1, memory_type = ?, subject = ?, "
+                    "predicate = ?, importance = MAX(importance, ?), "
+                    "confidence = MAX(confidence, ?), updated_at = ? WHERE id = ?",
+                    (
+                        memory_type, subject, predicate, importance,
+                        confidence, now, existing["id"],
+                    ),
+                )
+                return int(existing["id"])
+            cursor = conn.execute(
+                "INSERT INTO memories(memory_type, subject, predicate, content, "
+                "character_id, stable_key, importance, confidence, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (memory_type, subject, predicate, normalized_content, character_id, key,
+                 importance, confidence, now, now),
+            )
+            return int(cursor.lastrowid)
 
     def list_memories(
         self, *, character_id: str = "", memory_type: str = "",

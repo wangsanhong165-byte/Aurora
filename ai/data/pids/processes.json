@@ -1,10 +1,10 @@
 {
   "llm": {
-    "pid": 27696,
-    "create_time": 1785337658.1315827,
-    "executable": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+    "pid": 33884,
+    "create_time": 1785608139.7967896,
+    "executable": "D:\\conda\\envs\\qwen3-asr\\python.exe",
     "command": [
-      "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+      "D:\\conda\\envs\\qwen3-asr\\python.exe",
       "-m",
       "app.modules.llm.api",
       "--env-file",
@@ -15,14 +15,14 @@
       "9102"
     ],
     "port": 9102,
-    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
+    "owner": "electron-36140-0ab5dee7-dd97-43cc-8620-e6aaa8792d43"
   },
   "memory": {
-    "pid": 93620,
-    "create_time": 1785337660.0740707,
-    "executable": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+    "pid": 40688,
+    "create_time": 1785608141.4585607,
+    "executable": "D:\\conda\\envs\\qwen3-asr\\python.exe",
     "command": [
-      "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+      "D:\\conda\\envs\\qwen3-asr\\python.exe",
       "-m",
       "app.modules.memory.api",
       "--host",
@@ -31,26 +31,26 @@
       "9104"
     ],
     "port": 9104,
-    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
+    "owner": "electron-36140-0ab5dee7-dd97-43cc-8620-e6aaa8792d43"
   },
   "bridge": {
-    "pid": 84664,
-    "create_time": 1785337661.874715,
-    "executable": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+    "pid": 33628,
+    "create_time": 1785608142.083761,
+    "executable": "D:\\conda\\envs\\qwen3-asr\\python.exe",
     "command": [
-      "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+      "D:\\conda\\envs\\qwen3-asr\\python.exe",
       "-m",
       "app.bridge.server"
     ],
     "port": 9528,
-    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
+    "owner": "electron-36140-0ab5dee7-dd97-43cc-8620-e6aaa8792d43"
   },
   "asr": {
-    "pid": 21764,
-    "create_time": 1785337668.8219368,
-    "executable": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+    "pid": 27764,
+    "create_time": 1785608157.3000147,
+    "executable": "D:\\conda\\envs\\qwen3-asr\\python.exe",
     "command": [
-      "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+      "D:\\conda\\envs\\qwen3-asr\\python.exe",
       "-m",
       "app.modules.asr.api",
       "--host",
@@ -59,14 +59,14 @@
       "9101"
     ],
     "port": 9101,
-    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
+    "owner": "electron-36140-0ab5dee7-dd97-43cc-8620-e6aaa8792d43"
   },
   "gsvi": {
-    "pid": 45348,
-    "create_time": 1785337697.508134,
+    "pid": 38124,
+    "create_time": 1785608178.5714495,
     "executable": "C:\\Users\\LENOVO\\Desktop\\c++\\ai\\models\\tts\\GPT-SoVITS-v2pro-20250604-nvidia50\\runtime\\python.exe",
     "command": [
-      "C:\\Users\\LENOVO\\Desktop\\c++\\ai/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/runtime/python.exe",
+      "C:\\Users\\LENOVO\\Desktop\\c++\\ai\\models\\tts\\GPT-SoVITS-v2pro-20250604-nvidia50\\runtime\\python.exe",
       "C:\\Users\\LENOVO\\Desktop\\c++\\ai/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/api_v2.py",
       "-a",
       "127.0.0.1",
@@ -76,14 +76,14 @@
       "C:\\Users\\LENOVO\\Desktop\\c++\\ai/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/configs/tts_infer.yaml"
     ],
     "port": 9105,
-    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
+    "owner": "electron-36140-0ab5dee7-dd97-43cc-8620-e6aaa8792d43"
   },
   "tts": {
-    "pid": 85376,
-    "create_time": 1785337741.6422253,
-    "executable": "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+    "pid": 24976,
+    "create_time": 1785608211.27914,
+    "executable": "D:\\conda\\envs\\qwen3-asr\\python.exe",
     "command": [
-      "C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe",
+      "D:\\conda\\envs\\qwen3-asr\\python.exe",
       "-m",
       "app.modules.tts.api",
       "--env-file",
@@ -94,6 +94,6 @@
       "9103"
     ],
     "port": 9103,
-    "owner": "electron-13056-8644ab2d-78c5-4eba-b647-7c3fd77f3748"
+    "owner": "electron-36140-0ab5dee7-dd97-43cc-8620-e6aaa8792d43"
   }
 }

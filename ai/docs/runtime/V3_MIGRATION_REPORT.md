@@ -19,6 +19,41 @@
 
 因此，准确结论是：**V3 协议全迁移完成；V3 产品级完整验收尚未全部完成。**
 
+## Live2D 完成边界
+
+截至 2026-07-30，对照 SoulLink Emotion SDK
+`932a61c811dbe9432bf8e824a93acb96feb782cc` 与 AIRI
+`a42e3ae0b51000c552d7cd19e6c20fa10918a614` 的实际源码，Live2D 表现运行时升级已完成：
+
+- 音频事件保留 `turnId/sequence`，播放队列按轮次拥有音频，过期片段不会污染新回复；
+  停止与销毁生命周期已分离。
+- 模型能力、参数范围、保护通道、嘴型范围和表现风格集中在
+  `AvatarCapabilityProfile`，未知或不支持的参数会在写入前过滤和钳制。
+- 原生动作与程序化动作统一进入带 owner、channel、turnId、优先级和 TTL 的
+  `MotionArbiter`，模型切换、打断和 detach 会释放相应所有权。
+- motion3 的 `Parameter` 和 `PartOpacity` 曲线都进入贡献链；Pose、Expression
+  与 Native Motion 的透明度写入由 `ParameterMixer` 统一仲裁和恢复。
+- VAD 手势、微动作、等待动作和语音重音支持动作族、重复规避、平滑过渡；
+  LipSync 加入噪声门、attack/release、峰值强调与嘴型保护。
+- `character.intent.motionPlan` 已加入 V3 强类型协议；后端只保留十种安全动作
+  原语、有限时长/步骤/强度，前端再编译为逻辑参数轨道，拒绝 Param/Cubism
+  字段、任意关键帧和渲染器细节。
+- 设置页已集成按模型保存的自然增强/兼容模式、动作强度、快速表情/触摸试演、
+  自动恢复的参数校准实验室、真实口型诊断，以及动作创建、编辑、试演和导入导出。
+- Ariu（113 参数、356 drawable）与 Hiyori（70 参数、134 drawable）已在
+  生产构建页面完成真实模型加载、切换和安全动作试演；Ariu 已增加模型专属取景，
+  避免原始 Cubism 画布偏心造成主体裁切。最终控制台 0 错误、0 警告；
+  严格画像检查、前端测试、类型检查与生产构建均纳入验收。
+- 真实浏览器 `AudioContext` 诊断已覆盖播放、分析、口型驱动、中断与闭嘴：
+  Hiyori 音量峰值 0.357、开口峰值 0.750、结束嘴型 0.000。外部 TTS 的
+  V3 音频输出证据见本报告“真实运行验收”。
+
+因此，Live2D 的准确状态是：**本轮定义的核心表现运行时、PartOpacity 保真、
+安全动作编排、动作创作链和真实浏览器音频验收均已完成。** 逐模型的美术表现
+仍属于持续调校，而不是协议或控制链缺口。
+后续扩展继续保持 `ParameterMixer → Live2DModelAdapter` 为唯一 Cubism 参数写入链，
+不引入 V4、第二套 EventBus 或第二套状态机。
+
 ## 架构变化
 
 迁移前：

@@ -1,5 +1,7 @@
 // Lightweight typed event bus for decoupled communication
 
+import type { MotionActionDefinition, MotionPlan } from '../character/MotionAction'
+
 type Handler<T> = (event: T) => void
 
 export interface EventMap {
@@ -7,8 +9,11 @@ export interface EventMap {
   'character:intent': { emotion: string; behavior: string; intensity: number }
   'character:interaction': { type: 'touch' | 'drag' | 'inactivity' | 'time' | 'presence' | 'scene'; phase?: 'start' | 'move' | 'end'; region?: 'head' | 'body' | 'unknown'; value?: string; intensity?: number }
   'character:performance_tuning': { mode?: 'legacy' | 'enhanced' | 'calibration'; parameterGain?: number; bodyMotionGain?: number }
+  'character:calibration_override': { logicalParameter?: string; value?: number; clear?: boolean }
   'character:native_catalog': { motions: string[]; expressions: string[] }
   'character:native_preview': { type: 'motion' | 'expression'; name: string }
+  'character:actions_update': { model: string; actions: MotionActionDefinition[] }
+  'character:action_preview': { action: MotionActionDefinition }
   'character:activity': { activity: string }
   'character:performance': { emotion: string; behavior: string; expression: string; motion: string; profile: string; transitionMs: number; holdMs: number; motionProbability: number; modifiers: Record<string, unknown> }
   'character:performance_debug': {
@@ -30,11 +35,21 @@ export interface EventMap {
     performanceTuning: { mode: 'legacy' | 'enhanced' | 'calibration'; parameterGain: number; bodyMotionGain: number }
     contestedParameters: Record<string, Array<{ source: string; value: number; priority: number }>>
   }
-  'audio:play': { audio: string; format: string; volumeArray?: number[] }
-  'audio:stop': void
+  'audio:play': { audio: string; format: string; turnId: string; sequence: number; volumeArray?: number[] }
+  'audio:stop': { turnId?: string; reason?: string }
   'audio:volume': { volume: number }
-  'audio:start': void
-  'audio:end': void
+  'audio:start': { turnId: string; sequence: number }
+  'audio:end': { turnId: string }
+  'audio:diagnostic.request': { requestId: string }
+  'audio:diagnostic.result': {
+    requestId: string
+    phase: 'running' | 'passed' | 'failed'
+    message: string
+    peakVolume?: number
+    peakMouth?: number
+    finalMouth?: number
+    volumeSamples?: number
+  }
   'connection:change': { connected: boolean }
   'runtime:status': { status: string; message?: string }
   'runtime:error': { code: string; message: string; requestId?: string }
@@ -53,7 +68,7 @@ export interface EventMap {
     args: Record<string, unknown>
     risk: string
   }
-  'runtime:character.intent': { turnId: string; emotion: string; behavior: string; attention: string; energy: number; intensity: number; durationMs?: number; naturalVAD?: { valence: number; arousal: number; dominance: number }; contextTags?: string[] }
+  'runtime:character.intent': { turnId: string; emotion: string; behavior: string; attention: string; energy: number; intensity: number; durationMs?: number; naturalVAD?: { valence: number; arousal: number; dominance: number }; contextTags?: string[]; motionPlan?: MotionPlan }
   'runtime:telemetry.batch': { events: Array<Record<string, unknown>> }
   'runtime:turn.started': { turnId: string; inputMode: 'text' | 'audio' | 'initiative'; origin: 'user' | 'initiative' | 'tool' | 'system' }
   'runtime:turn.completed': { turnId: string; reason: string }

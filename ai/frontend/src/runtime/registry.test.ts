@@ -52,6 +52,24 @@ test('rejects missing, wrongly typed, and extra payload fields', () => {
   assert.throws(() => parseRuntimeEvent(envelope('user.text', { text: 'hello', unexpected: true })), /unexpected/)
 })
 
+test('accepts independent intensity and energy on character intent', () => {
+  const event = parseRuntimeEvent(envelope('character.intent', {
+    emotion: 'happy',
+    behavior: 'agree',
+    attention: 'user',
+    intensity: 0.72,
+    energy: 0.38,
+  }, 'turn-intent'))
+
+  assert.deepEqual(event.payload, {
+    emotion: 'happy',
+    behavior: 'agree',
+    attention: 'user',
+    intensity: 0.72,
+    energy: 0.38,
+  })
+})
+
 test('rejects a turn event without turnId', () => {
   assert.throws(() => parseRuntimeEvent(envelope('user.text', { text: 'hello' }, null)), /turnId/)
 })

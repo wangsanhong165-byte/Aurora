@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "engine": "pi",
+  "provider": "opencode-go",
+  "model": "deepseek-v4-flash",
+  "full_model": "opencode-go/deepseek-v4-flash",
+  "thinking": "max",
+  "timeout_seconds": 1800,
+  "tools": [
+    "read",
+    "bash",
+    "edit",
+    "write",
+    "grep",
+    "find",
+    "ls"
+  ],
+  "enable_local_usage_log": true,
+  "pi_command": "pi"
+}

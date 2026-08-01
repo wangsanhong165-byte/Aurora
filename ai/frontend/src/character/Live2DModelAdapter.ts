@@ -13,6 +13,10 @@
 import type { CubismModelHandle } from './live2d/core'
 import { PoseController } from './live2d/PoseController'
 
+interface BaselineAwareMixer {
+  setBaselineProvider(provider: ((parameterId: string) => number) | null): void
+}
+
 export class Live2DModelAdapter {
   private _handle: CubismModelHandle | null = null
   private _poseController: PoseController | null = null
@@ -45,6 +49,10 @@ export class Live2DModelAdapter {
     return this._handle?.getParameter(id) ?? 0
   }
 
+  configureMixerBaseline(mixer: BaselineAwareMixer): void {
+    mixer.setBaselineProvider(parameterId => this.getParameter(parameterId))
+  }
+
   /** Read-only capability query used by diagnostics and profile calibration. */
   hasParameter(id: string): boolean {
     return (this._handle?.parameterIndex(id) ?? -1) >= 0
@@ -69,11 +77,9 @@ export class Live2DModelAdapter {
     this._poseController = pc
   }
 
-  /** Apply pose constraints. Call before updateModel() each frame. */
-  applyPose(): void {
-    if (this._poseController && this._handle) {
-      this._poseController.update(this._handle)
-    }
+  /** Return pose baselines for the frame mixer; never writes the model directly. */
+  getPoseContributions(): Array<{ partId: string; opacity: number }> {
+    return this._poseController?.getContributions() ?? []
   }
 
   getPoseDebug(): Array<{ activeId: string; members: string[] }> {

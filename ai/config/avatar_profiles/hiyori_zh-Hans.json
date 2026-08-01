@@ -1,0 +1,68 @@
+{
+  "model": "hiyori_zh-Hans",
+  "expressions": ["neutral", "happy", "sad", "angry", "surprised", "shy", "worried"],
+  "motions": ["speak", "greet", "wave", "nod", "tilt", "thinking", "react", "return_idle"],
+  "sequences": ["greet", "thinking", "react"],
+  "parameters": {
+    "eye": { "x": "ParamEyeBallX", "y": "ParamEyeBallY" },
+    "mouth": { "open": "ParamMouthOpenY", "form": "ParamMouthForm" },
+    "face": { "angleX": "ParamAngleX", "angleY": "ParamAngleY" }
+  },
+  "bindings": {
+    "eye.x": { "target": "ParamEyeBallX", "min": -0.85, "max": 0.85 },
+    "eye.y": { "target": "ParamEyeBallY", "min": -0.7, "max": 0.7 },
+    "head.x": { "target": "ParamAngleX", "min": -20, "max": 20 },
+    "head.y": { "target": "ParamAngleY", "min": -16, "max": 16 },
+    "head.z": { "target": "ParamAngleZ", "min": -14, "max": 14 },
+    "body.x": { "target": "ParamBodyAngleX", "min": -9, "max": 9 },
+    "body.y": { "target": "ParamBodyAngleY", "min": -7, "max": 7 },
+    "mouth.open": { "target": "ParamMouthOpenY", "min": 0, "max": 0.76 },
+    "mouth.form": { "target": "ParamMouthForm", "min": -0.9, "max": 0.9 },
+    "breath": { "target": "ParamBreath", "min": 0, "max": 1 },
+    "blink.left": { "target": "ParamEyeLOpen", "min": 0, "max": 1 },
+    "blink.right": { "target": "ParamEyeROpen", "min": 0, "max": 1 }
+  },
+  "motionStyle": {
+    "preset": "natural",
+    "microMotionGain": 0.92,
+    "idleActionGain": 0.88,
+    "gestureFrequency": 0.78,
+    "speechAccentGain": 0.85
+  },
+  "personality": {
+    "expressiveness": 0.65,
+    "softness": 0.75,
+    "shyness": 0.55,
+    "gazeStability": 0.68
+  },
+  "capabilities": {
+    "headControl": true,
+    "bodyControl": true,
+    "gazeControl": true,
+    "eyeBlink": true,
+    "mouthControl": true,
+    "mouthForm": true,
+    "breathControl": true
+  },
+  "motionMap": {
+    "idle": "Idle",
+    "react": "Tap",
+    "wave": "Flick",
+    "tilt": "FlickDown",
+    "nod": "FlickUp"
+  },
+  "protectedMotionParameters": ["mouth.open"],
+  "lipSync": {
+    "min": 0,
+    "max": 0.76,
+    "inputGain": 6,
+    "noiseGate": 0.013,
+    "attackMs": 40,
+    "releaseMs": 130,
+    "peakBoost": 0.16
+  },
+  "performanceMode": "enhanced",
+  "parameterGain": 1.16,
+  "bodyMotionGain": 1.03,
+  "idleMouthOpen": 0.04
+}

@@ -65,9 +65,11 @@ const EVENT_RULES: Record<EventType, PayloadRule> = {
     required: { emotion: 'string', behavior: 'string', energy: 'number' },
     optional: {
       attention: 'string',
+      intensity: 'number',
       durationMs: 'number',
       naturalVAD: 'object',
       contextTags: 'array',
+      motionPlan: 'object',
     },
   },
   'character.expression': {

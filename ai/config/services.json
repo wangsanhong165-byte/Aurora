@@ -22,10 +22,10 @@
     "display_name": "语音模型", "category": "voice", "provider": "GPT-SoVITS", "startup_priority": 100,
     "host": "127.0.0.1", "port": 9105, "health": "/ready", "timeout": 180,
     "readiness": true, "profiles": ["backend", "electron", "full"], "failure_policy": "isolate",
-    "env": {"BROWSER": "none", "PATH": "{root}/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/runtime;{PATH}"},
+    "env": {"BROWSER": "none", "PATH": "{python_dir};{PATH}"},
     "cwd": "models/tts/GPT-SoVITS-v2pro-20250604-nvidia50",
     "command": {
-      "executable": "{root}/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/runtime/python.exe",
+      "executable": "{python}",
       "script": "{root}/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/api_v2.py",
       "args": ["-a", "{host}", "-p", "{port}", "-c", "{root}/models/tts/GPT-SoVITS-v2pro-20250604-nvidia50/GPT_SoVITS/configs/tts_infer.yaml"]
     }

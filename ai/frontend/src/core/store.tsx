@@ -11,6 +11,8 @@ import {
   type Context,
 } from 'react'
 import type { ConnectionState, AiActivity, CharacterState, ChatMessage, AudioState } from './types'
+import type { Live2DPerformanceProfileOverrides } from '../character/Live2DPerformanceSettings'
+import type { Live2DActionsByModel } from '../character/MotionAction'
 
 // ── History Types ──
 
@@ -37,6 +39,8 @@ export interface AppSettings {
   live2dHeadTracking: boolean
   live2dExpression: boolean
   live2dIdle: boolean
+  live2dPerformanceProfiles: Live2DPerformanceProfileOverrides
+  live2dActions: Live2DActionsByModel
 }
 
 // ── Conversation State ──
@@ -86,6 +90,8 @@ const INITIAL_SETTINGS: AppSettings = {
   live2dHeadTracking: true,
   live2dExpression: true,
   live2dIdle: true,
+  live2dPerformanceProfiles: {},
+  live2dActions: {},
 }
 
 export const INITIAL_STATE: AppState = {

@@ -8,6 +8,8 @@ declare global {
       close: () => void
       setAlwaysOnTop: (value: boolean) => void
       setPetMode: (enabled: boolean) => void
+      startWindowDrag: () => void
+      endWindowDrag: () => void
       getSettings: () => Record<string, unknown>
       getStatus?: () => Promise<{ services?: Array<Record<string, unknown>> }>
       onLifecycleSnapshot?: (callback: (snapshot: {
@@ -29,6 +31,8 @@ export class ElectronWindowBridge {
   close() { return window.electronAPI?.close?.() }
   setAlwaysOnTop(value: boolean) { return window.electronAPI?.setAlwaysOnTop?.(value) }
   setPetMode(value: boolean) { return window.electronAPI?.setPetMode?.(value) }
+  startWindowDrag() { return window.electronAPI?.startWindowDrag?.() }
+  endWindowDrag() { return window.electronAPI?.endWindowDrag?.() }
   getStatus() {
     return window.electronAPI?.getStatus?.() ?? Promise.resolve({ ready: false, services: [] })
   }

@@ -1,0 +1,29 @@
+{
+  "task_id": "smoke-architecture",
+  "task_type": "investigation",
+  "objective": "只读取 ARCHITECTURE.md，概括该文件描述的系统职责，不修改任何文件。",
+  "context": [
+    "这是用于验证 Codex → Pi CLI → OpenCode Go → DeepSeek V4 Flash 调用链的低额度只读任务。"
+  ],
+  "allowed_paths": [
+    "ARCHITECTURE.md"
+  ],
+  "forbidden_paths": [
+    ".env",
+    ".git",
+    "production.config.json"
+  ],
+  "acceptance_criteria": [
+    "最终回答包含系统用途和主要组成的简短概括",
+    "工作区没有产生任何新修改"
+  ],
+  "validation_commands": [
+    "git diff --name-only -- ARCHITECTURE.md"
+  ],
+  "constraints": [
+    "不得修改任何文件",
+    "不得调用其他 Agent、模型或外部编码 CLI",
+    "不得执行任何会改变 Git 状态的命令"
+  ],
+  "timeout_seconds": 180
+}

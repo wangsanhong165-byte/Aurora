@@ -13,9 +13,21 @@ import { AvatarController } from './AvatarController'
 import { ComponentManager } from './ComponentManager'
 import { Live2DModelAdapter } from './Live2DModelAdapter'
 import { observeElementResize } from './observe-resize'
+import { normalizeAvatarViewport } from './AvatarCapabilityProfile'
+import { isWindowDragging } from './window-drag-state'
 
 function modelUrl(name: string): string {
   return `/live2d-models/${name}/${name}.model3.json`
+}
+
+function applyModelViewport(modelName: string): void {
+  const profiles = (window as any).__INITIAL_MODEL_INFO__?.avatarProfiles as
+    | Record<string, { viewport?: { x?: number; y?: number; scale?: number } }>
+    | undefined
+  const viewport = normalizeAvatarViewport(profiles?.[modelName]?.viewport)
+  resetView()
+  setViewScale(viewport.scale)
+  setViewOffset(viewport.x, viewport.y)
 }
 
 /** Initialize components from avatar config or fallback to legacy accessories.
@@ -160,7 +172,6 @@ export const CharacterView = memo(function CharacterView() {
   const settings = useSelector(selectSettings)
   const { emotion, activity } = character
   const mountCount = useRef(0)
-  const loadGenRef = useRef(0) // generation counter to prevent stale load completions
   // Drag and zoom state
   const dragRef = useRef({ isDragging: false, startX: 0, startY: 0, offsetX: 0, offsetY: 0, scale: 1 })
   // Guards against duplicate event handlers and animation loops
@@ -211,6 +222,46 @@ export const CharacterView = memo(function CharacterView() {
       return
     }
 
+    let attachedGeneration = 0
+    const attachCommittedModel = (expectedName: string, generation: number): boolean => {
+      const handle = modelMgr.getModel()
+      const renderer = modelMgr.getRenderer()
+      const diagnostics = modelMgr.getDiagnostics()
+      const profiles = (window as any).__INITIAL_MODEL_INFO__?.avatarProfiles as
+        | Record<string, { model?: string }>
+        | undefined
+      const profileModel = profiles?.[expectedName]?.model ?? ''
+      const consistent = Boolean(handle && renderer)
+        && diagnostics.requestedModel === expectedName
+        && diagnostics.loadedModel === expectedName
+        && profileModel === expectedName
+        && diagnostics.generation === generation
+        && diagnostics.rendererGeneration === generation
+      console.log('[Live2D] load identity', { ...diagnostics, profileModel })
+      if (!consistent) {
+        console.error('[Live2D] refusing mismatched model attach', {
+          expectedName, ...diagnostics, profileModel,
+        })
+        setLoadState('error')
+        return false
+      }
+      if (attachedGeneration === generation && adapter.isAttached) return true
+
+      ctrl.detach()
+      adapter.detach()
+      applyModelViewport(expectedName)
+      ctrl.setModelName(expectedName, modelMgr.getExpressionNames())
+      ctrl.setNativeMotionPlayer(modelMgr.getNativeMotionPlayer())
+      adapter.attach(handle!)
+      adapter.setPoseController(modelMgr.getPoseController())
+      ctrl.attach(adapter)
+      _initComponents(compMgr, ctrl, expectedName)
+      syncLive2dSettings(ctrl, settings)
+      ctrl.paramCtrl.applyExpression('neutral', 1, 0)
+      attachedGeneration = generation
+      return true
+    }
+
     // --- Async model loader ---
     ;(async () => {
       setLoadState('loading')
@@ -228,35 +279,22 @@ export const CharacterView = memo(function CharacterView() {
       const url = (window as any).__PENDING_MODEL_URL__ || getModelUrl()
       delete (window as any).__PENDING_MODEL_URL__
 
-      const thisGen = ++loadGenRef.current    // track this load attempt
-      const ok = await modelMgr.load(url)
+      const result = await modelMgr.load(url)
       if (!alive) return                     // StrictMode unmounted us
-      if (thisGen !== loadGenRef.current) return  // a newer load superseded us
-
-      if (!ok || !modelMgr.getModel()) {
+      if (result.status === 'superseded') return
+      if (result.status !== 'loaded' || !modelMgr.getModel()) {
         setLoadState('unavailable')
         return
       }
 
-      // Extract model name from URL: /live2d-models/{name}/{name}.model3.json
-      const modelName = url.split('/').filter(Boolean).reverse()[1] || 'Design_genius_White'
-      ctrl.setModelName(modelName, modelMgr.getExpressionNames())
-      ctrl.setNativeMotionPlayer(modelMgr.getNativeMotionPlayer())
-      adapter.attach(modelMgr.getModel()!)
-      adapter.setPoseController(modelMgr.getPoseController())
-      ctrl.attach(adapter)
+      const modelName = result.modelName
+      if (!attachCommittedModel(modelName, result.generation)) return
       eventBus.emit('character:interaction', { type: 'presence', intensity: 0.4 })
       eventBus.emit('character:interaction', {
         type: 'time',
         value: new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 18 ? 'afternoon' : 'evening',
         intensity: 0.3,
       })
-
-      // Load accessories/components from avatar config (initial load)
-      _initComponents(compMgr, ctrl, modelName)
-
-      syncLive2dSettings(ctrl, settings)
-      ctrl.paramCtrl.applyExpression('neutral', 1, 0)
 
       const hDiag = modelMgr.getModel()!
       console.log('[Live2D] model loaded: canvas=%dx%d, params=%d',
@@ -274,11 +312,10 @@ export const CharacterView = memo(function CharacterView() {
       ctrl.update(dt)
       ctrl.mixer.resolve()
       ctrl.mixer.apply(adapter)
-      adapter.applyPose()
       adapter.updateModel()
       const h2 = adapter.getHandleForRenderer()
       if (h2) {
-        render(h2)
+        render(h2, modelMgr.getRenderer())
       }
 
       animRef.current = requestAnimationFrame(animate)
@@ -410,49 +447,23 @@ export const CharacterView = memo(function CharacterView() {
 
     // Listen for model switch
     const unsubModel = eventBus.on('character:switch_model', async ({ name }) => {
-      const thisGen = ++loadGenRef.current   // track this load attempt
-      running = false
-      animRunningRef.current = false
-      cancelAnimationFrame(animRef.current)
-      ctrl.detach()
-      modelMgr.unload()
-      resetView()  // Reset viewport zoom/pan for new model
-
       const url = modelUrl(name)
       setLoadState('loading')
 
-      const ok = await modelMgr.load(url)
-      if (!alive || thisGen !== loadGenRef.current) return  // superseded or unmounted
-      if (!ok || !modelMgr.getModel()) {
+      const result = await modelMgr.load(url)
+      if (!alive || result.status === 'superseded') return
+      if (result.status !== 'loaded' || !modelMgr.getModel()) {
         setLoadState('unavailable')
-        running = true
-        animRunningRef.current = true
-        animRef.current = requestAnimationFrame(animate)
         return
       }
 
-      ctrl.setModelName(name, modelMgr.getExpressionNames())
-      ctrl.setNativeMotionPlayer(modelMgr.getNativeMotionPlayer())
-      adapter.attach(modelMgr.getModel()!)
-      adapter.setPoseController(modelMgr.getPoseController())
-      ctrl.attach(adapter)
+      if (!attachCommittedModel(name, result.generation)) return
       eventBus.emit('character:interaction', { type: 'scene', value: `model:${name}`, intensity: 0.28 })
-
-      // Load accessories/components from avatar config (model switch)
-      _initComponents(compMgr, ctrl, name)
-
-
-      syncLive2dSettings(ctrl, settings)
-      ctrl.paramCtrl.applyExpression('neutral', 1, 0)
       setLoadState('loaded')
 
       // Persist model name so next session remembers it
       try { localStorage.setItem('live2d_model_name', name) } catch (_) {}
 
-      // Resume animation
-      running = true
-      animRunningRef.current = true
-      animRef.current = requestAnimationFrame(animate)
     })
 
     return () => {
@@ -561,15 +572,6 @@ export const CharacterView = memo(function CharacterView() {
       canvas.addEventListener('click', onPetClick)
     }
 
-    // Detect speaking state from event bus
-    const unsubState = eventBus.on('character:activity', ({ activity }) => {
-      if (activity === 'speaking') {
-        petCtrl.onSpeakingStart()
-      } else if (activity === 'idle' && !browserAudioActive) {
-        petCtrl.onSpeakingEnd()
-      }
-    })
-
     // Detect speaking from character:activity
     const unsubActivity = eventBus.on('character:activity', ({ activity }) => {
       if (activity === 'speaking') {
@@ -593,7 +595,6 @@ export const CharacterView = memo(function CharacterView() {
       if (canvas) {
         canvas.removeEventListener('click', onPetClick)
       }
-      unsubState()
       unsubActivity()
       unsubAudioStart()
       unsubAudioEnd()
@@ -608,6 +609,11 @@ export const CharacterView = memo(function CharacterView() {
     const dpr = window.devicePixelRatio || 1
 
     const doResize = () => {
+      // During a window drag the window size is pinned, but the reported size
+      // still jitters by a pixel or two as the DWM re-measures the frameless
+      // frame. Re-fitting the model on every such event makes it flicker and
+      // churns the renderer, so skip it while a drag is active.
+      if (isWindowDragging()) return
       const parent = cvs.parentElement
       if (!parent) return
       const w = parent.clientWidth

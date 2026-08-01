@@ -46,3 +46,7 @@ data/memory/histories/
 data/runtime/
 data/pids/
 .codex-*.png
+
+# Local Pi delegation runtime data
+.agent-runs/logs/
+.agent-runs/results/

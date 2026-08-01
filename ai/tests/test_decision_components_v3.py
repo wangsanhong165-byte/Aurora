@@ -55,3 +55,47 @@ def test_response_interpreter_rejects_renderer_details():
 
     assert interpreted.warnings == ["renderer_details_removed"]
     assert "ParamAngleX" not in interpreted.segments[0]
+
+
+def test_response_interpreter_preserves_only_safe_motion_plan():
+    turn = CharacterTurn(input=TurnInput(text="hello"))
+    response = LLMResponse(
+        reply="Hi",
+        segments=[{
+            "text": "Hi",
+            "emotion": "happy",
+            "motionPlan": {
+                "durationMs": 900,
+                "steps": [{
+                    "atMs": 0,
+                    "durationMs": 600,
+                    "primitive": "nod",
+                    "intensity": 0.5,
+                }],
+            },
+        }],
+    )
+
+    performance = ResponseInterpreter().interpret(response, turn).performance
+
+    assert performance.motion_plan["steps"][0]["primitive"] == "nod"
+
+
+def test_response_interpreter_selects_dominant_segment_and_keeps_intensity_separate():
+    turn = CharacterTurn(input=TurnInput(text="hello"))
+    response = LLMResponse(
+        reply="Hi",
+        segments=[
+            {"text": "one", "emotion": "calm", "intensity": 0.6, "energy": 0.9},
+            {"text": "two", "emotion": "happy", "intensity": 0.8, "energy": 0.2,
+             "attention": "screen"},
+            {"text": "three", "emotion": "angry", "intensity": 0.8, "energy": 0.1},
+        ],
+    )
+
+    performance = ResponseInterpreter().interpret(response, turn).performance
+
+    assert performance.emotion == "happy"
+    assert performance.intensity == 0.8
+    assert performance.energy == 0.2
+    assert performance.attention == "screen"

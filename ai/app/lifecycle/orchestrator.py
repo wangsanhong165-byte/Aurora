@@ -99,9 +99,12 @@ class LifecycleOrchestrator:
         log = log_path.open("a", encoding="utf-8")
         self._emit("service_state", service_id=service.name, state="spawning")
         env = os.environ.copy()
+        python_dir = str(Path(service.python or "").parent)
         env.update({
-            key: value.replace("{root}", str(self.root)).replace(
-                "{PATH}", env.get("PATH", "")
+            key: (
+                value.replace("{root}", str(self.root))
+                .replace("{python_dir}", python_dir)
+                .replace("{PATH}", env.get("PATH", ""))
             )
             for key, value in service.env.items()
         })

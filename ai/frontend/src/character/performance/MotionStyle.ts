@@ -1,4 +1,4 @@
-import { normalizeSeed } from './SeededRandom'
+import { normalizeSeed } from './SeededRandom.ts'
 
 export type MotionStylePresetName = 'natural' | 'lively' | 'calm' | 'shy'
 
@@ -65,7 +65,10 @@ export function resolveMotionStyle(
   options: MotionStyleOptions = {},
   fallbackSeed = createMotionSeed(),
 ): ResolvedMotionStyle {
-  const preset = options.preset ?? 'natural'
+  const requestedPreset = options.preset
+  const preset = requestedPreset && requestedPreset in motionStylePresets
+    ? requestedPreset
+    : 'natural'
   const base = motionStylePresets[preset]
   return {
     preset,

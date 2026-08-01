@@ -146,10 +146,12 @@ class TransportEmitter:
             self._event(turn, "character.intent", {
                 "emotion": plan.emotion,
                 "behavior": plan.behavior,
+                "intensity": plan.intensity,
                 "attention": plan.attention,
                 "energy": plan.energy,
                 "durationMs": plan.duration_ms,
                 "contextTags": list(plan.context_tags),
+                "motionPlan": plan.motion_plan,
             }),
             self._event(turn, "turn.completed", {"reason": "complete"}),
             DomainEvent.create(

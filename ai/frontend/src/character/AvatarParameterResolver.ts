@@ -1,4 +1,22 @@
-import type { AvatarCapabilityProfile, AvatarParameterBinding } from './AvatarCapabilityProfile'
+import type {
+  AvatarCapabilityProfile,
+  AvatarLipSyncConfig,
+  AvatarParameterBinding,
+} from './AvatarCapabilityProfile'
+
+const DEFAULT_LIP_SYNC: Required<AvatarLipSyncConfig> = {
+  min: 0,
+  max: 0.82,
+  inputGain: 6.5,
+  noiseGate: 0.012,
+  attackMs: 42,
+  releaseMs: 145,
+  peakBoost: 0.16,
+}
+
+const DEFAULT_PROTECTED_MOTION_PARAMETERS = new Set([
+  'mouth.open',
+])
 
 /** Resolves logical performance keys to the current model's Cubism IDs. */
 export class AvatarParameterResolver {
@@ -25,6 +43,7 @@ export class AvatarParameterResolver {
   values(entries: Record<string, number>): Record<string, number> {
     const result: Record<string, number> = {}
     for (const [logical, value] of Object.entries(entries)) {
+      if (!this.supportsLogicalParameter(logical)) continue
       const binding = this._profile?.bindings[logical]
       const id = typeof binding === 'string' ? binding : binding?.target
       if (id) {
@@ -39,7 +58,54 @@ export class AvatarParameterResolver {
     }
     return result
   }
-  resolveMotionParameters(entries: Record<string, number>): Record<string, number> { return this.values(entries) }
+  resolveMotionParameters(entries: Record<string, number>): Record<string, number> {
+    const protectedParameters = this.protectedMotionParameters()
+    return this.values(Object.fromEntries(
+      Object.entries(entries).filter(([logical]) => !protectedParameters.has(logical)),
+    ))
+  }
+
+  isProtectedMotionTarget(parameterId: string): boolean {
+    for (const logical of this.protectedMotionParameters()) {
+      if (this.resolve(logical) === parameterId) return true
+    }
+    return false
+  }
+
+  getLipSyncConfig(): Required<AvatarLipSyncConfig> {
+    const configured = this._profile?.lipSync ?? {}
+    const min = Math.max(0, configured.min ?? DEFAULT_LIP_SYNC.min)
+    const max = Math.max(min, Math.min(1, configured.max ?? DEFAULT_LIP_SYNC.max))
+    return {
+      min,
+      max,
+      inputGain: Math.max(0.1, configured.inputGain ?? DEFAULT_LIP_SYNC.inputGain),
+      noiseGate: Math.max(0, configured.noiseGate ?? DEFAULT_LIP_SYNC.noiseGate),
+      attackMs: Math.max(1, configured.attackMs ?? DEFAULT_LIP_SYNC.attackMs),
+      releaseMs: Math.max(1, configured.releaseMs ?? DEFAULT_LIP_SYNC.releaseMs),
+      peakBoost: Math.max(0, configured.peakBoost ?? DEFAULT_LIP_SYNC.peakBoost),
+    }
+  }
+
+  supportsLogicalParameter(logical: string): boolean {
+    const capabilities = this._profile?.capabilities
+    if (!capabilities) return true
+    if (logical.startsWith('head.')) return capabilities.headControl !== false
+    if (logical.startsWith('body.')) return capabilities.bodyControl !== false
+    if (logical.startsWith('eye.')) return capabilities.gazeControl !== false
+    if (logical.startsWith('blink.')) return capabilities.eyeBlink !== false
+    if (logical === 'mouth.open') return capabilities.mouthControl !== false
+    if (logical === 'mouth.form') return capabilities.mouthForm !== false
+    if (logical === 'breath') return capabilities.breathControl !== false
+    return true
+  }
+
+  private protectedMotionParameters(): Set<string> {
+    return new Set([
+      ...DEFAULT_PROTECTED_MOTION_PARAMETERS,
+      ...(this._profile?.protectedMotionParameters ?? []),
+    ])
+  }
 
   private applyBinding(value: number, binding: string | AvatarParameterBinding | undefined): number {
     if (!binding || typeof binding === 'string') return value

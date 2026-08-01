@@ -39,3 +39,62 @@ def test_segment_adapter_preserves_rich_emotion_vad_and_context_tags():
     }
     assert intent.context_tags == ("reassuring", "close-up")
     assert intent.to_dict()["natural_vad"]["arousal"] == 0.7
+
+
+def test_segment_adapter_accepts_only_bounded_motion_primitives():
+    intent = CharacterIntent.from_llm_segment({
+        "emotion": "happy",
+        "behavior": "agree",
+        "motionPlan": {
+            "durationMs": 1400,
+            "steps": [
+                {
+                    "atMs": 0,
+                    "durationMs": 700,
+                    "primitive": "lean_forward",
+                    "intensity": 0.25,
+                },
+                {
+                    "atMs": 350,
+                    "durationMs": 650,
+                    "primitive": "nod",
+                    "intensity": 0.6,
+                },
+            ],
+        },
+    })
+
+    assert intent.motion_plan == {
+        "durationMs": 1400,
+        "steps": [
+            {
+                "atMs": 0,
+                "durationMs": 700,
+                "primitive": "lean_forward",
+                "intensity": 0.25,
+            },
+            {
+                "atMs": 350,
+                "durationMs": 650,
+                "primitive": "nod",
+                "intensity": 0.6,
+            },
+        ],
+    }
+
+
+def test_segment_adapter_rejects_motion_plans_with_renderer_fields():
+    intent = CharacterIntent.from_llm_segment({
+        "motionPlan": {
+            "durationMs": 1000,
+            "steps": [{
+                "atMs": 0,
+                "durationMs": 500,
+                "primitive": "ParamAngleX",
+                "intensity": 1,
+                "parameter": "ParamAngleX",
+            }],
+        },
+    })
+
+    assert intent.motion_plan is None

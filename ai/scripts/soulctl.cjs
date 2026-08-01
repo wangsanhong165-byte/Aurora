@@ -41,7 +41,7 @@ function selectPython ({
     cliPython,
     environment.MAIN_PYTHON,
     config.python?.default,
-    'C:\\ProgramData\\miniconda3\\envs\\qwen3-asr\\python.exe',
+    'D:\\conda\\envs\\qwen3-asr\\python.exe',
     which('python.exe') || which('python'),
     which('py.exe'),
   ].filter(Boolean)
@@ -110,18 +110,34 @@ function pythonArgs (python, args) {
   return path.basename(python).toLowerCase() === 'py.exe' ? ['-3', ...args] : args
 }
 
-function invokeClient (python, args, { quiet = false } = {}) {
+function controlTimeoutFor (command) {
+  if (command === 'start' || command === 'restart') return 180_000
+  if (command === 'stop') return 30_000
+  return 5_000
+}
+
+function invokeClient (python, args, { quiet = false, timeoutMs } = {}) {
+  const command = args[0] || 'status'
   const result = spawnSync(python, pythonArgs(python, ['-m', 'app.lifecycle.client', ...args]), {
-    cwd: ROOT, encoding: 'utf8', windowsHide: true,
+    cwd: ROOT,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: timeoutMs ?? controlTimeoutFor(command),
   })
   if (!quiet && result.stdout) process.stdout.write(result.stdout)
+  if (result.error?.code === 'ETIMEDOUT') {
+    if (!quiet) {
+      console.error(`[FAILED] Lifecycle '${command}' timed out after ${timeoutMs ?? controlTimeoutFor(command)} ms`)
+    }
+    return { ...result, status: 124 }
+  }
   return result
 }
 
 function waitForControl (python, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const result = invokeClient(python, ['status'], { quiet: true })
+    const result = invokeClient(python, ['status'], { quiet: true, timeoutMs: 800 })
     if (result.status === 0) return
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
   }
@@ -130,8 +146,24 @@ function waitForControl (python, timeoutMs = 10000) {
 
 function ensureSupervisor (python) {
   if (fs.existsSync(CONTROL_RECORD)) {
-    const result = invokeClient(python, ['status'], { quiet: true })
+    const result = invokeClient(python, ['status'], { quiet: true, timeoutMs: 1_500 })
     if (result.status === 0) return
+    const record = JSON.parse(fs.readFileSync(CONTROL_RECORD, 'utf8'))
+    if (Number.isInteger(record.pid)) {
+      let alive = false
+      try {
+        process.kill(record.pid, 0)
+        alive = true
+      } catch (error) {
+        alive = error?.code === 'EPERM'
+      }
+      if (alive) {
+        throw new Error(
+          `Lifecycle Supervisor (PID ${record.pid}) is running but its control endpoint is unavailable. ` +
+          'Close the existing SoulLink process or run this command from the same Windows session.',
+        )
+      }
+    }
   }
   const logDir = path.join(ROOT, 'logs')
   fs.mkdirSync(logDir, { recursive: true })
@@ -240,6 +272,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  controlTimeoutFor,
   computeBuildFingerprint,
   ensureFrontendBuild,
   main,

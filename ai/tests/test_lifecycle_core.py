@@ -141,6 +141,65 @@ def test_manifest_exposes_dynamic_capabilities_and_service_python(tmp_path: Path
     assert manifest.capabilities["text"].display_name == "文本交流"
 
 
+def test_orchestrator_expands_service_python_directory_in_environment(tmp_path: Path):
+    voice_python = tmp_path / "voice-runtime" / "python.exe"
+    path = tmp_path / "services.json"
+    path.write_text(json.dumps({
+        "voice": {
+            "port": 10002,
+            "command": {"module": "voice"},
+            "profiles": ["backend"],
+            "env": {"PATH": "{python_dir};{PATH}"},
+        },
+    }), encoding="utf-8")
+
+    class Process:
+        pid = 100
+
+        def poll(self):
+            return None
+
+    class Platform:
+        spawned_env = None
+
+        def port_owner(self, _port):
+            return None
+
+        def spawn(self, _argv, _cwd, env, _log):
+            self.spawned_env = env
+            return Process()
+
+        def identity(self, pid, port):
+            return ProcessIdentity(
+                pid,
+                1.0,
+                str(voice_python),
+                (str(voice_python), "-m", "voice"),
+                port,
+            )
+
+    class Probe:
+        def wait(self, _service, _process):
+            return True
+
+    platform = Platform()
+    orchestrator = LifecycleOrchestrator(
+        tmp_path,
+        ServiceManifest.load(
+            path,
+            runtime_config={"python": {"services": {"voice": str(voice_python)}}},
+        ),
+        registry=ProcessRegistry(tmp_path / "pids.json"),
+        platform=platform,
+        probe=Probe(),
+    )
+
+    orchestrator.start("backend")
+
+    assert platform.spawned_env is not None
+    assert platform.spawned_env["PATH"].split(";", 1)[0] == str(voice_python.parent)
+
+
 def test_availability_levels_allow_text_while_voice_is_warming(tmp_path: Path):
     path = tmp_path / "services.json"
     path.write_text(json.dumps({

@@ -10,7 +10,7 @@ import { MotionArbiter } from './MotionArbiter'
 import { CharacterBehaviorResolver, type CharacterBehaviorConfig } from './CharacterBehaviorResolver'
 import { CharacterPerformancePolicy } from './CharacterPerformancePolicy'
 import { IdleBehaviorController } from './IdleBehaviorController'
-import type { AvatarCapabilityProfile } from './AvatarCapabilityProfile'
+import { shouldStartAuthoredIdle, type AvatarCapabilityProfile } from './AvatarCapabilityProfile'
 import { AvatarParameterResolver } from './AvatarParameterResolver'
 import { ParameterMixer } from './ParameterMixer'
 import { AudioAnalyzer } from './AudioAnalyzer'
@@ -27,6 +27,16 @@ import type { NativeMotionPlayer } from './live2d/NativeMotionPlayer'
 import type { Live2DModelAdapter } from './Live2DModelAdapter'
 import { InteractionPerformancePolicy } from './performance/InteractionPerformancePolicy'
 import { CharacterStateMachine, type CharacterActivity } from './CharacterStateMachine'
+import { CalibrationController } from './CalibrationController'
+import { AttentionController } from './performance/AttentionController'
+import { ParameterController } from './ExpressionParameterController'
+export { ParameterController, expressionTargetForBlend } from './ExpressionParameterController'
+import {
+  compileMotionAction,
+  compileMotionPlan,
+  normalizeMotionActions,
+  type MotionActionDefinition,
+} from './MotionAction'
 
 // ── Parameter Interpolation (smooth transitions) ──
 
@@ -38,7 +48,8 @@ interface ParamTarget {
   duration: number
 }
 
-export function expressionTargetForBlend(
+/** @deprecated Compatibility reference; new code uses ExpressionParameterController. */
+export function legacyExpressionTargetForBlend(
   value: number,
   intensity: number,
   blend: 'add' | 'multiply' | 'overwrite' = 'add',
@@ -50,7 +61,8 @@ export function expressionTargetForBlend(
   return value * weight
 }
 
-export class ParameterController {
+/** @deprecated Compatibility reference; new code uses ExpressionParameterController. */
+export class LegacyParameterController {
   private mixer: ParameterMixer | null = null
   private targets: ParamTarget[] = []
   private defaultParams = new Map<string, number>()
@@ -122,7 +134,7 @@ export class ParameterController {
     this.activeExpressionParams = nextIds
 
     for (const p of preset.params) {
-      const value = expressionTargetForBlend(
+      const value = legacyExpressionTargetForBlend(
         p.value,
         pIntensity,
         p.blend,
@@ -144,7 +156,8 @@ export class ParameterController {
             id: `expression-part:${partId}`,
             partId,
             opacity: 0,
-            priority: 75,
+            priority: 5,
+            persistent: true,
           })
         }
       }
@@ -157,6 +170,7 @@ export class ParameterController {
           partId: part.id,
           opacity: part.opacity * pIntensity,
           priority: 75,
+          persistent: true,
         })
       }
     }
@@ -321,6 +335,7 @@ const MODEL_PARAM_CONFIG: Record<string, {
   'youxiaomiao':         { angleXSign: 1, angleYSign: 1, eyeBallYSign: 1 },
   'ariu':                { angleXSign: 1, angleYSign: 1, eyeBallYSign: 1 },
   'mao_zh-Hans':         { angleXSign: 1, angleYSign: 1, eyeBallYSign: 1 },
+  'hiyori_zh-Hans':      { angleXSign: 1, angleYSign: 1, eyeBallYSign: 1 },
 }
 
 function getModelParamConfig(modelName: string) {
@@ -328,7 +343,7 @@ function getModelParamConfig(modelName: string) {
 }
 
 export class CharacterController {
-  paramCtrl = new ParameterController()
+  paramCtrl = new ParameterController(getExpression)
   parameterResolver = new AvatarParameterResolver()
   idleCtrl = new IdleController(this.parameterResolver)
   exprCtrl = new ExpressionController(this.paramCtrl)
@@ -346,6 +361,8 @@ export class CharacterController {
   privateEmotion = new PrivateEmotionOverlay()
   voiceWaiting = new VoiceWaitingMotionController()
   stateMachine = new CharacterStateMachine()
+  calibration = new CalibrationController()
+  attention = new AttentionController()
 
   // References set externally by the animation loop
   private adapter: Live2DModelAdapter | null = null
@@ -371,6 +388,7 @@ export class CharacterController {
   private _nativeExpressions: string[] = []
   private _nativeMotions: string[] = []
   private _performanceResetTimer: ReturnType<typeof setTimeout> | null = null
+  private _audioEndTimer: ReturnType<typeof setTimeout> | null = null
 
   // Mouse tracking state
   private mouseX = 0
@@ -384,6 +402,8 @@ export class CharacterController {
   // Tracks motion arbiter transitions for idle restart guard
   private _wasPlaying = false
   private _lastMotionEnded = false
+  private _baseMotionPresets: Record<string, import('./MotionArbiter').MotionPreset> = {}
+  private _actionsByModel = new Map<string, MotionActionDefinition[]>()
 
   // Lip-sync mouth value from AudioAnalyzer (submitted to mixer)
   private _mouthOpenValue = 0
@@ -400,6 +420,7 @@ export class CharacterController {
     const profiles = (window as any).__INITIAL_MODEL_INFO__?.avatarProfiles as Record<string, AvatarCapabilityProfile> | undefined
     this._profile = profiles?.[name]
     this.parameterResolver.setProfile(this._profile)
+    this.audioAnalyzer.configure(this.parameterResolver.getLipSyncConfig())
     this.idleBehavior.setMotionStyle(
       this._profile?.motionStyle,
       this._profile?.personality,
@@ -413,8 +434,8 @@ export class CharacterController {
     this._parameterGain = this._profile?.parameterGain ?? 1.45
     this._bodyMotionGain = this._profile?.bodyMotionGain ?? 1.25
     this.applyOutputGains()
-    const motionPresets = (window as any).__INITIAL_MODEL_INFO__?.motionPresets
-    this.motionArbiter.setPresets(motionPresets)
+    this._baseMotionPresets = (window as any).__INITIAL_MODEL_INFO__?.motionPresets ?? {}
+    this.refreshMotionPresets()
     this.behaviorResolver.setConfig(config)
     this.exprCtrl.setModelConfig(
       { ...(config?.emotionMap ?? {}), ...(this._profile?.expressionMap ?? {}) },
@@ -431,9 +452,24 @@ export class CharacterController {
     this.startNativeIdleIfAvailable()
   }
 
+  private refreshMotionPresets(): void {
+    const authored = this._actionsByModel.get(this._modelName) ?? []
+    const authoredPresets = Object.fromEntries(
+      authored.map(action => {
+        const preset = compileMotionAction(action)
+        return [preset.name.toLowerCase(), preset]
+      }),
+    )
+    this.motionArbiter.setPresets({
+      ...this._baseMotionPresets,
+      ...authoredPresets,
+    })
+  }
+
   /** Set the adapter reference and attach sub-controllers. */
   attach(adapter: Live2DModelAdapter): void {
     this.adapter = adapter
+    adapter.configureMixerBaseline(this.mixer)
     this.paramCtrl.attach(adapter, this.mixer)
     this.idleCtrl.attach()
     this.audioAnalyzer.reset()
@@ -485,7 +521,29 @@ export class CharacterController {
     )
 
     this.cleanupFns.push(
-      eventBus.on('audio:stop', () => {
+      eventBus.on('character:actions_update', ({ model, actions }) => {
+        this._actionsByModel.set(model, normalizeMotionActions(actions))
+        if (model === this._modelName) this.refreshMotionPresets()
+      }),
+      eventBus.on('character:action_preview', ({ action }) => {
+        const normalized = normalizeMotionActions([action])[0]
+        if (!normalized) return
+        const preset = compileMotionAction(normalized)
+        this.motionArbiter.registerPreset(preset)
+        this.motionArbiter.request({
+          name: preset.name,
+          owner: 'ui:action-preview',
+          source: 'system',
+          priority: 70,
+          durationMs: preset.duration,
+          timeoutMs: preset.duration + (preset.recoveryMs ?? 0) + 250,
+        })
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('audio:stop', ({ turnId }) => {
+        if (turnId && !this.stateMachine.isCurrentTurn(turnId)) return
         this.audioPlaybackActive = false
         this.audioAnalyzer.reset()
         this._mouthOpenValue = 0
@@ -493,23 +551,36 @@ export class CharacterController {
     )
 
     this.cleanupFns.push(
-      eventBus.on('audio:start', () => {
+      eventBus.on('audio:start', ({ turnId }) => {
+        if (!this.stateMachine.isCurrentTurn(turnId)) return
         this.audioPlaybackActive = true
-        this.onActivityChange('speaking')
+        this.onActivityChange('speaking', turnId)
       }),
     )
 
-    let audioEndTimer: ReturnType<typeof setTimeout> | null = null
     this.cleanupFns.push(
-      eventBus.on('audio:end', () => {
+      eventBus.on('character:calibration_override', ({ logicalParameter, value, clear }) => {
+        if (clear) {
+          this.calibration.clear()
+          return
+        }
+        if (!logicalParameter) return
+        if (value === undefined) this.calibration.remove(logicalParameter)
+        else this.calibration.set(logicalParameter, value)
+      }),
+    )
+
+    this.cleanupFns.push(
+      eventBus.on('audio:end', ({ turnId }) => {
+        if (!this.stateMachine.isCurrentTurn(turnId)) return
         this.audioPlaybackActive = false
         this.audioAnalyzer.reset()
         this._mouthOpenValue = 0
         if (this.currentActivity === 'speaking') {
-          if (audioEndTimer) clearTimeout(audioEndTimer)
-          audioEndTimer = setTimeout(() => {
+          if (this._audioEndTimer) clearTimeout(this._audioEndTimer)
+          this._audioEndTimer = setTimeout(() => {
             if (!this.audioPlaybackActive) {
-              this.onActivityChange('idle')
+              this.onActivityChange('idle', turnId)
             }
           }, 400)
         }
@@ -538,9 +609,9 @@ export class CharacterController {
     )
 
     this.cleanupFns.push(
-      eventBus.on('runtime:character.intent', ({ turnId, emotion, behavior, attention, energy, intensity, durationMs, naturalVAD, contextTags }) => {
+      eventBus.on('runtime:character.intent', ({ turnId, emotion, behavior, attention, energy, intensity, durationMs, naturalVAD, contextTags, motionPlan }) => {
         if (!this.stateMachine.isCurrentTurn(turnId)) return
-        this.applyIntent({ emotion, behavior, attention: attention as any, energy, intensity, durationMs, naturalVAD, contextTags })
+        this.applyIntent({ turnId, emotion, behavior, attention: attention as any, energy, intensity, durationMs, naturalVAD, contextTags, motionPlan })
       }),
     )
 
@@ -551,9 +622,11 @@ export class CharacterController {
         }
       }),
       eventBus.on('runtime:turn.failed', ({ turnId }) => {
+        this.motionArbiter.cancelTurn(turnId)
         if (this.stateMachine.isCurrentTurn(turnId)) this.onActivityChange('idle', turnId)
       }),
       eventBus.on('runtime:turn.cancelled', ({ turnId }) => {
+        this.motionArbiter.cancelTurn(turnId)
         if (this.stateMachine.isCurrentTurn(turnId)) this.onActivityChange('idle', turnId)
       }),
     )
@@ -561,6 +634,10 @@ export class CharacterController {
 
   /** Set the current turnId for stale event rejection. */
   setTurnId(turnId: string): void {
+    const previousTurnId = this.stateMachine.turnId
+    if (previousTurnId && previousTurnId !== turnId) {
+      this.motionArbiter.cancelTurn(previousTurnId)
+    }
     this.stateMachine.force(this.stateMachine.activity, turnId)
   }
 
@@ -596,14 +673,30 @@ export class CharacterController {
         break
       case 'thinking':
         this.idleCtrl.setBreathing(true)
-        this.motionArbiter.play('thinking', 'system', 0.3)
+        this.motionArbiter.request({
+          name: 'thinking',
+          owner: `state:${turnId || this.stateMachine.turnId || 'local'}`,
+          source: 'system',
+          priority: 55,
+          channels: ['head', 'gaze'],
+          turnId: turnId || this.stateMachine.turnId,
+          intensity: 0.3,
+        })
         break
       case 'speaking':
         this.idleCtrl.setBreathing(true)
         if (
           !this.motionArbiter.isPlaying()
           || this.motionArbiter.currentMotion?.toLowerCase() === 'native:idle'
-        ) this.motionArbiter.play('speak', 'system', 0.32)
+        ) this.motionArbiter.request({
+          name: 'speak',
+          owner: `state:${turnId || this.stateMachine.turnId || 'local'}`,
+          source: 'system',
+          priority: 35,
+          channels: ['head', 'body'],
+          turnId: turnId || this.stateMachine.turnId,
+          intensity: 0.32,
+        })
         break
       case 'listening':
         this.idleCtrl.setBreathing(true)
@@ -617,16 +710,52 @@ export class CharacterController {
     this._currentEmotion = intent.emotion || 'neutral'
     this._currentEmotionIntensity = Math.max(0, Math.min(1, intent.intensity ?? 1))
     this.vad.setEmotion(intent.emotion, intent.intensity ?? 1)
-    eventBus.emit('character:runtime-telemetry', { type: 'intent.received', metadata: { emotion: intent.emotion, behavior: intent.behavior } })
+    this.attention.set(intent.attention ?? 'user', intent.durationMs)
+    eventBus.emit('character:runtime-telemetry', {
+      type: 'intent.received',
+      metadata: {
+        emotion: intent.emotion,
+        behavior: intent.behavior,
+        intensity: intent.intensity ?? 0.5,
+        energy: intent.energy ?? 0.5,
+        attention: intent.attention ?? 'user',
+      },
+    })
     if (intent.naturalVAD) {
       this.vad.setTarget(intent.naturalVAD, Math.max(0.6, (intent.durationMs ?? 2400) / 1000))
     }
     const basePlan = this.behaviorResolver.resolve(intent)
     const policy = this.performancePolicy.evaluate(intent, basePlan, this.behaviorResolver.getConfig(), this._profile)
     this.exprCtrl.apply(policy.expression, policy.expressionIntensity, policy.transitionMs)
-    if (policy.motion && Math.random() <= policy.motionProbability) {
+    const plannedMotion = intent.motionPlan
+      ? compileMotionPlan(
+          intent.motionPlan,
+          `ai_${intent.turnId || this.stateMachine.turnId || 'local'}`,
+        )
+      : null
+    if (plannedMotion) {
+      this.motionArbiter.registerPreset(plannedMotion)
+      this.motionArbiter.request({
+        name: plannedMotion.name,
+        owner: `intent-plan:${intent.turnId || this.stateMachine.turnId || 'local'}`,
+        source: 'ai',
+        priority: 52,
+        turnId: intent.turnId || this.stateMachine.turnId,
+        durationMs: plannedMotion.duration,
+        timeoutMs: plannedMotion.duration + (plannedMotion.recoveryMs ?? 0) + 250,
+        intensity: 1,
+      })
+    } else if (policy.motion && Math.random() <= policy.motionProbability) {
       console.log('[MOTION APPLIED]', policy.motion, 'intensity:', policy.motionIntensity)
-      this.motionArbiter.play(policy.motion, 'ai', policy.motionIntensity)
+      this.motionArbiter.request({
+        name: policy.motion,
+        owner: `intent:${intent.turnId || this.stateMachine.turnId || 'local'}`,
+        source: 'ai',
+        priority: 50,
+        turnId: intent.turnId || this.stateMachine.turnId,
+        timeoutMs: intent.durationMs,
+        intensity: policy.motionIntensity,
+      })
     }
     eventBus.emit('character:performance', {
       emotion: intent.emotion || 'neutral', behavior: intent.behavior || '', expression: policy.expression,
@@ -664,7 +793,15 @@ export class CharacterController {
 
   private startNativeIdleIfAvailable(): void {
     if (this.currentActivity !== 'idle' || this.motionArbiter.isPlaying()) return
-    this.motionArbiter.play('idle', 'system', 0.7)
+    if (!shouldStartAuthoredIdle(this._profile)) return
+    this.motionArbiter.request({
+      name: 'idle',
+      owner: 'idle:native',
+      source: 'idle',
+      priority: 10,
+      channels: ['full'],
+      intensity: 0.7,
+    })
   }
 
   private submitLogicalLayer(
@@ -692,6 +829,15 @@ export class CharacterController {
     this.paramCtrl.detach()
     this.idleCtrl.detach()
     if (this._performanceResetTimer) clearTimeout(this._performanceResetTimer)
+    if (this._audioEndTimer) clearTimeout(this._audioEndTimer)
+    this._performanceResetTimer = null
+    this._audioEndTimer = null
+    this.motionArbiter.stop()
+    this.calibration.clear()
+    this.attention.reset()
+    this.audioAnalyzer.reset()
+    this.speechPerformance.reset()
+    this.mixer.setBaselineProvider(null)
     this.adapter = null
   }
 
@@ -781,7 +927,6 @@ export class CharacterController {
    * The caller (animation loop) is responsible for:
    *   mixer.resolve()
    *   mixer.apply(adapter)
-   *   adapter.applyPose()
    *   adapter.updateModel()
    *   render(handle)
    */
@@ -790,6 +935,14 @@ export class CharacterController {
 
     // Step 1: Reset mixer frame
     this.mixer.resetFrame()
+    for (const pose of this.adapter.getPoseContributions()) {
+      this.mixer.submitPartOpacity({
+        id: `pose:${pose.partId}`,
+        partId: pose.partId,
+        opacity: pose.opacity,
+        priority: 10,
+      })
+    }
 
     const vadSnapshot = this.vad.update(dt)
     this.idleBehavior.setVAD(vadSnapshot.current)
@@ -800,7 +953,12 @@ export class CharacterController {
       const calibrationGain = this._performanceMode === 'calibration' ? 1.8 : 1
       this.submitLogicalLayer(
         'vad_micro',
-        this.vadMicroMotion.update(dt, vadSnapshot.current, this._style.microMotionGain * calibrationGain),
+        this.vadMicroMotion.update(
+          dt,
+          vadSnapshot.current,
+          this._style.microMotionGain * calibrationGain,
+          this._profile?.capabilities,
+        ),
         13,
       )
       this.submitLogicalLayer(
@@ -818,6 +976,9 @@ export class CharacterController {
         this.voiceWaiting.update(dt, this.currentActivity, calibrationGain),
         24,
       )
+    }
+    if (this._performanceMode === 'calibration') {
+      this.submitLogicalLayer('calibration', this.calibration.values(), 90)
     }
     const privateParams = this.privateEmotion.update(
       this._performanceMode === 'legacy' ? 'neutral' : this._currentEmotion,
@@ -954,11 +1115,31 @@ export class CharacterController {
       }))
     }
 
+    const attentionSample = this.attention.update(dt)
+    if (attentionSample.weight > 0) {
+      const attentionParams = this.parameterResolver.values(attentionSample.values)
+      for (const [parameterId, value] of Object.entries(attentionParams)) {
+        this.mixer.submit({
+          id: `attention:${parameterId}`,
+          parameterId,
+          source: 'attention',
+          channel: parameterId.toLowerCase().includes('eye') ? 'eye' : 'head',
+          value,
+          mode: 'override',
+          weight: attentionSample.weight,
+          priority: 34,
+          createdAt: performance.now(),
+        })
+      }
+    }
+
     // Step 5: Motion contributions
     for (const step of this.motionArbiter.drainDueSteps()) {
       if (step.type === 'expression') this.exprCtrl.apply(step.value, 1, 220)
       else if (step.type === 'motion') this.motionArbiter.enqueue(step.value)
-      else if (step.type === 'attention') this.setMouseTracking(step.value !== 'away')
+      else if (step.type === 'attention') this.attention.set(
+        step.value === 'away' ? 'away' : step.value === 'screen' ? 'screen' : 'user',
+      )
       else if (step.type === 'behavior') this.applyIntent({ emotion: 'neutral', behavior: step.value, intensity: 0.5 })
     }
     const motionContribs = this.motionArbiter.update(dt)
@@ -966,27 +1147,40 @@ export class CharacterController {
       Object.fromEntries(motionContribs.map(c => [c.logicalParameter, c.value])),
     )
     for (const [parameterId, value] of Object.entries(resolvedMotion)) {
+      const contributionPriority = motionContribs.find(item =>
+        this.parameterResolver.resolve(item.logicalParameter) === parameterId)?.priority ?? 50
       this.mixer.submit({
         id: `motion:${parameterId}`,
         parameterId,
         source: `motion:${this.motionArbiter.currentMotion ?? 'unknown'}`,
         channel: 'motion',
         value,
-        priority: 50,
+        priority: contributionPriority,
         createdAt: performance.now(),
       })
     }
     for (const contribution of this.motionArbiter.drainNativeContributions()) {
-      this.mixer.submit({
-        id: `native-motion:${contribution.parameterId}`,
-        parameterId: contribution.parameterId,
-        source: `native-motion:${this.motionArbiter.currentMotion ?? 'unknown'}`,
-        channel: 'motion',
-        value: contribution.value,
-        weight: contribution.weight,
-        priority: 50,
-        createdAt: performance.now(),
-      })
+      if (contribution.target === 'parameter') {
+        if (this.parameterResolver.isProtectedMotionTarget(contribution.parameterId)) continue
+        this.mixer.submit({
+          id: `native-motion:${contribution.parameterId}`,
+          parameterId: contribution.parameterId,
+          source: `native-motion:${this.motionArbiter.currentMotion ?? 'unknown'}`,
+          channel: 'motion',
+          value: contribution.value,
+          weight: contribution.weight,
+          priority: 50,
+          createdAt: performance.now(),
+        })
+      } else {
+        this.mixer.submitPartOpacity({
+          id: `native-motion:${contribution.partId}`,
+          partId: contribution.partId,
+          opacity: contribution.opacity,
+          weight: contribution.weight,
+          priority: 50,
+        })
+      }
     }
     // Detect motion arbiter transition: playing → idle (for idle restart guard below)
     if (this._wasPlaying && !this.motionArbiter.isPlaying()) {

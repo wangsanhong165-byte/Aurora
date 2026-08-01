@@ -22,7 +22,7 @@ export class CharacterPerformancePolicy {
     const behavior = (intent.behavior || '').toLowerCase()
     const contextTags = new Set((intent.contextTags ?? []).map(tag => tag.toLowerCase()))
     const defaults: Record<string, BehaviorMapping> = {
-      speak: { motion: 'nod' },
+      speak: {},
       greet: { expression: 'happy', motion: 'wave' },
       agree: { motion: 'nod' },
       disagree: { motion: 'tilt' },
@@ -42,7 +42,7 @@ export class CharacterPerformancePolicy {
       : contextTags.has('excited') ? 1.18
       : contextTags.has('reassuring') ? 0.78 : 1
     const energy = Math.max(0.12, Math.min(1,
-      intensity * (personality.motionIntensityScale ?? 1)
+      (intent.energy ?? 0.5) * (personality.motionIntensityScale ?? 1)
       * (mapping.motionIntensityScale ?? 1) * tagEnergyScale,
     ))
     const transitionMs = contextTags.has('whisper') || contextTags.has('reassuring')
@@ -64,7 +64,10 @@ export class CharacterPerformancePolicy {
       modifiers: {
         blinkRate: emotion === 'surprised' ? 0.75 : emotion === 'happy' ? 1.2 : 1,
         bodyEnergy: energy,
-        attention: behavior === 'think' && !contextTags.has('close-up') ? 'away' : 'user',
+        attention: intent.attention === 'screen' ? 'neutral'
+          : intent.attention === 'away' ? 'away'
+          : intent.attention === 'neutral' ? 'neutral'
+          : behavior === 'think' && !contextTags.has('close-up') ? 'away' : 'user',
       },
       motionProbability,
     }

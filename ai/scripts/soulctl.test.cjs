@@ -9,6 +9,7 @@ const {
   readRuntimeConfig,
   selectPython,
   npmInvocation,
+  controlTimeoutFor,
 } = require('./soulctl.cjs')
 
 test('runtime config supports default and per-service Python', () => {
@@ -51,4 +52,11 @@ test('Windows npm commands use ComSpec instead of spawning npm.cmd directly', ()
     assert.match(invocation.command.toLowerCase(), /cmd\.exe$/)
     assert.deepEqual(invocation.args.slice(0, 3), ['/d', '/s', '/c'])
   }
+})
+
+test('lifecycle control commands always have bounded timeouts', () => {
+  assert.equal(controlTimeoutFor('status'), 5_000)
+  assert.equal(controlTimeoutFor('stop'), 30_000)
+  assert.equal(controlTimeoutFor('shutdown'), 5_000)
+  assert.equal(controlTimeoutFor('start'), 180_000)
 })

@@ -76,11 +76,13 @@ class TurnInput:
 class PerformancePlan:
     emotion: str = "neutral"
     behavior: str = ""
+    intensity: float = 0.5
     attention: str = "user"
     energy: float = 0.5
     speaking: bool = False
     duration_ms: int | None = None
     context_tags: list[str] = field(default_factory=list)
+    motion_plan: dict[str, Any] | None = None
 
 
 @dataclass
@@ -202,10 +204,13 @@ class CharacterTurn:
             "speaking": plan.speaking,
             "duration_ms": plan.duration_ms,
             "context_tags": list(plan.context_tags),
+            "motion_plan": plan.motion_plan,
         }
 
     @live2d_intent.setter
     def live2d_intent(self, value: dict[str, Any]) -> None:
+        from app.runtime.character_intent import CharacterIntent
+
         plan = self.output.performance
         plan.emotion = str(value.get("emotion", plan.emotion))
         plan.behavior = str(value.get("behavior", plan.behavior))
@@ -214,6 +219,9 @@ class CharacterTurn:
         plan.speaking = bool(value.get("speaking", plan.speaking))
         plan.duration_ms = value.get("duration_ms")
         plan.context_tags = list(value.get("context_tags", ()))[:8]
+        plan.motion_plan = CharacterIntent._motion_plan(
+            value.get("motion_plan", value.get("motionPlan"))
+        )
 
     def transition_to(self, phase: TurnPhase) -> None:
         if self.phase in {TurnPhase.COMPLETED, TurnPhase.FAILED, TurnPhase.CANCELLED}:

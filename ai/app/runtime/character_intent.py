@@ -10,6 +10,10 @@ EMOTIONS = {
 }
 BEHAVIORS = {"greet", "listen", "think", "speak", "agree", "disagree", "laugh", "idle", "comfort", "wave", "nod", "tilt", "shrug"}
 ATTENTIONS = {"user", "screen", "away", "neutral"}
+MOTION_PRIMITIVES = {
+    "nod", "tilt_left", "tilt_right", "lean_forward", "lean_back",
+    "sway", "look_left", "look_right", "breathe", "shrug",
+}
 
 @dataclass(frozen=True)
 class CharacterIntent:
@@ -21,6 +25,7 @@ class CharacterIntent:
     duration_ms: int | None = None
     natural_vad: dict[str, float] | None = None
     context_tags: tuple[str, ...] = ()
+    motion_plan: dict[str, Any] | None = None
 
     @classmethod
     def from_llm_segment(cls, segment: dict[str, Any] | None, intensity: float = 0.5) -> "CharacterIntent":
@@ -46,6 +51,7 @@ class CharacterIntent:
             duration_ms=int(duration) if isinstance(duration, (int, float)) and 0 < duration <= 10000 else None,
             natural_vad=natural_vad,
             context_tags=tags,
+            motion_plan=cls._motion_plan(segment.get("motionPlan", segment.get("motion_plan"))),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,3 +68,49 @@ class CharacterIntent:
             except (TypeError, ValueError):
                 result[key] = 0.0
         return result
+
+    @staticmethod
+    def _motion_plan(value: Any) -> dict[str, Any] | None:
+        if not isinstance(value, dict) or set(value) != {"durationMs", "steps"}:
+            return None
+        duration = value.get("durationMs")
+        steps = value.get("steps")
+        if (
+            not isinstance(duration, (int, float))
+            or isinstance(duration, bool)
+            or not 300 <= duration <= 8000
+            or not isinstance(steps, list)
+            or not 1 <= len(steps) <= 16
+        ):
+            return None
+
+        normalized_steps: list[dict[str, Any]] = []
+        allowed_keys = {"atMs", "durationMs", "primitive", "intensity"}
+        for step in steps:
+            if not isinstance(step, dict) or set(step) != allowed_keys:
+                return None
+            at_ms = step.get("atMs")
+            step_duration = step.get("durationMs")
+            primitive = step.get("primitive")
+            intensity = step.get("intensity")
+            numbers = (at_ms, step_duration, intensity)
+            if any(isinstance(number, bool) for number in numbers):
+                return None
+            if (
+                not isinstance(at_ms, (int, float))
+                or not isinstance(step_duration, (int, float))
+                or not isinstance(intensity, (int, float))
+                or primitive not in MOTION_PRIMITIVES
+                or at_ms < 0
+                or not 120 <= step_duration <= 2500
+                or not 0 <= intensity <= 1
+                or at_ms + step_duration > duration
+            ):
+                return None
+            normalized_steps.append({
+                "atMs": int(at_ms),
+                "durationMs": int(step_duration),
+                "primitive": str(primitive),
+                "intensity": float(intensity),
+            })
+        return {"durationMs": int(duration), "steps": normalized_steps}

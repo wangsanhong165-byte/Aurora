@@ -1,19 +1,17 @@
-// Model Manager — handles Live2D model lifecycle (load, unload, swap)
-// Supports dynamic model loading from model3.json URLs
-// Uses CubismWebFramework for model loading and rendering
-
 import { loadModelFromBuffer, releaseModel, type CubismModelHandle } from './core'
 import { createFrameworkRenderer, loadTextures, getGL } from './renderer'
 import { CubismRenderer_WebGL } from './framework/rendering/cubismrenderer_webgl'
-import {
-  registerModelPresets,
-  resetPresets,
-  type ExpressionPreset,
-} from './expression'
+import { registerModelPresets, resetPresets, type ExpressionPreset } from './expression'
 import { PoseController } from './PoseController'
 import { NativeMotionPlayer } from './NativeMotionPlayer'
+import {
+  LatestModelLoadCoordinator,
+  type ModelLoadResult,
+  type ModelLoadToken,
+} from './ModelLoadCoordinator'
 
 export type ModelState = 'unloaded' | 'loading' | 'loaded' | 'error' | 'unavailable'
+export type ModelLoadOutcome = ModelLoadResult<void>
 
 export interface ModelInfo {
   name: string
@@ -22,13 +20,18 @@ export interface ModelInfo {
   behaviors?: string[]
 }
 
-/**
- * Parse a Cubism expression .exp3.json file into an ExpressionPreset.
- * Handles both "Add" and "Multiply" blend modes.
- */
-export function normalizeExpressionBlend(
-  blend: unknown,
-): 'add' | 'multiply' | 'overwrite' {
+interface CandidateSession {
+  name: string
+  generation: number
+  handle: CubismModelHandle
+  renderer: CubismRenderer_WebGL
+  expressionPresets: Record<string, ExpressionPreset>
+  expressionNames: string[]
+  poseController: PoseController | null
+  nativeMotionPlayer: NativeMotionPlayer
+}
+
+export function normalizeExpressionBlend(blend: unknown): 'add' | 'multiply' | 'overwrite' {
   const normalized = String(blend ?? 'Add').toLowerCase()
   if (normalized === 'multiply') return 'multiply'
   if (normalized === 'overwrite') return 'overwrite'
@@ -39,11 +42,11 @@ function parseExp3Json(json: Record<string, unknown>): ExpressionPreset | null {
   try {
     const params = (json.Parameters as Array<Record<string, unknown>>) || []
     const preset: ExpressionPreset = { params: [] }
-    for (const p of params) {
+    for (const parameter of params) {
       preset.params.push({
-        id: p.Id as string,
-        value: p.Value as number,
-        blend: normalizeExpressionBlend(p.Blend),
+        id: parameter.Id as string,
+        value: parameter.Value as number,
+        blend: normalizeExpressionBlend(parameter.Blend),
       })
     }
     return preset.params.length > 0 ? preset : null
@@ -52,255 +55,194 @@ function parseExp3Json(json: Record<string, unknown>): ExpressionPreset | null {
   }
 }
 
-export class ModelManager {
-  private model: CubismModelHandle | null = null
-  private renderer: CubismRenderer_WebGL | null = null
-  private _state: ModelState = 'unloaded'
-  private _modelName: string = ''
+function modelNameFromUrl(modelUrl: string): string {
+  return modelUrl.split('/').filter(Boolean).reverse()[1] || 'unknown'
+}
 
-  /** Expression presets loaded from model's .exp3.json files */
-  private _expressionPresets: Record<string, ExpressionPreset> = {}
-  /** Set of model-specific expression names (needed for resolveExpression) */
-  private _expressionNames: string[] = []
-  /** Pose controller for managing part opacity in pose groups */
-  private _poseController: PoseController | null = null
-  private _nativeMotionPlayer = new NativeMotionPlayer()
-
-  /** Current model state */
-  get state(): ModelState {
-    return this._state
-  }
-
-  /** Current model name */
-  get modelName(): string {
-    return this._modelName
-  }
-
-  /** Get the loaded model handle (null if not loaded) */
-  getModel(): CubismModelHandle | null {
-    return this.model
-  }
-
-  /** Get the Framework renderer (null if not initialized) */
-  getRenderer(): CubismRenderer_WebGL | null {
-    return this.renderer
-  }
-
-  /** Get model-specific expression presets */
-  getExpressionPresets(): Record<string, ExpressionPreset> {
-    return this._expressionPresets
-  }
-
-  /** Get model-specific expression names */
-  getExpressionNames(): string[] {
-    return this._expressionNames
-  }
-
-  /** Pose constraints are owned by the model adapter during the frame loop. */
-  getPoseController(): PoseController | null {
-    return this._poseController
-  }
-
-  getNativeMotionPlayer(): NativeMotionPlayer {
-    return this._nativeMotionPlayer
-  }
-
-  /** Load a model from a .model3.json URL */
-  async load(modelUrl: string): Promise<boolean> {
-    const gl = getGL()
-    if (!gl) {
-      this._state = 'error'
-      return false
+function releaseSession(session: Pick<CandidateSession, 'handle' | 'renderer'> | null): void {
+  if (!session) return
+  const gl = getGL()
+  const textures = session.renderer.getBindedTextures()
+  if (gl && textures) {
+    for (let index = 0; index < textures.getSize(); index += 1) {
+      const texture = textures.getValue(index)
+      if (texture) gl.deleteTexture(texture)
     }
+  }
+  session.renderer.release()
+  releaseModel(session.handle)
+}
 
-    // Unload existing model first
-    this.unload()
+export class ModelManager {
+  private session: CandidateSession | null = null
+  private coordinator = new LatestModelLoadCoordinator<CandidateSession>()
+  private inFlight: { name: string; promise: Promise<ModelLoadOutcome> } | null = null
+  private _state: ModelState = 'unloaded'
+  private _requestedModel = ''
+
+  get state(): ModelState { return this._state }
+  get modelName(): string { return this.session?.name ?? '' }
+  get generation(): number { return this.session?.generation ?? 0 }
+  get requestedModel(): string { return this._requestedModel }
+  getModel(): CubismModelHandle | null { return this.session?.handle ?? null }
+  getRenderer(): CubismRenderer_WebGL | null { return this.session?.renderer ?? null }
+  getExpressionPresets(): Record<string, ExpressionPreset> { return this.session?.expressionPresets ?? {} }
+  getExpressionNames(): string[] { return this.session?.expressionNames ?? [] }
+  getPoseController(): PoseController | null { return this.session?.poseController ?? null }
+  getNativeMotionPlayer(): NativeMotionPlayer { return this.session?.nativeMotionPlayer ?? new NativeMotionPlayer() }
+
+  getDiagnostics(): {
+    requestedModel: string
+    loadedModel: string
+    generation: number
+    rendererGeneration: number
+  } {
+    return {
+      requestedModel: this._requestedModel,
+      loadedModel: this.session?.name ?? '',
+      generation: this.session?.generation ?? 0,
+      rendererGeneration: this.session?.generation ?? 0,
+    }
+  }
+
+  load(modelUrl: string): Promise<ModelLoadOutcome> {
+    const name = modelNameFromUrl(modelUrl)
+    this._requestedModel = name
+    if (this.inFlight?.name === name) return this.inFlight.promise
+    if (this.session?.name === name && this._state === 'loaded') {
+      return Promise.resolve({
+        status: 'loaded', modelName: name, generation: this.session.generation, value: undefined,
+      })
+    }
+    if (!getGL()) {
+      this._state = 'error'
+      return Promise.resolve({
+        status: 'failed', modelName: name, generation: this.coordinator.currentGeneration, error: new Error('WebGL unavailable'),
+      })
+    }
 
     this._state = 'loading'
+    let promise!: Promise<ModelLoadOutcome>
+    promise = this.coordinator.run(name, token => this.buildCandidate(modelUrl, name, token))
+      .then(result => {
+        if (result.status === 'loaded') {
+          const candidate = result.value
+          if (!candidate || candidate.generation !== result.generation) {
+            if (candidate) releaseSession(candidate)
+            this._state = 'error'
+            return { status: 'failed', modelName: name, generation: result.generation, error: new Error('generation mismatch') } as ModelLoadOutcome
+          }
+          const previous = this.session
+          this.session = candidate
+          resetPresets()
+          registerModelPresets(candidate.expressionPresets)
+          releaseSession(previous)
+          this._state = 'loaded'
+          console.log('[ModelManager] load commit', this.getDiagnostics())
+          return { status: 'loaded', modelName: name, generation: result.generation, value: undefined } as ModelLoadOutcome
+        }
+        if (result.status === 'failed') {
+          this._state = this.session ? 'loaded' : 'error'
+          console.error('[ModelManager] load failed:', name, result.error)
+        }
+        return result
+      })
+      .finally(() => {
+        if (this.inFlight?.promise === promise) this.inFlight = null
+      })
+    this.inFlight = { name, promise }
+    return promise
+  }
 
+  private async buildCandidate(modelUrl: string, name: string, token: ModelLoadToken): Promise<CandidateSession> {
+    let handle: CubismModelHandle | null = null
+    let renderer: CubismRenderer_WebGL | null = null
+    let committed = false
     try {
-      console.log('[ModelManager] Loading model from:', modelUrl)
-      const res = await fetch(modelUrl)
-      if (!res.ok) {
-        console.error('[ModelManager] model3.json fetch failed:', res.status, modelUrl)
-        this._state = 'unavailable'
-        return false
-      }
-
-      const model3Json = await res.json()
+      const modelResponse = await fetch(modelUrl, { signal: token.signal })
+      if (!modelResponse.ok) throw new Error(`model3.json fetch failed: ${modelResponse.status}`)
+      const model3Json = await modelResponse.json()
+      const references = model3Json.FileReferences ?? {}
       const baseUrl = modelUrl.substring(0, modelUrl.lastIndexOf('/'))
-      console.log('[ModelManager] Base URL:', baseUrl)
-      console.log('[ModelManager] Moc file:', model3Json.FileReferences?.Moc)
+      if (!references.Moc) throw new Error('model3.json has no Moc reference')
 
-      // Extract model name from URL
-      const urlParts = modelUrl.split('/')
-      this._modelName = urlParts[urlParts.length - 2] || 'unknown'
+      const mocResponse = await fetch(`${baseUrl}/${references.Moc}`, { signal: token.signal })
+      if (!mocResponse.ok) throw new Error(`moc3 fetch failed: ${mocResponse.status}`)
+      handle = loadModelFromBuffer(await mocResponse.arrayBuffer())
+      if (!handle) throw new Error('loadModelFromBuffer returned null')
+      renderer = createFrameworkRenderer(handle.frameworkModel)
+      if (!renderer) throw new Error('createFrameworkRenderer returned null')
 
-      // Load moc3 file
-      const mocFile = model3Json.FileReferences?.Moc
-      if (!mocFile) {
-        this._state = 'error'
-        return false
+      const textures: string[] = (references.Textures ?? []).map((file: string) => `${baseUrl}/${file}`)
+      await loadTextures(renderer, textures)
+      if (!token.isCurrent()) throw new DOMException('Superseded', 'AbortError')
+
+      const expressionPresets: Record<string, ExpressionPreset> = {}
+      const expressionNames: string[] = []
+      for (const expression of references.Expressions ?? []) {
+        const response = await fetch(`${baseUrl}/${expression.File}`, { signal: token.signal })
+        if (!response.ok) continue
+        const preset = parseExp3Json(await response.json())
+        if (!preset) continue
+        expressionPresets[expression.Name] = preset
+        expressionNames.push(expression.Name)
       }
 
-      const mocRes = await fetch(`${baseUrl}/${mocFile}`)
-      console.log('[ModelManager] moc3 fetch status:', mocRes.status, `${baseUrl}/${mocFile}`)
-      const mocBuffer = await mocRes.arrayBuffer()
-      console.log('[ModelManager] moc3 buffer size:', mocBuffer.byteLength)
-
-      // Create CubismModelHandle using Framework (CubismMoc + CubismModel)
-      console.log('[ModelManager] Calling loadModelFromBuffer...')
-      const handle = loadModelFromBuffer(mocBuffer)
-      if (!handle) {
-        console.error('[ModelManager] loadModelFromBuffer returned null')
-        this._state = 'error'
-        return false
-      }
-      console.log('[ModelManager] Model loaded, canvas size:', handle.canvasWidth, 'x', handle.canvasHeight)
-
-      this.model = handle
-
-      // Create Framework WebGL renderer for this model
-      console.log('[ModelManager] Creating framework renderer...')
-      const renderer = createFrameworkRenderer(handle.frameworkModel)
-      if (!renderer) {
-        console.error('[ModelManager] createFrameworkRenderer returned null')
-        this._state = 'error'
-        return false
-      }
-      this.renderer = renderer
-      console.log('[ModelManager] Renderer created successfully')
-
-      // Load and bind textures
-      const texPaths: string[] = (model3Json.FileReferences?.Textures || []).map(
-        (t: string) => `${baseUrl}/${t}`,
-      )
-
-      if (texPaths.length > 0) {
-        await loadTextures(renderer, texPaths)
-      }
-
-      // ── Load model-specific .exp3.json expression files ──
-      const expRefs: Array<{ Name: string; File: string }> =
-        model3Json.FileReferences?.Expressions || []
-      if (expRefs.length > 0) {
-        console.log('[ModelManager] Loading %d expression files...', expRefs.length)
-        const newPresets: Record<string, ExpressionPreset> = {}
-        const newNames: string[] = []
-        for (const expRef of expRefs) {
-          try {
-            const expRes = await fetch(`${baseUrl}/${expRef.File}`)
-            if (!expRes.ok) {
-              console.warn('[ModelManager] Failed to load expression:', expRef.File, expRes.status)
-              continue
-            }
-            const expJson = await expRes.json()
-            const preset = parseExp3Json(expJson)
-            if (preset) {
-              newPresets[expRef.Name] = preset
-              newNames.push(expRef.Name)
-              console.log('[ModelManager]   + expression:', expRef.Name, '(%d params)', preset.params.length)
-            }
-          } catch (e) {
-            console.warn('[ModelManager] Error loading expression:', expRef.File, e)
-          }
-        }
-        this._expressionPresets = newPresets
-        this._expressionNames = newNames
-
-        // Register model-specific presets for ExpressionController
-        resetPresets()
-        registerModelPresets(newPresets)
-        console.log('[ModelManager] EXPRESSION PRESETS LOADED: %d expressions', newNames.length)
-      } else {
-        console.log('[ModelManager] No expression files in model3.json (using hardcoded presets)')
-        this._expressionPresets = {}
-        this._expressionNames = []
-        resetPresets()
-      }
-
+      const nativeMotionPlayer = new NativeMotionPlayer()
       const motionGroups: Record<string, Array<{
-        File: string
-        Name?: string
-        FadeInTime?: number
-        FadeOutTime?: number
-      }>> = model3Json.FileReferences?.Motions || {}
-      this._nativeMotionPlayer = new NativeMotionPlayer()
-      for (const [group, refs] of Object.entries(motionGroups)) {
-        for (let index = 0; index < refs.length; index += 1) {
-          const ref = refs[index]
-          try {
-            const motionRes = await fetch(`${baseUrl}/${ref.File}`)
-            if (!motionRes.ok) continue
-            const motionJson = await motionRes.json()
-            if (ref.FadeInTime !== undefined) motionJson.FadeInTime = ref.FadeInTime
-            if (ref.FadeOutTime !== undefined) motionJson.FadeOutTime = ref.FadeOutTime
-            const basename = ref.File.split('/').pop()?.replace(/\.motion3\.json$/i, '') ?? ''
-            this._nativeMotionPlayer.register(`${group}:${index}`, motionJson, [
-              ref.Name ?? '', basename, group,
-            ])
-          } catch (error) {
-            console.warn('[ModelManager] Error loading native motion:', ref.File, error)
-          }
+        File: string; Name?: string; FadeInTime?: number; FadeOutTime?: number
+      }>> = model3Json.FileReferences?.Motions ?? {}
+      for (const [group, motionReferences] of Object.entries(motionGroups)) {
+        for (let index = 0; index < motionReferences.length; index += 1) {
+          const reference = motionReferences[index]
+          const response = await fetch(`${baseUrl}/${reference.File}`, { signal: token.signal })
+          if (!response.ok) continue
+          const motionJson = await response.json()
+          if (reference.FadeInTime !== undefined) motionJson.FadeInTime = reference.FadeInTime
+          if (reference.FadeOutTime !== undefined) motionJson.FadeOutTime = reference.FadeOutTime
+          const basename = reference.File.split('/').pop()?.replace(/\.motion3\.json$/i, '') ?? ''
+          nativeMotionPlayer.register(`${group}:${index}`, motionJson, [
+            reference.Name ?? '', basename, group,
+          ])
         }
       }
 
-      // ── Load pose3.json for part opacity management ──
-      const poseFile = model3Json.FileReferences?.Pose
-      if (poseFile) {
-        try {
-          const poseRes = await fetch(`${baseUrl}/${poseFile}`)
-          if (poseRes.ok) {
-            const poseJson = await poseRes.json()
-            this._poseController = new PoseController()
-            this._poseController.load(poseJson)
-            this._poseController.applyInitial(handle)
-            console.log('[ModelManager] Pose loaded: %d groups', this._poseController.groupCount)
-          } else {
-            console.warn('[ModelManager] Failed to load pose:', poseFile, poseRes.status)
-          }
-        } catch (e) {
-          console.warn('[ModelManager] Error loading pose:', poseFile, e)
+      let poseController: PoseController | null = null
+      if (references.Pose) {
+        const response = await fetch(`${baseUrl}/${references.Pose}`, { signal: token.signal })
+        if (response.ok) {
+          poseController = new PoseController()
+          poseController.load(await response.json())
         }
-      } else {
-        this._poseController = null
       }
-
-      this._state = 'loaded'
-      return true
-
-    } catch (e) {
-      console.error('[ModelManager] Error loading model:', e)
-      this._state = 'error'
-      return false
+      if (!token.isCurrent()) throw new DOMException('Superseded', 'AbortError')
+      committed = true
+      return {
+        name,
+        generation: token.generation,
+        handle,
+        renderer,
+        expressionPresets,
+        expressionNames,
+        poseController,
+        nativeMotionPlayer,
+      }
+    } finally {
+      if (!committed && handle && renderer) releaseSession({ handle, renderer })
+      else if (!committed && handle) releaseModel(handle)
+      else if (!committed && renderer) renderer.release()
     }
   }
 
-  /** Unload the current model and release resources */
   unload(): void {
-    if (this.model) {
-      // Release the CubismModel and CubismMoc properly, not just null the reference.
-      // Without releaseModel(), the old model's GL textures and GPU buffers remain
-      // allocated and can cause ghosting / memory leaks on model switch.
-      releaseModel(this.model)
-    }
-    if (this.renderer) {
-      this.renderer.release()
-      this.renderer = null
-    }
-    this.model = null
+    this.coordinator.cancel()
+    this.inFlight = null
+    releaseSession(this.session)
+    this.session = null
     this._state = 'unloaded'
-    this._modelName = ''
-    this._expressionPresets = {}
-    this._expressionNames = []
-    this._poseController = null
-    this._nativeMotionPlayer = new NativeMotionPlayer()
+    this._requestedModel = ''
     resetPresets()
   }
 
-  /** Reset state to allow retry after error */
-  reset(): void {
-    this.unload()
-    this._state = 'unloaded'
-  }
+  reset(): void { this.unload() }
 }

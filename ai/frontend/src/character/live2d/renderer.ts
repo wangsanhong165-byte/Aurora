@@ -9,7 +9,6 @@ import { CubismModel } from './framework/model/cubismmodel'
 
 export interface FrameworkRendererState {
   gl: WebGLRenderingContext
-  renderer: CubismRenderer_WebGL | null
   canvasWidth: number
   canvasHeight: number
 }
@@ -43,7 +42,6 @@ export function initRenderer(canvas: HTMLCanvasElement): boolean {
 
   _rs = {
     gl,
-    renderer: null,
     canvasWidth: canvas.width,
     canvasHeight: canvas.height,
   }
@@ -64,7 +62,6 @@ export function createFrameworkRenderer(model: CubismModel): CubismRenderer_WebG
   renderer.startUp(_rs.gl)
   renderer.setIsPremultipliedAlpha(true)
 
-  _rs.renderer = renderer
   return renderer
 }
 
@@ -179,8 +176,8 @@ function _invalidateProjection(): void {
 
 let _rendererMissingLogged = false
 
-export function render(handle: CubismModelHandle): void {
-  if (!_rs?.renderer) {
+export function render(handle: CubismModelHandle, renderer: CubismRenderer_WebGL | null): void {
+  if (!_rs || !renderer) {
     if (!_rendererMissingLogged) {
       console.error('[Live2D] render() skipped: _rs.renderer is null')
       _rendererMissingLogged = true
@@ -202,7 +199,7 @@ export function render(handle: CubismModelHandle): void {
   gl.disable(gl.CULL_FACE)
 
   // Set render target (null = default framebuffer = screen)
-  _rs.renderer.setRenderState(
+  renderer.setRenderState(
     null as unknown as WebGLFramebuffer,
     [0, 0, _rs.canvasWidth, _rs.canvasHeight],
   )
@@ -238,19 +235,15 @@ export function render(handle: CubismModelHandle): void {
   _vp.translate(_viewOffsetX, _viewOffsetY)
   // _projection = vp * _projection  (viewport * base)
   _projection.multiplyByMatrix(_vp)
-  _rs.renderer.setMvpMatrix(_projection!)
+  renderer.setMvpMatrix(_projection!)
 
-  _rs.renderer.drawModel()
+  renderer.drawModel()
 }
 
 // ── Accessors ──
 
 export function getGL(): WebGLRenderingContext | null {
   return _rs?.gl ?? null
-}
-
-export function getRenderer(): CubismRenderer_WebGL | null {
-  return _rs?.renderer ?? null
 }
 
 /** Set viewport pan offset (normalized -1..1 coordinates) */
@@ -281,7 +274,6 @@ export function resetView(): void {
 
 export function destroyRenderer(): void {
   if (!_rs) return
-  _rs.renderer?.release()
   _rs = null
   _modelMatrix = null
   _baseProjection = null

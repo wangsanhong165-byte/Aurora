@@ -1,7 +1,10 @@
 // Translates runtime character intent into a model-agnostic presentation plan.
 // It never writes Cubism parameters and deliberately knows nothing about the renderer.
 
+import type { MotionPlan } from './MotionAction'
+
 export interface CharacterIntent {
+  turnId?: string
   emotion?: string
   behavior?: string
   intensity?: number
@@ -11,6 +14,7 @@ export interface CharacterIntent {
   durationMs?: number
   naturalVAD?: { valence: number; arousal: number; dominance: number }
   contextTags?: string[]
+  motionPlan?: MotionPlan
 }
 
 export interface BehaviorMapping {
@@ -42,7 +46,7 @@ export interface CharacterPresentationPlan {
 }
 
 const DEFAULT_BEHAVIORS: Record<string, BehaviorMapping> = {
-  speak: { motion: 'nod' },
+  speak: {},
   greet: { motion: 'wave', expression: 'happy' },
   agree: { motion: 'nod' },
   disagree: { motion: 'tilt' },
@@ -88,7 +92,7 @@ export class CharacterBehaviorResolver {
     )
     const motion = mapping.motion
     const motionIntensity = clamp(
-      intensity * (mapping.motionIntensityScale ?? 1) * (personality.motionIntensityScale ?? 1),
+      (intent.energy ?? 0.5) * (mapping.motionIntensityScale ?? 1) * (personality.motionIntensityScale ?? 1),
     )
 
     const plan = {

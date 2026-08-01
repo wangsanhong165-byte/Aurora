@@ -1,1 +1,65 @@
-{"model":"ariu","expressions":["neutral","angry","love","surprised"],"motions":["speak","greet","wave","nod","tilt","thinking","react","return_idle"],"sequences":["greet","thinking","react"],"parameters":{"eye":{"x":"ParamEyeBallX","y":"ParamEyeBallY"},"mouth":{"open":"ParamMouthOpenY","form":"ParamMouthForm"},"face":{"angleX":"ParamAngleX","angleY":"ParamAngleY"}},"bindings":{"eye.x":"ParamEyeBallX","eye.y":"ParamEyeBallY","head.x":"ParamAngleX","head.y":"ParamAngleY","head.z":"ParamAngleZ","body.x":"ParamBodyAngleX","body.y":"ParamBodyAngleY","mouth.open":"ParamMouthOpenY","mouth.form":"ParamMouthForm","breath":"ParamBreath","blink.left":"ParamEyeLOpen","blink.right":"ParamEyeROpen"},"motionStyle":{"preset":"calm","microMotionGain":1.05,"idleActionGain":0.95,"gestureFrequency":0.9,"speechAccentGain":0.95},"personality":{"expressiveness":0.58,"softness":0.7,"shyness":0.56},"capabilities":{"headControl":true,"bodyControl":true,"gazeControl":true,"eyeBlink":true},"performanceMode":"enhanced","parameterGain":1.42,"bodyMotionGain":1.2}
+{
+  "model": "ariu",
+  "viewport": {
+    "x": 0.56,
+    "y": 0.14,
+    "scale": 0.76
+  },
+  "expressions": ["neutral", "angry", "love", "surprised"],
+  "motions": ["speak", "greet", "wave", "nod", "tilt", "thinking", "react", "return_idle"],
+  "sequences": ["greet", "thinking", "react"],
+  "parameters": {
+    "eye": { "x": "ParamEyeBallX", "y": "ParamEyeBallY" },
+    "mouth": { "open": "ParamMouthOpenY", "form": "ParamMouthForm" },
+    "face": { "angleX": "ParamAngleX", "angleY": "ParamAngleY" }
+  },
+  "bindings": {
+    "eye.x": { "target": "ParamEyeBallX", "min": -0.8, "max": 0.8 },
+    "eye.y": { "target": "ParamEyeBallY", "min": -0.65, "max": 0.65 },
+    "head.x": { "target": "ParamAngleX", "min": -18, "max": 18 },
+    "head.y": { "target": "ParamAngleY", "min": -14, "max": 14 },
+    "head.z": { "target": "ParamAngleZ", "min": -12, "max": 12 },
+    "body.x": { "target": "ParamBodyAngleX", "min": -8, "max": 8 },
+    "body.y": { "target": "ParamBodyAngleY", "min": -6, "max": 6 },
+    "mouth.open": { "target": "ParamMouthOpenY", "min": 0, "max": 0.72 },
+    "mouth.form": { "target": "ParamMouthForm", "min": -0.85, "max": 0.85 },
+    "breath": { "target": "ParamBreath", "min": 0, "max": 1 },
+    "blink.left": { "target": "ParamEyeLOpen", "min": 0, "max": 1 },
+    "blink.right": { "target": "ParamEyeROpen", "min": 0, "max": 1 }
+  },
+  "motionStyle": {
+    "preset": "calm",
+    "microMotionGain": 0.85,
+    "idleActionGain": 0.85,
+    "gestureFrequency": 0.75,
+    "speechAccentGain": 0.82
+  },
+  "personality": {
+    "expressiveness": 0.58,
+    "softness": 0.7,
+    "shyness": 0.56,
+    "gazeStability": 0.72
+  },
+  "capabilities": {
+    "headControl": true,
+    "bodyControl": true,
+    "gazeControl": true,
+    "eyeBlink": true,
+    "mouthControl": true,
+    "mouthForm": true,
+    "breathControl": true
+  },
+  "protectedMotionParameters": ["mouth.open"],
+  "lipSync": {
+    "min": 0,
+    "max": 0.72,
+    "inputGain": 5.8,
+    "noiseGate": 0.014,
+    "attackMs": 42,
+    "releaseMs": 135,
+    "peakBoost": 0.18
+  },
+  "performanceMode": "enhanced",
+  "parameterGain": 1.18,
+  "bodyMotionGain": 1.02
+}

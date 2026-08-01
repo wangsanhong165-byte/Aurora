@@ -54,6 +54,23 @@ let mainUiLoaded = false
 let mainUiLoading = false
 let appLoadRetryTimer = null
 
+// Frameless-window drag state (driven over IPC, see setupIPC). Polled from
+// the main process so dragging stays smooth while the renderer is busy
+// rendering the Live2D stage.
+let dragOffset = null
+let dragPollTimer = null
+let dragLastX = null
+let dragLastY = null
+const stopWindowDrag = () => {
+  if (dragPollTimer) {
+    clearInterval(dragPollTimer)
+    dragPollTimer = null
+  }
+  dragOffset = null
+  dragLastX = null
+  dragLastY = null
+}
+
 // ── Window creation ──
 
 function createWindow() {
@@ -96,6 +113,11 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+
+  // Safety net: if the renderer stops sending dragEnd mid-drag (e.g. a
+  // renderer crash), stop following the cursor as soon as the window loses
+  // focus instead of dragging forever.
+  mainWindow.on('blur', stopWindowDrag)
 }
 
 async function loadAppUrl() {
@@ -247,6 +269,43 @@ function setupIPC() {
       petMode = false
     }
     return { enabled: petMode, bounds: mainWindow.getBounds() }
+  })
+
+  // ── Window dragging (frameless fallback) ──
+  // CSS -webkit-app-region proved unreliable for moving this window, so the
+  // renderer drives the move explicitly: it sends dragStart on pointerdown in
+  // the title bar and dragEnd on pointerup, and the main process polls the OS
+  // cursor position to keep the window glued to it while a drag is active.
+  ipcMain.on('window:dragStart', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMaximized() || mainWindow.isFullScreen()) return
+    stopWindowDrag()
+    const cursor = screen.getCursorScreenPoint()
+    const [winX, winY] = mainWindow.getPosition()
+    const [winW, winH] = mainWindow.getSize()
+    dragOffset = { offsetX: cursor.x - winX, offsetY: cursor.y - winY }
+    // setBounds with an explicit size, NOT setPosition: on this Windows host
+    // repeated setPosition calls let the DWM ratchet the frameless window's
+    // size upward (it re-applies the inflated size on each call), so the
+    // window visibly grows while being dragged. Pinning the size on every
+    // move keeps the window from growing.
+    dragPollTimer = setInterval(() => {
+      if (!dragOffset || !mainWindow || mainWindow.isDestroyed()) {
+        stopWindowDrag()
+        return
+      }
+      const cursorNow = screen.getCursorScreenPoint()
+      const x = Math.round(cursorNow.x - dragOffset.offsetX)
+      const y = Math.round(cursorNow.y - dragOffset.offsetY)
+      if (x === dragLastX && y === dragLastY) return
+      dragLastX = x
+      dragLastY = y
+      mainWindow.setBounds({ x, y, width: winW, height: winH })
+    }, 16)
+  })
+
+  ipcMain.on('window:dragEnd', () => {
+    stopWindowDrag()
   })
 
   ipcMain.handle('app:getSettings', () => {

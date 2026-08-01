@@ -50,6 +50,66 @@ for (const file of files.filter(name => name.endsWith('.json'))) {
     })),
   )
   const nativeMotions = nativeMotionCatalog.map(item => item.name)
+  const nativeMotionAliases = new Set(nativeMotionCatalog.flatMap(item => [
+    item.name?.toLowerCase(),
+    item.group?.toLowerCase(),
+    item.basename?.toLowerCase(),
+  ]).filter(Boolean))
+  const invalidMotionMappings = Object.entries(profile.motionMap ?? {})
+    .filter(([, target]) => !nativeMotionAliases.has(String(target).toLowerCase()))
+    .map(([semantic, target]) => ({ semantic, target }))
+  const logicalCapabilities = {
+    headControl: ['head.x', 'head.y', 'head.z'],
+    bodyControl: ['body.x', 'body.y'],
+    gazeControl: ['eye.x', 'eye.y'],
+    eyeBlink: ['blink.left', 'blink.right'],
+    mouthControl: ['mouth.open'],
+    mouthForm: ['mouth.form'],
+    breathControl: ['breath'],
+  }
+  const capabilityGaps = Object.entries(logicalCapabilities).flatMap(([capability, logicalKeys]) => {
+    if (profile.capabilities?.[capability] === false) return []
+    const missing = logicalKeys.filter(logical => !bindings.some(binding => binding.logical === logical))
+    return missing.length ? [{ capability, missing }] : []
+  })
+  const lipSyncIssues = []
+  if (profile.lipSync) {
+    if (!bindings.some(binding => binding.logical === 'mouth.open')) {
+      lipSyncIssues.push('lipSync configured without mouth.open binding')
+    }
+    if (Number(profile.lipSync.min ?? 0) < 0
+      || Number(profile.lipSync.max ?? 1) > 1
+      || Number(profile.lipSync.min ?? 0) > Number(profile.lipSync.max ?? 1)) {
+      lipSyncIssues.push('lipSync min/max must satisfy 0 <= min <= max <= 1')
+    }
+  }
+  const profileIssues = []
+  const motionStylePreset = profile.motionStyle?.preset
+  if (motionStylePreset && !['natural', 'lively', 'calm', 'shy'].includes(motionStylePreset)) {
+    profileIssues.push(`unknown motionStyle preset: ${motionStylePreset}`)
+  }
+  const idleMotionIssues = []
+  const idleTarget = profile.motionMap?.idle
+  if (idleTarget) {
+    const normalizedTarget = String(idleTarget).toLowerCase()
+    const idleEntry = nativeMotionCatalog.find(item => [item.name, item.group, item.basename]
+      .filter(Boolean)
+      .some(alias => String(alias).toLowerCase() === normalizedTarget))
+    if (idleEntry?.file) {
+      try {
+        const motion = await readJson(path.join(modelDir, idleEntry.file))
+        const parameterIds = (motion.Curves ?? [])
+          .filter(curve => curve.Target === 'Parameter' && typeof curve.Id === 'string')
+          .map(curve => curve.Id)
+        const naturalChannels = parameterIds.filter(id => /^(ParamAngle|ParamBodyAngle|ParamBreath)/i.test(id))
+        if (parameterIds.length > 0 && naturalChannels.length === 0) {
+          idleMotionIssues.push(`idle motion ${idleEntry.file} has effect/expression parameters only: ${parameterIds.join(', ')}`)
+        }
+      } catch (error) {
+        idleMotionIssues.push(`idle motion could not be inspected: ${idleEntry.file}`)
+      }
+    }
+  }
   const semanticGroups = { Talk: 'speak', Tap: 'react', Idle: 'idle' }
   const mappingSuggestions = Object.fromEntries(
     Object.entries(semanticGroups)
@@ -64,6 +124,11 @@ for (const file of files.filter(name => name.endsWith('.json'))) {
     bindingCount: bindings.length,
     validBindings,
     missingBindings,
+    capabilityGaps,
+    invalidMotionMappings,
+    lipSyncIssues,
+    profileIssues,
+    idleMotionIssues,
     nativeExpressions,
     nativeMotions,
     nativeMotionCatalog,
@@ -87,6 +152,12 @@ if (args.has('--json')) {
   }
 }
 
-if (args.has('--strict') && reports.some(report => report.missingBindings.length > 0)) {
+if (args.has('--strict') && reports.some(report =>
+  report.missingBindings.length > 0
+  || report.capabilityGaps.length > 0
+  || report.invalidMotionMappings.length > 0
+  || report.lipSyncIssues.length > 0
+  || report.profileIssues.length > 0
+  || report.idleMotionIssues.length > 0)) {
   process.exitCode = 1
 }

@@ -102,12 +102,13 @@ aside {
   flex: 0 0 36px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 0 8px 0 14px;
   background: var(--bg);
   border-bottom: 1px solid var(--line);
   color: var(--muted);
-  -webkit-app-region: drag;
+  user-select: none;
+  touch-action: none;
 }
 
 .title-bar-name {
@@ -126,14 +127,13 @@ aside {
 .title-bar-drag-region {
   flex: 1;
   align-self: stretch;
-  -webkit-app-region: drag;
+  min-width: 100px;
 }
 
 .window-controls {
   height: 100%;
   display: flex;
   margin-left: auto;
-  -webkit-app-region: no-drag;
 }
 
 .window-controls button {

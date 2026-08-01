@@ -73,11 +73,13 @@ export interface ParameterContribution {
   persistent?: boolean
 }
 
-interface PartOpacityContribution {
+export interface PartOpacityContribution {
   id: string
   partId: string
   opacity: number
   priority: number
+  weight?: number
+  persistent?: boolean
 }
 
 interface ParameterOwner {
@@ -107,7 +109,27 @@ export class ParameterMixer {
   private _resolved: Record<string, number> = {}
   // Persistent contributions (not cleared per-frame, e.g. accessories)
   private _persistentContributions: Map<string, ParameterContribution> = new Map()
-  private _partOpacityContributions: Map<string, PartOpacityContribution> = new Map()
+  private _persistentPartOpacityContributions: Map<string, PartOpacityContribution> = new Map()
+  private _partOpacityFrame: Map<string, PartOpacityContribution[]> = new Map()
+  private _resolvedPartOpacities: Record<string, number> = {}
+  private _baselineProvider: ((parameterId: string) => number) | null = null
+  private _baselines = new Map<string, number>()
+
+  setBaselineProvider(provider: ((parameterId: string) => number) | null): void {
+    this._baselineProvider = provider
+    this._baselines.clear()
+  }
+
+  private _baseline(parameterId: string): number {
+    if (!this._baselines.has(parameterId)) {
+      this._baselines.set(parameterId, this._baselineProvider?.(parameterId) ?? 0)
+    }
+    return this._baselines.get(parameterId)!
+  }
+
+  getBaseline(parameterId: string): number {
+    return this._baseline(parameterId)
+  }
 
   // ── Owner registration ─────────────────────────────────────
 
@@ -162,10 +184,22 @@ export class ParameterMixer {
 
   /** Queue a part opacity write so the adapter remains the only SDK writer. */
   submitPartOpacity(contribution: PartOpacityContribution): void {
-    const existing = this._partOpacityContributions.get(contribution.partId)
-    if (!existing || contribution.priority >= existing.priority) {
-      this._partOpacityContributions.set(contribution.partId, contribution)
+    if (contribution.persistent) {
+      this._persistentPartOpacityContributions.set(contribution.id, contribution)
     }
+    this._addPartOpacityToFrame(contribution)
+  }
+
+  removePartOpacityContribution(id: string): void {
+    this._persistentPartOpacityContributions.delete(id)
+  }
+
+  private _addPartOpacityToFrame(contribution: PartOpacityContribution): void {
+    const values = this._partOpacityFrame.get(contribution.partId) ?? []
+    const existingIndex = values.findIndex(value => value.id === contribution.id)
+    if (existingIndex >= 0) values[existingIndex] = contribution
+    else values.push(contribution)
+    this._partOpacityFrame.set(contribution.partId, values)
   }
 
   // ── Legacy per-frame submission (for backward compat during migration) ──
@@ -192,12 +226,16 @@ export class ParameterMixer {
 
   resetFrame(now = performance.now()): void {
     this._frameValues.clear()
+    this._partOpacityFrame.clear()
     for (const [id, contribution] of this._persistentContributions) {
       if (contribution.expiresAt !== undefined && contribution.expiresAt <= now) {
         this._persistentContributions.delete(id)
         continue
       }
       this._addToFrame(contribution)
+    }
+    for (const contribution of this._persistentPartOpacityContributions.values()) {
+      this._addPartOpacityToFrame(contribution)
     }
   }
 
@@ -208,17 +246,29 @@ export class ParameterMixer {
     this._resolved = {}
 
     for (const [paramId, values] of this._frameValues.entries()) {
-      if (values.length === 1) {
-        this._resolved[paramId] = values[0].value
-      } else {
-        this._resolved[paramId] = this._blend(paramId, values)
-      }
+      this._resolved[paramId] = this._blend(paramId, values)
     }
+    this.resolvePartOpacities()
 
     return { ...this._resolved }
   }
 
-  private _blend(_paramId: string, values: ParameterValue[]): number {
+  resolvePartOpacities(): Record<string, number> {
+    this._resolvedPartOpacities = {}
+    for (const [partId, values] of this._partOpacityFrame) {
+      const ordered = [...values].sort((a, b) => a.priority - b.priority)
+      let resolved = 1
+      for (const value of ordered) {
+        const weight = Math.max(0, Math.min(1, value.weight ?? 1))
+        const opacity = Math.max(0, Math.min(1, value.opacity))
+        resolved += (opacity - resolved) * weight
+      }
+      this._resolvedPartOpacities[partId] = resolved
+    }
+    return { ...this._resolvedPartOpacities }
+  }
+
+  private _blend(paramId: string, values: ParameterValue[]): number {
     // Rule 1: Absolute blink override — when eyes are closing/closed, blink wins.
     const blinkValues = values.filter(v => v.source === 'blink')
     if (blinkValues.length > 0) {
@@ -227,6 +277,25 @@ export class ParameterMixer {
       }
     }
 
+    // Resolve from low to high priority. A partial high layer fades from the
+    // already-resolved lower layer; a full-weight override is exclusive.
+    {
+      const ordered = [...values].sort((a, b) => a.priority - b.priority)
+      let result = this._baseline(paramId)
+      for (const contribution of ordered) {
+        const weight = Math.max(0, Math.min(1, contribution.weight))
+        if (contribution.mode === 'override') {
+          result += (contribution.value - result) * weight
+        } else if (contribution.mode === 'add') {
+          result += contribution.value * weight
+        } else {
+          result *= 1 + (contribution.value - 1) * weight
+        }
+      }
+      return result
+    }
+
+    /* Legacy unweighted arbitration retained only as migration reference.
     const overrides = values.filter(v => v.mode === 'override')
     const additions = values.filter(v => v.mode === 'add')
     const multipliers = values.filter(v => v.mode === 'multiply')
@@ -259,6 +328,7 @@ export class ParameterMixer {
       result *= multiplier.value
     }
     return result
+    */
   }
 
   // ── Apply resolved values to adapter ─────────────────────────
@@ -268,8 +338,8 @@ export class ParameterMixer {
     for (const [paramId, value] of Object.entries(this._resolved)) {
       adapter.setParameter(paramId, value)
     }
-    for (const contribution of this._partOpacityContributions.values()) {
-      adapter.setPartOpacity(contribution.partId, contribution.opacity)
+    for (const [partId, opacity] of Object.entries(this._resolvedPartOpacities)) {
+      adapter.setPartOpacity(partId, opacity)
     }
   }
 
@@ -281,6 +351,10 @@ export class ParameterMixer {
 
   getAllResolved(): Record<string, number> {
     return { ...this._resolved }
+  }
+
+  getAllResolvedPartOpacities(): Record<string, number> {
+    return { ...this._resolvedPartOpacities }
   }
 
   debugFrame(): MixerDebugFrame {

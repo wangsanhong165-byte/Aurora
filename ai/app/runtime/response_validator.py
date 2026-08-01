@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from app.runtime.character_intent import BEHAVIORS, EMOTIONS
+from app.runtime.character_intent import BEHAVIORS, EMOTIONS, CharacterIntent
 
 
 @dataclass
@@ -37,6 +37,14 @@ class ResponseValidator:
                 "energy": self._clamp(raw.get("energy", 0.5)),
                 "intensity": self._clamp(raw.get("intensity", 0.5)),
             })
+            motion_plan = CharacterIntent._motion_plan(
+                raw.get("motionPlan", raw.get("motion_plan"))
+            )
+            item.pop("motion_plan", None)
+            if motion_plan is None:
+                item.pop("motionPlan", None)
+            else:
+                item["motionPlan"] = motion_plan
             normalized.append(item)
         if normalized:
             reply = " ".join(item["text"] for item in normalized)

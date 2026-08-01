@@ -2,7 +2,7 @@
   "alwaysOnTop": false,
   "voiceInputEnabled": true,
   "activeCharacterId": "monika",
-  "live2dModel": "ariu",
+  "live2dModel": "Design_genius_White",
   "windowMode": "window",
   "proactive": false,
   "proactiveIdleTime": 40,
@@ -11,5 +11,9 @@
   "live2dLipSync": true,
   "live2dHeadTracking": true,
   "live2dExpression": true,
-  "live2dIdle": true
+  "live2dIdle": true,
+  "live2dPerformanceProfiles": {},
+  "live2dActions": {
+    "hiyori_zh-Hans": []
+  }
 }
