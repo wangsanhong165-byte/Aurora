@@ -1,11 +1,81 @@
 from __future__ import annotations
 
+import os
+import json
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event, Lock
 from time import sleep
 
-from app.lifecycle.control import ControlPlane, workspace_endpoint
+from app.lifecycle.control import ControlPlane, control_record_payload, workspace_endpoint
+from app.lifecycle.process_identity import process_snapshot, snapshot_matches
+
+
+def test_process_snapshot_contains_identity_fields():
+    snapshot = process_snapshot(os.getpid())
+
+    assert snapshot is not None
+    assert snapshot["pid"] == os.getpid()
+    assert snapshot["create_time"] > 0
+    assert snapshot["executable"]
+    assert snapshot["command"]
+    assert snapshot["cwd"]
+
+
+def test_snapshot_matches_rejects_reused_pid_or_different_command():
+    expected = {
+        "pid": 10,
+        "create_time": 100.0,
+        "executable": "D:/conda/python.exe",
+        "command": ["python.exe", "-m", "app.lifecycle.supervisor", "--serve"],
+        "cwd": "C:/workspace/ai",
+    }
+
+    assert snapshot_matches(expected, dict(expected))
+    assert not snapshot_matches(expected, {**expected, "create_time": 101.0})
+    assert not snapshot_matches(expected, {
+        **expected,
+        "command": ["python.exe", "-m", "other"],
+    })
+
+
+def test_control_record_payload_preserves_process_identity():
+    snapshot = {
+        "pid": 10,
+        "create_time": 100.0,
+        "executable": "python.exe",
+        "command": ["python.exe", "-m", "app.lifecycle.supervisor", "--serve"],
+        "cwd": "C:/workspace/ai",
+    }
+
+    record = control_record_payload("pipe", "secret", snapshot)
+
+    assert record["endpoint"] == "pipe"
+    assert record["token"] == "secret"
+    assert record["pid"] == 10
+    assert record["process"] == snapshot
+
+
+def test_client_process_info_reads_a_local_process_without_control_record():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.lifecycle.client",
+            "process-info",
+            "--pid",
+            str(os.getpid()),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert json.loads(result.stdout)["pid"] == os.getpid()
 
 
 class FakeOrchestrator:

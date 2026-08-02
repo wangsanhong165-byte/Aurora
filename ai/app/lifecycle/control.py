@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from .protocol import SCHEMA_VERSION
 from .diagnostics import export_diagnostics
+from .process_identity import process_snapshot
 
 
 def workspace_id(root: Path) -> str:
@@ -28,6 +29,17 @@ def workspace_endpoint(root: Path) -> str:
 
 def control_record_path(root: Path) -> Path:
     return root / "data" / "runtime" / "lifecycle-control.json"
+
+
+def control_record_payload(endpoint: str, token: str, snapshot: dict) -> dict:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "endpoint": endpoint,
+        "family": "AF_PIPE" if sys.platform == "win32" else "AF_UNIX",
+        "token": token,
+        "pid": snapshot["pid"],
+        "process": snapshot,
+    }
 
 
 class ControlPlane:
@@ -129,14 +141,14 @@ class ControlServer:
             family="AF_PIPE" if sys.platform == "win32" else "AF_UNIX",
             authkey=self.token.encode("ascii"),
         )
+        snapshot = process_snapshot(os.getpid())
+        if snapshot is None:
+            raise RuntimeError("unable to inspect lifecycle supervisor process")
         temporary = record.with_suffix(".tmp")
-        temporary.write_text(json.dumps({
-            "schema_version": SCHEMA_VERSION,
-            "endpoint": self.endpoint,
-            "family": "AF_PIPE" if sys.platform == "win32" else "AF_UNIX",
-            "token": self.token,
-            "pid": os.getpid(),
-        }), encoding="utf-8")
+        temporary.write_text(
+            json.dumps(control_record_payload(self.endpoint, self.token, snapshot)),
+            encoding="utf-8",
+        )
         temporary.replace(record)
         try:
             while self.running:
