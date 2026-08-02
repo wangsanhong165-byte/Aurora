@@ -116,19 +116,6 @@ function controlTimeoutFor (command) {
   return 5_000
 }
 
-function classifyControlState ({
-  record,
-  statusOk,
-  processInfo = null,
-  identityMatches = false,
-}) {
-  if (!record) return { state: 'missing' }
-  if (statusOk) return { state: 'reusable' }
-  if (!processInfo) return { state: 'stale' }
-  if (!identityMatches) return { state: 'unverified' }
-  return { state: 'recoverable' }
-}
-
 function invokeClient (python, args, { quiet = false, timeoutMs } = {}) {
   const command = args[0] || 'status'
   const result = spawnSync(python, pythonArgs(python, ['-m', 'app.lifecycle.client', ...args]), {
@@ -157,197 +144,27 @@ function waitForControl (python, timeoutMs = 10000) {
   throw new Error('Lifecycle Supervisor did not open its control endpoint')
 }
 
-function readControlRecord (controlRecord = CONTROL_RECORD) {
-  if (!fs.existsSync(controlRecord)) return null
-  try {
-    return JSON.parse(fs.readFileSync(controlRecord, 'utf8'))
-  } catch (error) {
-    throw new Error(`control_record_invalid: ${error.message}`)
-  }
-}
-
-function parseJsonOutput (result) {
-  const lines = String(result?.stdout || '').trim().split(/\r?\n/).filter(Boolean)
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    try {
-      return JSON.parse(lines[index])
-    } catch (_) {}
-  }
-  return null
-}
-
-function inspectSupervisor (python, pid, invoke = invokeClient) {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const result = invoke(
-      python,
-      ['process-info', '--pid', String(pid)],
-      { quiet: true, timeoutMs: 1_500 },
-    )
-    if (result.status === 0) return parseJsonOutput(result)
-    if (attempt < 2) sleepSync(100)
-  }
-  return null
-}
-
-function probeControl (python, invoke = invokeClient) {
-  let result = null
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    result = invoke(python, ['status'], { quiet: true, timeoutMs: 1_500 })
-    if (result.status === 0) return result
-    if (attempt < 2) sleepSync(150)
-  }
-  return result
-}
-
-function normalizePathForComparison (value) {
-  try {
-    return path.resolve(String(value)).replaceAll('\\', '/').toLowerCase()
-  } catch (_) {
-    return String(value).replaceAll('\\', '/').toLowerCase()
-  }
-}
-
-function supervisorIdentityMatches (record, processInfo, python, root = ROOT) {
-  const expected = record?.process
-  if (!expected || !processInfo) return false
-  const selectedPythonIsLauncher = path.basename(python).toLowerCase() === 'py.exe'
-  const command = Array.isArray(processInfo.command) ? processInfo.command : []
-  const expectedCommand = Array.isArray(expected.command) ? expected.command : []
-  return (
-    Number(record.pid) === Number(expected.pid)
-    && Number(processInfo.pid) === Number(expected.pid)
-    && Math.abs(Number(expected.create_time) - Number(processInfo.create_time)) < 0.01
-    && normalizePathForComparison(expected.executable) === normalizePathForComparison(processInfo.executable)
-    && (selectedPythonIsLauncher || normalizePathForComparison(expected.executable) === normalizePathForComparison(python))
-    && JSON.stringify(expectedCommand) === JSON.stringify(command)
-    && command.includes('-m')
-    && command.includes('app.lifecycle.supervisor')
-    && command.includes('--serve')
-    && normalizePathForComparison(expected.cwd || root) === normalizePathForComparison(processInfo.cwd)
-  )
-}
-
-function quarantineControlRecord (controlRecord = CONTROL_RECORD) {
-  if (!fs.existsSync(controlRecord)) return null
-  const directory = path.dirname(controlRecord)
-  const prefix = path.join(directory, 'lifecycle-control.stale.')
-  let target = `${prefix}${Date.now()}.json`
-  let suffix = 1
-  while (fs.existsSync(target)) {
-    target = `${prefix}${Date.now()}.${suffix}.json`
-    suffix += 1
-  }
-  fs.renameSync(controlRecord, target)
-  return target
-}
-
-function sleepSync (milliseconds) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
-}
-
-function processIsAlive (pid) {
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (error) {
-    return error?.code === 'EPERM'
-  }
-}
-
-function withControlLock (controlRecord, callback, timeoutMs = 15_000) {
-  const lockPath = `${controlRecord}.lock`
-  fs.mkdirSync(path.dirname(lockPath), { recursive: true })
-  const deadline = Date.now() + timeoutMs
-  let handle = null
-  while (!handle && Date.now() < deadline) {
-    try {
-      handle = fs.openSync(lockPath, 'wx')
-      fs.writeSync(handle, String(process.pid))
-    } catch (error) {
-      if (error?.code !== 'EEXIST') throw error
-      let ownerPid = null
-      try { ownerPid = Number(fs.readFileSync(lockPath, 'utf8')) } catch (_) {}
-      if (Number.isInteger(ownerPid) && ownerPid > 0 && !processIsAlive(ownerPid)) {
-        try { fs.unlinkSync(lockPath) } catch (unlinkError) {
-          if (unlinkError?.code !== 'ENOENT') throw unlinkError
-        }
-      } else {
-        sleepSync(100)
+function ensureSupervisor (python) {
+  if (fs.existsSync(CONTROL_RECORD)) {
+    const result = invokeClient(python, ['status'], { quiet: true, timeoutMs: 1_500 })
+    if (result.status === 0) return
+    const record = JSON.parse(fs.readFileSync(CONTROL_RECORD, 'utf8'))
+    if (Number.isInteger(record.pid)) {
+      let alive = false
+      try {
+        process.kill(record.pid, 0)
+        alive = true
+      } catch (error) {
+        alive = error?.code === 'EPERM'
+      }
+      if (alive) {
+        throw new Error(
+          `Lifecycle Supervisor (PID ${record.pid}) is running but its control endpoint is unavailable. ` +
+          'Close the existing SoulLink process or run this command from the same Windows session.',
+        )
       }
     }
   }
-  if (handle === null) {
-    throw new Error('control_start_in_progress: another lifecycle command is acquiring the control plane')
-  }
-  try {
-    return callback()
-  } finally {
-    fs.closeSync(handle)
-    try { fs.unlinkSync(lockPath) } catch (error) {
-      if (error?.code !== 'ENOENT') throw error
-    }
-  }
-}
-
-function startReplacement ({
-  controlRecord,
-  spawnSupervisor,
-  wait,
-  result,
-}) {
-  const staleRecord = quarantineControlRecord(controlRecord)
-  try {
-    spawnSupervisor()
-    wait()
-    return result
-  } catch (error) {
-    if (staleRecord && !fs.existsSync(controlRecord)) {
-      fs.renameSync(staleRecord, controlRecord)
-    }
-    throw error
-  }
-}
-
-function terminateSupervisor (pid) {
-  process.kill(pid)
-}
-
-function waitForProcessExit (pid, timeoutMs = 5_000) {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    try {
-      process.kill(pid, 0)
-    } catch (error) {
-      if (error?.code === 'ESRCH') return true
-      if (error?.code !== 'EPERM') throw error
-    }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
-  }
-  return false
-}
-
-function recoverControl ({
-  record,
-  processInfo,
-  identityMatches,
-  terminate = terminateSupervisor,
-  waitForExit = waitForProcessExit,
-} = {}) {
-  if (!record || !processInfo || !identityMatches) {
-    throw new Error('control_owner_unverified: refusing to recover an unverified process')
-  }
-  const pid = Number(record.pid)
-  if (!Number.isInteger(pid) || pid <= 0) {
-    throw new Error('control_owner_unverified: control record has no valid Supervisor PID')
-  }
-  terminate(pid)
-  if (!waitForExit(pid)) {
-    throw new Error(`control_recovery_timeout: Supervisor PID ${pid} did not exit`)
-  }
-  return { state: 'recovered', pid }
-}
-
-function startSupervisor (python) {
   const logDir = path.join(ROOT, 'logs')
   fs.mkdirSync(logDir, { recursive: true })
   const output = fs.openSync(path.join(logDir, 'supervisor-bootstrap.log'), 'a')
@@ -359,72 +176,7 @@ function startSupervisor (python) {
     env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
   })
   child.unref()
-}
-
-function ensureSupervisor (python, {
-  controlRecord = CONTROL_RECORD,
-  allowRecovery = false,
-  invoke = invokeClient,
-  inspect = inspectSupervisor,
-  spawnSupervisor = startSupervisor,
-  wait = waitForControl,
-  terminate = terminateSupervisor,
-  waitForExit = waitForProcessExit,
-} = {}) {
-  return withControlLock(controlRecord, () => {
-    const record = readControlRecord(controlRecord)
-    if (record) {
-      const result = probeControl(python, invoke)
-      if (result.status === 0) return { state: 'reusable' }
-
-      const pid = Number(record.pid)
-      const processInfo = Number.isInteger(pid) ? inspect(python, pid, invoke) : null
-      const identityMatches = supervisorIdentityMatches(record, processInfo, python)
-      const classification = classifyControlState({
-        record,
-        statusOk: false,
-        processInfo,
-        identityMatches,
-      })
-
-      if (classification.state === 'stale') {
-        return startReplacement({
-          controlRecord,
-          spawnSupervisor: () => spawnSupervisor(python),
-          wait: () => wait(python),
-          result: classification,
-        })
-      }
-      if (classification.state === 'unverified') {
-        throw new Error(
-          `control_owner_unverified: lifecycle PID ${record.pid} is alive but its identity does not match the recorded Supervisor`,
-        )
-      }
-      if (allowRecovery) {
-        const recovery = recoverControl({
-          record,
-          processInfo,
-          identityMatches,
-          terminate,
-          waitForExit,
-        })
-        return startReplacement({
-          controlRecord,
-          spawnSupervisor: () => spawnSupervisor(python),
-          wait: () => wait(python),
-          result: recovery,
-        })
-      }
-      throw new Error(
-        `control_endpoint_unavailable: Lifecycle Supervisor (PID ${record.pid}) is alive but its control endpoint is unavailable. ` +
-        'Use --recover-control only after confirming the process belongs to this workspace.',
-      )
-    }
-
-    spawnSupervisor(python)
-    wait(python)
-    return { state: 'started' }
-  })
+  waitForControl(python)
 }
 
 function doctor (python) {
@@ -460,7 +212,7 @@ async function main (argv = process.argv.slice(2)) {
   if (!python) throw new Error('Python was not found. Run soulctl doctor.')
 
   if (['electron', 'web', 'dev'].includes(command) && !hot) ensureFrontendBuild()
-  ensureSupervisor(python, { allowRecovery: argv.includes('--recover-control') })
+  await ensureSupervisor(python)
 
   if (command === 'logs') {
     console.log(path.join(ROOT, 'logs', 'launches'))
@@ -520,12 +272,9 @@ if (require.main === module) {
 }
 
 module.exports = {
-  classifyControlState,
   controlTimeoutFor,
   computeBuildFingerprint,
   ensureFrontendBuild,
-  ensureSupervisor,
-  recoverControl,
   main,
   readRuntimeConfig,
   selectPython,
