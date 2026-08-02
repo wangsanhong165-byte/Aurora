@@ -227,6 +227,45 @@ function quarantineControlRecord (controlRecord = CONTROL_RECORD) {
   return target
 }
 
+function terminateSupervisor (pid) {
+  process.kill(pid)
+}
+
+function waitForProcessExit (pid, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0)
+    } catch (error) {
+      if (error?.code === 'ESRCH') return true
+      if (error?.code !== 'EPERM') throw error
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
+  }
+  return false
+}
+
+function recoverControl ({
+  record,
+  processInfo,
+  identityMatches,
+  terminate = terminateSupervisor,
+  waitForExit = waitForProcessExit,
+} = {}) {
+  if (!record || !processInfo || !identityMatches) {
+    throw new Error('control_owner_unverified: refusing to recover an unverified process')
+  }
+  const pid = Number(record.pid)
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw new Error('control_owner_unverified: control record has no valid Supervisor PID')
+  }
+  terminate(pid)
+  if (!waitForExit(pid)) {
+    throw new Error(`control_recovery_timeout: Supervisor PID ${pid} did not exit`)
+  }
+  return { state: 'recovered', pid }
+}
+
 function startSupervisor (python) {
   const logDir = path.join(ROOT, 'logs')
   fs.mkdirSync(logDir, { recursive: true })
@@ -243,10 +282,13 @@ function startSupervisor (python) {
 
 function ensureSupervisor (python, {
   controlRecord = CONTROL_RECORD,
+  allowRecovery = false,
   invoke = invokeClient,
   inspect = inspectSupervisor,
   spawnSupervisor = startSupervisor,
   wait = waitForControl,
+  terminate = terminateSupervisor,
+  waitForExit = waitForProcessExit,
 } = {}) {
   const record = readControlRecord(controlRecord)
   if (record) {
@@ -273,6 +315,19 @@ function ensureSupervisor (python, {
       throw new Error(
         `control_owner_unverified: lifecycle PID ${record.pid} is alive but its identity does not match the recorded Supervisor`,
       )
+    }
+    if (allowRecovery) {
+      const recovery = recoverControl({
+        record,
+        processInfo,
+        identityMatches,
+        terminate,
+        waitForExit,
+      })
+      quarantineControlRecord(controlRecord)
+      spawnSupervisor(python)
+      wait(python)
+      return recovery
     }
     throw new Error(
       `control_endpoint_unavailable: Lifecycle Supervisor (PID ${record.pid}) is alive but its control endpoint is unavailable. ` +
@@ -318,7 +373,7 @@ async function main (argv = process.argv.slice(2)) {
   if (!python) throw new Error('Python was not found. Run soulctl doctor.')
 
   if (['electron', 'web', 'dev'].includes(command) && !hot) ensureFrontendBuild()
-  await ensureSupervisor(python)
+  ensureSupervisor(python, { allowRecovery: argv.includes('--recover-control') })
 
   if (command === 'logs') {
     console.log(path.join(ROOT, 'logs', 'launches'))
@@ -383,6 +438,7 @@ module.exports = {
   computeBuildFingerprint,
   ensureFrontendBuild,
   ensureSupervisor,
+  recoverControl,
   main,
   readRuntimeConfig,
   selectPython,

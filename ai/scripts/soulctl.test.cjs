@@ -4,7 +4,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 
-const { classifyControlState, ensureSupervisor } = require('./soulctl.cjs')
+const { classifyControlState, ensureSupervisor, recoverControl } = require('./soulctl.cjs')
 
 test('healthy endpoint is reusable', () => {
   assert.deepEqual(
@@ -96,6 +96,65 @@ test('ensureSupervisor quarantines a record for an exited process', () => {
   })
 
   assert.equal(spawned, 1)
+  assert.equal(fs.existsSync(controlRecord), false)
+  assert.equal(
+    fs.readdirSync(directory).some(name => name.startsWith('lifecycle-control.stale.')),
+    true,
+  )
+  fs.rmSync(directory, { recursive: true, force: true })
+})
+
+test('recover-control terminates only a verified supervisor', () => {
+  const calls = []
+  const result = recoverControl({
+    record: { pid: 10, process: { pid: 10 } },
+    processInfo: { pid: 10 },
+    identityMatches: true,
+    terminate: pid => calls.push(pid),
+    waitForExit: () => true,
+  })
+
+  assert.equal(result.state, 'recovered')
+  assert.deepEqual(calls, [10])
+})
+
+test('recover-control refuses an unverified process', () => {
+  assert.throws(
+    () => recoverControl({
+      record: { pid: 10 },
+      processInfo: { pid: 10 },
+      identityMatches: false,
+      terminate: () => { throw new Error('must not terminate') },
+    }),
+    /control_owner_unverified/,
+  )
+})
+
+test('ensureSupervisor recovers a verified control owner only when requested', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soulctl-test-'))
+  const controlRecord = path.join(directory, 'lifecycle-control.json')
+  const snapshot = {
+    pid: 10,
+    create_time: 100,
+    executable: 'D:/conda/python.exe',
+    command: ['python.exe', '-m', 'app.lifecycle.supervisor', '--serve'],
+    cwd: process.cwd(),
+  }
+  fs.writeFileSync(controlRecord, JSON.stringify({ pid: 10, process: snapshot }))
+  const calls = []
+
+  ensureSupervisor('D:/conda/python.exe', {
+    controlRecord,
+    allowRecovery: true,
+    invoke: () => ({ status: 1, stdout: '' }),
+    inspect: () => snapshot,
+    terminate: pid => calls.push(['terminate', pid]),
+    waitForExit: () => true,
+    spawnSupervisor: () => calls.push(['spawn']),
+    wait: () => calls.push(['wait']),
+  })
+
+  assert.deepEqual(calls, [['terminate', 10], ['spawn'], ['wait']])
   assert.equal(fs.existsSync(controlRecord), false)
   assert.equal(
     fs.readdirSync(directory).some(name => name.startsWith('lifecycle-control.stale.')),
