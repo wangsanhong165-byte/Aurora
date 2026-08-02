@@ -6,6 +6,7 @@ import { CubismRenderer_WebGL } from './framework/rendering/cubismrenderer_webgl
 import { CubismMatrix44 } from './framework/math/cubismmatrix44'
 import { CubismModelMatrix } from './framework/math/cubismmodelmatrix'
 import { CubismModel } from './framework/model/cubismmodel'
+import { computeDrawableBounds } from './viewport'
 
 export interface FrameworkRendererState {
   gl: WebGLRenderingContext
@@ -18,6 +19,7 @@ let _rs: FrameworkRendererState | null = null
 // ── Cached per-model projection resources ──
 let _cachedModelW = -1
 let _cachedModelH = -1
+let _cachedModel: CubismModel | null = null
 let _modelMatrix: CubismModelMatrix | null = null
 let _baseProjection: CubismMatrix44 | null = null   // base projection WITHOUT viewport transform
 let _projection: CubismMatrix44 | null = null       // final projection WITH viewport (rebuilt each frame)
@@ -136,16 +138,43 @@ export async function loadTextures(
 
 // ── Projection matrix (cached per model + canvas size) ──
 
-function _buildBaseProjection(modelW: number, modelH: number): void {
+function _buildBaseProjection(model: CubismModel): void {
   if (!_rs) return
 
+  const modelW = model.getCanvasWidth()
+  const modelH = model.getCanvasHeight()
+
   // Reuse cached base projection when model + canvas haven't changed
-  if (modelW === _cachedModelW && modelH === _cachedModelH && _modelMatrix && _baseProjection) {
+  if (model === _cachedModel && modelW === _cachedModelW && modelH === _cachedModelH && _modelMatrix && _baseProjection) {
     return
   }
 
+  let bounds = null
+  try {
+    const drawables = []
+    for (let index = 0; index < model.getDrawableCount(); index += 1) {
+      if (typeof model.getDrawableDynamicFlagIsVisible === 'function'
+        && !model.getDrawableDynamicFlagIsVisible(index)) continue
+      if (typeof model.getDrawableOpacity === 'function'
+        && model.getDrawableOpacity(index) <= 0) continue
+      drawables.push(model.getDrawableVertices(index))
+    }
+    const candidate = computeDrawableBounds(drawables)
+    // Ignore mask/off-canvas geometry that would move the artwork outside
+    // the logical model canvas.
+    if (candidate
+      && Math.abs(candidate.centerX) <= modelW
+      && Math.abs(candidate.centerY) <= modelH) {
+      bounds = candidate
+    }
+  } catch (error) {
+    // A malformed drawable must not stop the animation loop. The logical
+    // canvas center remains a safe fallback for that asset.
+    console.warn('[Live2D] visual bounds unavailable; using canvas center', error)
+  }
   _cachedModelW = modelW
   _cachedModelH = modelH
+  _cachedModel = model
 
   const cw = _rs.canvasWidth
   const ch = _rs.canvasHeight
@@ -162,14 +191,23 @@ function _buildBaseProjection(modelW: number, modelH: number): void {
     _baseProjection.scale(ch / cw, 1)
   }
 
+  // Start with the framework's logical-canvas center, then compensate for
+  // asymmetric transparent margins or off-center layouts. `centerX/Y` takes
+  // the desired position of the whole model, so passing the drawable center
+  // directly would move the artwork in the wrong direction.
   _modelMatrix.centerX(0)
   _modelMatrix.centerY(0)
+  if (bounds) {
+    _modelMatrix.translateX(-bounds.centerX * _modelMatrix.getScaleX())
+    _modelMatrix.translateY(-bounds.centerY * _modelMatrix.getScaleY())
+  }
   _baseProjection.multiplyByMatrix(_modelMatrix)
 }
 
 /** Invalidate projection cache so next render picks up viewport changes */
 function _invalidateProjection(): void {
   _cachedModelW = -1
+  _cachedModel = null
 }
 
 // ── Main render ──
@@ -216,7 +254,7 @@ export function render(handle: CubismModelHandle, renderer: CubismRenderer_WebGL
   gl.clear(gl.COLOR_BUFFER_BIT | gl.STENCIL_BUFFER_BIT)
 
   // Build / reuse base projection (cached by model dimensions)
-  _buildBaseProjection(model.getCanvasWidth(), model.getCanvasHeight())
+  _buildBaseProjection(model)
 
   // ALWAYS build final projection from base + viewport (not cached — viewport changes per frame)
   _projection = new CubismMatrix44()
@@ -279,4 +317,5 @@ export function destroyRenderer(): void {
   _baseProjection = null
   _projection = null
   _cachedModelW = -1
+  _cachedModel = null
 }

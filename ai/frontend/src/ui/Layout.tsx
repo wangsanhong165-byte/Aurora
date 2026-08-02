@@ -1,3 +1,4 @@
+import { ChevronRight } from 'lucide-react'
 import { useEffect, useReducer, useRef, type PointerEvent, type ReactNode } from 'react'
 
 import {
@@ -46,6 +47,7 @@ export function Layout({
   const [drawer, dispatch] = useReducer(reduceDrawerState, undefined, initialDrawerState)
   const stopResizeRef = useRef<(() => void) | null>(null)
   const resizeCoalescerRef = useRef<FrameCoalescer<number> | null>(null)
+
   if (!resizeCoalescerRef.current) {
     resizeCoalescerRef.current = createFrameCoalescer(
       width => dispatch({ type: 'resize', width }),
@@ -138,7 +140,7 @@ export function Layout({
             aria-label="收起侧栏"
             title="收起侧栏"
           >
-            <span aria-hidden="true">›</span>
+            <ChevronRight size={16} strokeWidth={1.75} aria-hidden="true" />
           </button>
           <div
             className="drawer-resize-handle"

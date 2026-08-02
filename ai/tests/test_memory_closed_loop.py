@@ -139,3 +139,24 @@ def test_new_legacy_facts_are_character_scoped(tmp_path):
     beta = store.search_facts("秘密", character_id="beta")
     assert {item["fact"] for item in alpha} == {"只属于 Alpha 的秘密"}
     assert {item["fact"] for item in beta} == {"只属于 Beta 的秘密"}
+
+
+def test_legacy_backfill_does_not_restore_edited_or_forgotten_memory(tmp_path):
+    store = MemoryStore(base_dir=tmp_path)
+    original = "用户询问了'赖暴力模型'的问题"
+    assert store.add_fact(original)
+
+    store.backfill_legacy_facts()
+    memory_id = store.list_memories()[0]["id"]
+    updated = store.update_memory(memory_id, content="用户已经修改过的记忆")
+    assert updated["content"] == "用户已经修改过的记忆"
+
+    # Simulate the startup migration that runs again after a restart.
+    store.backfill_legacy_facts()
+    assert [item["content"] for item in store.list_memories()] == [
+        "用户已经修改过的记忆"
+    ]
+
+    assert store.forget_memory(memory_id)
+    store.backfill_legacy_facts()
+    assert store.list_memories() == []

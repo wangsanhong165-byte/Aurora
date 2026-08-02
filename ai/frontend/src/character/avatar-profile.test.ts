@@ -7,6 +7,7 @@ import {
 } from './AvatarCapabilityProfile.ts'
 import { AvatarParameterResolver } from './AvatarParameterResolver.ts'
 import { inspectIdleMotionChannels } from './live2d/IdleMotionInspection.ts'
+import { computeDrawableBounds } from './live2d/viewport.ts'
 
 function profile(
   overrides: Partial<AvatarCapabilityProfile> = {},
@@ -100,4 +101,19 @@ test('model viewport framing is bounded and defaults to a centered view', () => 
     y: -1.5,
     scale: 0.35,
   })
+})
+
+test('model framing centers drawable artwork instead of transparent canvas margins', () => {
+  assert.deepEqual(computeDrawableBounds([
+    [-8, -2, -4, -2, -4, 6, -8, 6],
+    [2, -1, 6, -1, 6, 3, 2, 3],
+  ]), {
+    left: -8,
+    right: 6,
+    top: -2,
+    bottom: 6,
+    centerX: -1,
+    centerY: 2,
+  })
+  assert.equal(computeDrawableBounds([]), null)
 })

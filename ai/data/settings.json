@@ -14,6 +14,35 @@
   "live2dIdle": true,
   "live2dPerformanceProfiles": {},
   "live2dActions": {
-    "hiyori_zh-Hans": []
+    "hiyori_zh-Hans": [],
+    "Design_genius_White": [
+      {
+        "version": 1,
+        "id": "custom_action_1",
+        "name": "自定义动作 1",
+        "durationMs": 1200,
+        "steps": [
+          {
+            "atMs": 0,
+            "durationMs": 800,
+            "primitive": "nod",
+            "intensity": 0.55
+          },
+          {
+            "atMs": 300,
+            "durationMs": 600,
+            "primitive": "tilt_left",
+            "intensity": 0.45
+          },
+          {
+            "atMs": 600,
+            "durationMs": 600,
+            "primitive": "tilt_right",
+            "intensity": 0.45
+          }
+        ],
+        "recoveryMs": 300
+      }
+    ]
   }
 }

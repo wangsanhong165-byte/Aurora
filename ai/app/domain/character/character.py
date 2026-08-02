@@ -23,6 +23,11 @@ class Character:
         self.mood = MoodTrend()
         self.goals = GoalTracker()
         self.preferences = PreferenceTracker()
+        self._recent_focus: list[str] = []
+        self._recent_changes: list[str] = []
+        self._last_interaction: str = ""
+        self._last_interaction_at: float = 0.0
+        self._interaction_count: int = 0
         self._raw_card = card
 
     def to_dict(self) -> dict:
@@ -37,6 +42,11 @@ class Character:
             "mood": self.mood.to_dict(),
             "goals": self.goals.to_dict(),
             "preferences": self.preferences.to_dict(),
+            "recent_focus": list(self._recent_focus),
+            "recent_changes": list(self._recent_changes),
+            "last_interaction": self._last_interaction,
+            "last_interaction_at": self._last_interaction_at,
+            "interaction_count": self._interaction_count,
         }
 
     def dynamic_state(self) -> dict:
@@ -92,6 +102,12 @@ class Character:
         emotion = state.get("emotion", {})
         self.emotion.current = str(emotion.get("current", "neutral"))
         self.emotion._intensity = float(emotion.get("intensity", 0.5))
+
+        self._recent_focus = [str(item) for item in state.get("recent_focus", []) if str(item).strip()][:6]
+        self._recent_changes = [str(item) for item in state.get("recent_changes", []) if str(item).strip()][:6]
+        self._last_interaction = str(state.get("last_interaction", ""))
+        self._last_interaction_at = float(state.get("last_interaction_at", 0.0) or 0.0)
+        self._interaction_count = int(state.get("interaction_count", 0) or 0)
 
     @property
     def raw_card(self) -> dict:

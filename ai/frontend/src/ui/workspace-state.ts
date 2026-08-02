@@ -3,6 +3,7 @@ export type DrawerSection =
   | 'character'
   | 'memory'
   | 'capabilities'
+  | 'live2d'
   | 'settings'
   | 'developer'
 
@@ -26,6 +27,7 @@ const DRAWER_SECTIONS: DrawerSection[] = [
   'character',
   'memory',
   'capabilities',
+  'live2d',
   'settings',
   'developer',
 ]

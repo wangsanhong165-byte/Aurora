@@ -1,4 +1,4 @@
-import { Brain, History, MessageSquareText, Settings, Sparkles, Wrench } from 'lucide-react'
+import { Brain, History, MessageSquareText, Settings, SlidersHorizontal, Sparkles, Wrench } from 'lucide-react'
 
 import type { RecorderState } from '../audio/recorder'
 import { CharacterView } from '../character/CharacterView'
@@ -9,7 +9,7 @@ import { DeveloperWorkspace } from './DeveloperWorkspace'
 import { DrawerPanel } from './DrawerPanel'
 import { InputBar } from './InputBar'
 import { Layout, type DrawerItem } from './Layout'
-import { SettingsPanel } from './SettingsPanel'
+import { Live2DWorkbench, SettingsPanel } from './SettingsPanel'
 import { StageSubtitle } from './StageSubtitle'
 import {
   CapabilityPanel,
@@ -23,6 +23,7 @@ const DRAWER_ITEMS: DrawerItem[] = [
   { id: 'character', label: '角色', icon: <MessageSquareText /> },
   { id: 'memory', label: '记忆', icon: <Brain /> },
   { id: 'capabilities', label: '能力', icon: <Sparkles /> },
+  { id: 'live2d', label: 'Live2D', icon: <SlidersHorizontal /> },
   { id: 'settings', label: '设置', icon: <Settings /> },
   { id: 'developer', label: '开发者', icon: <Wrench />, placement: 'bottom' },
 ]
@@ -77,6 +78,16 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
           accessoryState={props.accessoryState}
           onAccessoryToggle={props.onAccessoryToggle}
         />
+      )
+    }
+    if (section === 'live2d') {
+      return (
+        <DrawerPanel title="Live2D">
+          <Live2DWorkbench
+            settings={props.settings}
+            onSettingChange={props.onSettingChange}
+          />
+        </DrawerPanel>
       )
     }
     if (section === 'developer') {

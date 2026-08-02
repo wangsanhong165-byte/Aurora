@@ -33,6 +33,17 @@ def test_character_self_view_is_natural_language_projection():
     assert "reasoning" not in str(view)
 
 
+def test_character_self_view_does_not_invent_recent_focus_or_changes():
+    view = build_character_self_view({
+        "emotion": {"current": "neutral"},
+        "mood": {"current": "neutral", "history": []},
+    })
+
+    assert view["recentFocus"] == []
+    assert view["recentChanges"] == []
+    assert view["interactionCount"] == 0
+
+
 def test_memory_view_filters_and_hides_technical_fields():
     memories = [
         {

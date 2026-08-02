@@ -427,15 +427,32 @@ class MemoryStore:
             return {}
 
     def backfill_legacy_facts(self) -> int:
-        """Copy legacy facts into the lifecycle table without deleting originals."""
-        from app.memory.lifecycle import store_candidates
+        """Copy legacy facts without resurrecting edited or forgotten memories."""
+        from app.memory.lifecycle import normalize_candidate
+
         before = len(self.list_memories(active_only=False, limit=100000))
+        conn = self._get_conn()
         for fact in self.get_all_facts():
-            store_candidates(self, [{
+            candidate = normalize_candidate({
                 "fact": fact["fact"],
                 "importance": fact["importance"],
                 "confidence": 0.7,
-            }], character_id=fact.get("character_id", ""))
+            })
+            if candidate is None:
+                continue
+
+            # The legacy fact can remain after the lifecycle memory was edited
+            # or forgotten. Stable key is the migration identity, so startup
+            # must not recreate that memory from the old table.
+            existing = conn.execute(
+                "SELECT id FROM memories WHERE character_id = ? AND stable_key = ? LIMIT 1",
+                (fact.get("character_id", ""), candidate["stable_key"]),
+            ).fetchone()
+            if existing:
+                continue
+            self.upsert_memory(
+                character_id=fact.get("character_id", ""), **candidate
+            )
         after = len(self.list_memories(active_only=False, limit=100000))
         return max(0, after - before)
 

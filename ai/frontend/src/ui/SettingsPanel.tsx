@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Info, Palette, Settings2, type LucideIcon } from 'lucide-react'
 import { theme } from '../core/theme'
 import type { AppSettings } from '../core/store'
 import { electronWindowBridge } from '../session/electron-window-bridge'
@@ -57,31 +58,22 @@ const CALIBRATION_CONTROLS = [
   { logical: 'mouth.form', label: '嘴型变化', min: -1, max: 1, step: .05 },
 ] as const
 
-type TabId = 'general' | 'animation' | 'appearance' | 'about'
+type TabId = 'general' | 'appearance' | 'about'
 
 interface TabDef {
   id: TabId
   label: string
-  icon: string
+  icon: LucideIcon
 }
 
 const TABS: TabDef[] = [
-  { id: 'general', label: 'General', icon: '⚙' },
-  { id: 'animation', label: 'Animation', icon: '✦' },
-  { id: 'appearance', label: 'Appearance', icon: '◈' },
-  { id: 'about', label: 'About', icon: 'ℹ' },
+  { id: 'general', label: 'General', icon: Settings2 },
+  { id: 'appearance', label: 'Appearance', icon: Palette },
+  { id: 'about', label: 'About', icon: Info },
 ]
-
-const TAB_ICONS: Record<TabId, string> = {
-  general: '⚙',
-  animation: '✦',
-  appearance: '◈',
-  about: 'ⓘ',
-}
 
 const TAB_LABELS: Record<TabId, string> = {
   general: '常规',
-  animation: 'Live2D',
   appearance: '装扮',
   about: '关于',
 }
@@ -118,30 +110,31 @@ export function SettingsPanel({
         <div style={styles.body}>
           {/* Tab sidebar */}
           <div style={styles.tabBar}>
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                style={{
-                  ...styles.tabBtn,
-                  backgroundColor: activeTab === tab.id ? theme.colors.bg.surface : 'transparent',
-                  borderLeft: activeTab === tab.id ? `2px solid ${theme.colors.accent}` : '2px solid transparent',
-                }}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <span style={styles.tabIcon}>{TAB_ICONS[tab.id]}</span>
-                <span style={styles.tabLabel}>{TAB_LABELS[tab.id]}</span>
-              </button>
-            ))}
+            {TABS.map((tab) => {
+              const Icon = tab.icon
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  aria-label={TAB_LABELS[tab.id]}
+                  title={TAB_LABELS[tab.id]}
+                  style={{
+                    ...styles.tabBtn,
+                    backgroundColor: activeTab === tab.id ? theme.colors.bg.surface : 'transparent',
+                    borderLeft: activeTab === tab.id ? `2px solid ${theme.colors.accent}` : '2px solid transparent',
+                  }}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  <Icon style={styles.tabIcon} aria-hidden="true" />
+                </button>
+              )
+            })}
           </div>
 
           {/* Tab content */}
           <div style={styles.content}>
             {activeTab === 'general' && (
               <GeneralTab settings={settings} onSettingChange={onSettingChange} />
-            )}
-            {activeTab === 'animation' && (
-              <AnimationTab settings={settings} onSettingChange={onSettingChange} />
             )}
             {activeTab === 'appearance' && (
               <AppearanceTab
@@ -161,6 +154,17 @@ export function SettingsPanel({
   return (
     <div style={styles.overlay} onClick={handleOverlayClick}>
       {panel}
+    </div>
+  )
+}
+
+export function Live2DWorkbench({
+  settings,
+  onSettingChange,
+}: Pick<SettingsPanelProps, 'settings' | 'onSettingChange'>) {
+  return (
+    <div style={{ ...styles.content, height: '100%', boxSizing: 'border-box' }}>
+      <AnimationTab settings={settings} onSettingChange={onSettingChange} />
     </div>
   )
 }
@@ -705,20 +709,17 @@ const styles: Record<string, React.CSSProperties> = {
 
   // ── Tab bar (left sidebar) ──
   tabBar: {
-    width: 84, flexShrink: 0, display: 'flex', flexDirection: 'column',
+    width: 52, flexShrink: 0, display: 'flex', flexDirection: 'column',
     padding: `${theme.spacing.sm}px 0`, gap: 2,
     borderRight: `1px solid ${theme.colors.border}`,
     backgroundColor: theme.colors.bg.surface,
   },
   tabBtn: {
-    display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 4,
-    padding: '8px 6px', border: 'none', cursor: 'pointer',
-    color: theme.colors.text.secondary, fontSize: theme.fontSize.sm,
-    textAlign: 'left' as const, transition: 'background-color 0.1s',
-    width: '100%',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: '100%', minHeight: 40, padding: '8px 0', border: 'none', cursor: 'pointer',
+    color: theme.colors.text.secondary, transition: 'background-color 0.1s',
   },
-  tabIcon: { fontSize: '0.95rem', flexShrink: 0, width: 20, textAlign: 'center' as const },
-  tabLabel: { whiteSpace: 'nowrap' as const, fontSize: theme.fontSize.sm },
+  tabIcon: { width: 17, height: 17, flexShrink: 0 },
 
   // ── Content area ──
   content: {

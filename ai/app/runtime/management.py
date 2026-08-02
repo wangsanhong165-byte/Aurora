@@ -10,8 +10,13 @@ typed Transport handler and the HTTP management endpoints.
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
+import os
+import tempfile
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,6 +42,7 @@ class RuntimeManager:
         self._histories_dir = self._base_dir / "data" / "memory" / "histories"
         self._history_index: dict[str, dict] = {}
         self._current_history_uid: str = ""
+        self._history_lock = threading.RLock()
 
         # Pinned memories
         self._pinned_cache: str = ""
@@ -48,16 +54,26 @@ class RuntimeManager:
 
     def _ensure_dirs(self) -> None:
         """Ensure data directories for histories exist."""
-        self._histories_dir.mkdir(parents=True, exist_ok=True)
-        index_path = self._histories_dir / "index.json"
-        if index_path.exists():
-            try:
-                self._history_index = json.loads(index_path.read_text("utf-8"))
-            except Exception:
+        with self._history_lock:
+            self._histories_dir.mkdir(parents=True, exist_ok=True)
+            index_path = self._histories_dir / "index.json"
+            if index_path.exists():
+                try:
+                    loaded = json.loads(index_path.read_text("utf-8"))
+                    self._history_index = loaded if isinstance(loaded, dict) else {}
+                except Exception:
+                    self._history_index = {}
+            else:
                 self._history_index = {}
-        else:
-            self._history_index = {}
-            index_path.write_text("{}", encoding="utf-8")
+
+            recovered = self._reconcile_history_index()
+            if not index_path.exists() or recovered:
+                try:
+                    self._save_index()
+                except OSError:
+                    # Keep startup usable if another process temporarily holds
+                    # the index. The next initialization will retry recovery.
+                    logger.exception("Failed to persist recovered history index")
 
     def get_character_id(self) -> str:
         """Get the active character ID from the runtime."""
@@ -91,11 +107,90 @@ class RuntimeManager:
 
     # ── History operations ──────────────────────────────────────────
 
+    def _reconcile_history_index(self) -> bool:
+        """Recover valid history files that are missing from the index."""
+        changed = False
+        for path in self._histories_dir.glob("hist_*.json"):
+            uid = path.stem
+            if uid in self._history_index:
+                continue
+            try:
+                messages = json.loads(path.read_text("utf-8"))
+            except (OSError, ValueError, TypeError):
+                continue
+            if not isinstance(messages, list):
+                continue
+
+            latest_message = ""
+            latest_timestamp = ""
+            for message in messages:
+                if not isinstance(message, dict):
+                    continue
+                content = message.get("content")
+                if isinstance(content, str) and content.strip():
+                    if message.get("role") == "user" or not latest_message:
+                        latest_message = content
+                timestamp = message.get("timestamp")
+                if isinstance(timestamp, str) and timestamp:
+                    latest_timestamp = timestamp
+
+            if not latest_timestamp:
+                try:
+                    latest_timestamp = datetime.fromtimestamp(
+                        path.stat().st_mtime, tz=timezone.utc
+                    ).isoformat()
+                except OSError:
+                    continue
+
+            self._history_index[uid] = {
+                "timestamp": latest_timestamp,
+                "latest_message": latest_message or None,
+            }
+            changed = True
+            logger.warning("Recovered history index entry from %s", path.name)
+        return changed
+
     def _save_index(self) -> None:
         """Persist history index to disk."""
-        (self._histories_dir / "index.json").write_text(
-            json.dumps(self._history_index, ensure_ascii=False), encoding="utf-8"
-        )
+        index_path = self._histories_dir / "index.json"
+        temp_path: Path | None = None
+
+        with self._history_lock:
+            payload = json.dumps(self._history_index, ensure_ascii=False)
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=self._histories_dir,
+                    prefix=".index-",
+                    suffix=".tmp",
+                    delete=False,
+                ) as handle:
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                    temp_path = Path(handle.name)
+
+                for attempt in range(3):
+                    try:
+                        os.replace(temp_path, index_path)
+                        return
+                    except OSError as exc:
+                        # Windows can briefly reject a replace while another
+                        # reader has the index open. Retry only those transient
+                        # file-sharing errors and preserve the old index until
+                        # the replacement succeeds.
+                        if exc.errno not in (errno.EACCES, errno.EPERM, errno.EINVAL):
+                            raise
+                        if attempt == 2:
+                            raise
+                        time.sleep(0.05 * (attempt + 1))
+            finally:
+                if temp_path is not None:
+                    try:
+                        temp_path.unlink(missing_ok=True)
+                    except OSError:
+                        logger.warning("Failed to clean temporary history index: %s", temp_path)
 
     def _load_messages(self, uid: str) -> list[dict]:
         """Load messages from SQLite, falling back to pre-V3 JSON."""
@@ -121,13 +216,14 @@ class RuntimeManager:
 
     def get_history_list(self) -> list[dict]:
         """Return histories sorted by timestamp desc."""
-        result = []
-        for uid, info in self._history_index.items():
-            result.append({
-                "uid": uid,
-                "latest_message": info.get("latest_message"),
-                "timestamp": info.get("timestamp", ""),
-            })
+        with self._history_lock:
+            result = []
+            for uid, info in self._history_index.items():
+                result.append({
+                    "uid": uid,
+                    "latest_message": info.get("latest_message"),
+                    "timestamp": info.get("timestamp", ""),
+                })
         result.sort(key=lambda x: x["timestamp"], reverse=True)
         return result
 
@@ -155,10 +251,11 @@ class RuntimeManager:
     def create_history(self) -> dict:
         """Create a new history UID and return it."""
         uid = f"hist_{uuid.uuid4().hex[:12]}"
-        self._current_history_uid = uid
         now = datetime.now(timezone.utc).isoformat()
-        self._history_index[uid] = {"timestamp": now, "latest_message": None}
-        self._save_index()
+        with self._history_lock:
+            self._current_history_uid = uid
+            self._history_index[uid] = {"timestamp": now, "latest_message": None}
+            self._save_index()
 
         # Clear runtime conversation
         try:
@@ -173,21 +270,34 @@ class RuntimeManager:
     def delete_history(self, history_uid: str) -> dict:
         """Delete a history by UID. Returns success status."""
         path = self._histories_dir / f"{history_uid}.json"
+        file_contents: bytes | None = None
         if path.exists():
+            file_contents = path.read_bytes()
             path.unlink()
 
-        store = self._memory_store()
-        deleted_rows = 0
-        if store is not None:
-            deleted_rows = store.delete_history(
-                history_uid, character_id=self.get_character_id()
-            )
-        existed = history_uid in self._history_index or deleted_rows > 0
-        self._history_index.pop(history_uid, None)
-        self._save_index()
+        with self._history_lock:
+            store = self._memory_store()
+            deleted_rows = 0
+            if store is not None:
+                deleted_rows = store.delete_history(
+                    history_uid, character_id=self.get_character_id()
+                )
+            existed = history_uid in self._history_index or deleted_rows > 0
+            previous_info = self._history_index.get(history_uid)
+            self._history_index.pop(history_uid, None)
+            try:
+                self._save_index()
+            except Exception:
+                # Do not leave a deleted JSON file or an in-memory index
+                # behind when the atomic index replacement fails.
+                if previous_info is not None:
+                    self._history_index[history_uid] = previous_info
+                if file_contents is not None and not path.exists():
+                    path.write_bytes(file_contents)
+                raise
 
-        if self._current_history_uid == history_uid:
-            self._current_history_uid = ""
+            if self._current_history_uid == history_uid:
+                self._current_history_uid = ""
 
         return {"success": existed, "history_uid": history_uid}
 
@@ -199,11 +309,12 @@ class RuntimeManager:
         """Update the lightweight history index without duplicating messages."""
         ts = datetime.now(timezone.utc).isoformat()
         preview = (user_text[:80] + "...") if len(user_text) > 80 else user_text
-        self._history_index[history_uid] = {
-            "timestamp": ts,
-            "latest_message": preview,
-        }
-        self._save_index()
+        with self._history_lock:
+            self._history_index[history_uid] = {
+                "timestamp": ts,
+                "latest_message": preview,
+            }
+            self._save_index()
 
     # ── Pinned memories ─────────────────────────────────────────────
 

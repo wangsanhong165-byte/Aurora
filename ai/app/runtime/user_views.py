@@ -65,15 +65,6 @@ def build_character_self_view(state: dict[str, Any]) -> dict[str, Any]:
             for item in raw_goals.get("active", [])
             if isinstance(item, dict) and _short_text(item.get("description"))
         ][:6]
-    preferences = state.get("preferences")
-    if not focus and isinstance(preferences, dict):
-        focus = [
-            f"与你聊到的{_short_text(topic, limit=60)}"
-            for topic in list(preferences)[:4]
-            if _short_text(topic)
-        ]
-    if not focus:
-        focus = ["与你当前的对话"]
     if not changes and isinstance(mood.get("history"), list):
         changes = [
             f"最近的心境变得{_MOODS.get(str(item.get('mood')), '更细腻')}"
@@ -90,11 +81,19 @@ def build_character_self_view(state: dict[str, Any]) -> dict[str, Any]:
             int(value or 0) > 0 for value in interactions.values()
         ):
             relationship = "你们已经有持续的交流，她会结合共同经历理解这段对话。"
+    last_interaction_at = state.get("last_interaction_at", 0)
+    try:
+        last_interaction_at = float(last_interaction_at or 0)
+    except (TypeError, ValueError):
+        last_interaction_at = 0
     return {
         "currentState": f"现在心情{mood_text}，表达{emotion_text}{focus_text}。",
         "recentFocus": focus,
         "persistentGoals": goals,
         "recentChanges": changes,
+        "lastInteraction": _short_text(state.get("last_interaction")),
+        "lastInteractionAt": last_interaction_at,
+        "interactionCount": int(state.get("interaction_count", 0) or 0),
         **({"relationshipSummary": relationship} if relationship else {}),
     }
 

@@ -15,6 +15,7 @@ class ToolAdapter:
 
     def __init__(self, server_registry: ServerRegistry) -> None:
         self._registry = server_registry
+        self.failed_servers: set[str] = set()
 
     async def get_tools(self, enabled_servers: list[str]) -> tuple[list[dict[str, Any]], dict[str, FormattedTool]]:
         """Fetch tool schemas from enabled servers.
@@ -26,6 +27,7 @@ class ToolAdapter:
         """
         openai_tools: list[dict[str, Any]] = []
         tool_dict: dict[str, FormattedTool] = {}
+        self.failed_servers.clear()
 
         if not enabled_servers:
             return openai_tools, tool_dict
@@ -40,6 +42,7 @@ class ToolAdapter:
                     result = await client.list_tools(server_name)
                     tools = result.tools if hasattr(result, 'tools') else list(result)
                 except Exception as e:
+                    self.failed_servers.add(server_name)
                     logger.error("Failed to list tools on '%s': %s", server_name, e)
                     continue
 

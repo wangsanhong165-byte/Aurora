@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
 import { Mic, Send, Square } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+
 import { useSelector, selectActivity, selectSettings } from '../core/store'
+import { theme } from '../core/theme'
 import type { RecorderState } from '../audio/recorder'
 
 export interface InputBarProps {
@@ -12,7 +14,11 @@ export interface InputBarProps {
 }
 
 export function InputBar({
-  onSend, onInterrupt, recorderState, recordingSupported, onToggleRecording,
+  onSend,
+  onInterrupt,
+  recorderState,
+  recordingSupported,
+  onToggleRecording,
 }: InputBarProps) {
   const [value, setValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -36,7 +42,7 @@ export function InputBar({
     <form className="message-composer" onSubmit={submit}>
       {isBusy ? (
         <button type="button" className="interrupt-button" onClick={onInterrupt}>
-          <Square size={14} aria-hidden="true" />
+          <Square size={theme.icon.compact} strokeWidth={theme.icon.strokeWidth} aria-hidden="true" />
           停止回复
         </button>
       ) : (
@@ -57,12 +63,12 @@ export function InputBar({
               title={recorderState === 'recording' ? '停止录音' : '语音输入'}
             >
               {recorderState === 'recording'
-                ? <Square size={16} aria-hidden="true" />
-                : <Mic size={17} aria-hidden="true" />}
+                ? <Square size={theme.icon.action} strokeWidth={theme.icon.strokeWidth} aria-hidden="true" />
+                : <Mic size={theme.icon.action} strokeWidth={theme.icon.strokeWidth} aria-hidden="true" />}
             </button>
           )}
           <button type="submit" className="send-button" disabled={!value.trim()} aria-label="发送">
-            <Send size={17} aria-hidden="true" />
+            <Send size={theme.icon.action} strokeWidth={theme.icon.strokeWidth} aria-hidden="true" />
           </button>
         </>
       )}

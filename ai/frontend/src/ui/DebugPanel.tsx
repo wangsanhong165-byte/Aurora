@@ -4,6 +4,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { eventBus } from '../core/event-bus'
+import { theme } from '../core/theme'
 
 interface DiagState {
   connected: boolean
@@ -315,12 +316,12 @@ const styles: Record<string, React.CSSProperties> = {
   panel: {
     margin: '40px 20px 0 0',
     padding: '16px',
-    backgroundColor: 'rgba(13, 14, 18, 0.94)',
-    border: '1px solid #34373f',
+    backgroundColor: 'rgba(35, 43, 61, 0.96)',
+    border: `1px solid ${theme.colors.border}`,
     borderRadius: '8px',
     fontFamily: 'monospace',
     fontSize: '12px',
-    color: '#d8d7dc',
+    color: theme.colors.text.primary,
     minWidth: '380px',
     maxWidth: '500px',
   },
@@ -379,7 +380,7 @@ const styles: Record<string, React.CSSProperties> = {
     verticalAlign: 'top',
   },
   value: {
-    color: '#c47a5a',
+    color: theme.colors.accent,
     padding: '3px 0',
     wordBreak: 'break-all',
     whiteSpace: 'pre-wrap',

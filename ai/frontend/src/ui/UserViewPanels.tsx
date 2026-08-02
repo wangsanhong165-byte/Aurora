@@ -29,6 +29,9 @@ type CharacterSelfView = {
   recentFocus: string[]
   persistentGoals: string[]
   recentChanges: string[]
+  lastInteraction?: string
+  lastInteractionAt?: number
+  interactionCount?: number
   relationshipSummary?: string
 }
 
@@ -52,9 +55,11 @@ function EmptyState({ children }: { children: React.ReactNode }) {
   return <p className="empty-copy user-view-empty">{children}</p>
 }
 
-function formatDate(iso: string): string {
-  try { return new Date(iso).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
-  catch { return iso || '—' }
+function formatDate(value: string | number): string {
+  try {
+    const date = typeof value === 'number' ? new Date(value * 1000) : new Date(value)
+    return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  } catch { return value ? String(value) : '—' }
 }
 
 function categoryLabel(category: string): string {
@@ -65,20 +70,33 @@ function categoryLabel(category: string): string {
 
 export function CharacterSelfPanel({ requestCommand }: { requestCommand: RequestCommand }) {
   const [view, setView] = useState<CharacterSelfView | null>(null)
-  const refresh = () => requestCommand('get_character_self_view', {}).then(data => setView((data as any).view))
+  const [refreshing, setRefreshing] = useState(false)
+  const refresh = () => {
+    setRefreshing(true)
+    return requestCommand('get_character_self_view', {})
+      .then(data => setView((data as any).view ?? null))
+      .catch(() => {})
+      .finally(() => setRefreshing(false))
+  }
 
   useEffect(() => {
-    const unsubMessage = eventBus.on('runtime:message', () => refresh())
+    const unsubTurn = eventBus.on('runtime:turn.completed', () => { void refresh() })
     void refresh()
-    return () => { unsubMessage() }
+    return () => { unsubTurn() }
   }, [])
 
   return (
     <DrawerPanel title="角色" action={
-      <button type="button" className="drawer-text-action" onClick={() => void refresh()}>刷新</button>
+      <button type="button" className="drawer-text-action" disabled={refreshing} onClick={() => void refresh()}>
+        {refreshing ? '更新中…' : '刷新'}
+      </button>
     }>
       {!view ? <EmptyState>正在了解角色此刻的状态…</EmptyState> : (
         <div className="user-view">
+          <div className="user-view-meta">
+            <span>{view.lastInteractionAt ? `更新于 ${formatDate(view.lastInteractionAt)}` : '尚未记录互动'}</span>
+            {!!view.interactionCount && <span>已互动 {view.interactionCount} 次</span>}
+          </div>
           <ViewSection title="当前状态"><p>{view.currentState}</p></ViewSection>
           <TextList title="最近关注" items={view.recentFocus} />
           <TextList title="持续目标" items={view.persistentGoals} />

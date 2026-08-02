@@ -585,6 +585,7 @@ class CharacterRuntime:
 
         turn.conversation = self.conversation
         turn.character_self = self.character_self
+        previous_character_state = self.character_self.snapshot()
 
         # Track turn count in state store
         turn_count = state_store.get("turn_count", 0)
@@ -608,6 +609,17 @@ class CharacterRuntime:
             memory_provider.notify_turn()
 
         if not turn.error:
+            self.character_self.sync_from_character()
+            self.character_self.record_interaction(
+                turn.user_text or turn.event.payload.get("display_text", ""),
+                learned=turn.learned_memories,
+                previous_state=previous_character_state,
+            )
+            if store is not None and hasattr(store, "save_character_state"):
+                store.save_character_state(
+                    getattr(character, "id", ""),
+                    self.character_self.snapshot(),
+                )
             turn.transition_to(TurnPhase.COMPLETED)
             if turn.telemetry:
                 turn.telemetry.record("turn.completed", duration_ms=turn.metrics.get("e2e_latency_ms"))

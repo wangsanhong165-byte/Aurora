@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 
 from app.interfaces.tool import ToolInterface
@@ -51,15 +52,18 @@ class LegacyToolProvider(ToolInterface):
         self._mcp_tool_names: set[str] = set()
         self._openai_schemas: list[dict] = []
         self._mcp_initialized = False
+        self._mcp_failed_servers: set[str] = set()
+        self._mcp_last_retry_at = 0.0
+        self._mcp_retry_interval = 10.0
         self._mcp_config_path = mcp_config_path or str(
             Path("config/mcp_servers.json").absolute()
         )
 
     # ── lazy MCP initialisation ──────────────────────────────────────────
 
-    async def _ensure_mcp(self) -> None:
+    async def _ensure_mcp(self, *, force: bool = False) -> None:
         """Discover MCP tools and create persistent executor (once)."""
-        if self._mcp_initialized:
+        if self._mcp_initialized and not force:
             return
         self._mcp_initialized = True
 
@@ -93,6 +97,9 @@ class LegacyToolProvider(ToolInterface):
             self._mcp_executor = ToolExecutor(client, manager)
             self._mcp_tool_names = set(tool_dict.keys())
             self._openai_schemas = openai_tools
+            self._mcp_failed_servers = set(adapter.failed_servers)
+            if self._mcp_failed_servers:
+                self._mcp_last_retry_at = time.monotonic()
 
             logger.info(
                 "MCP initialised: %d tool(s) from %d server(s)",
@@ -102,8 +109,30 @@ class LegacyToolProvider(ToolInterface):
         except Exception:
             logger.exception("MCP initialisation failed — MCP tools disabled")
             self._mcp_initialized = False
+            self._mcp_failed_servers = set(
+                locals().get("enabled_servers", [])
+            )
 
     # ── ToolInterface ────────────────────────────────────────────────────
+
+    async def _retry_failed_mcp_servers(self) -> None:
+        """Retry MCP discovery after a transient server failure."""
+        if not self._mcp_failed_servers:
+            return
+        now = time.monotonic()
+        if now - self._mcp_last_retry_at < self._mcp_retry_interval:
+            return
+        self._mcp_last_retry_at = now
+        old_executor = self._mcp_executor
+        self._mcp_executor = None
+        self._mcp_initialized = False
+        self._mcp_tool_names = set()
+        self._openai_schemas = []
+        if old_executor is not None:
+            client = getattr(old_executor, "_client", None)
+            if client is not None and hasattr(client, "aclose"):
+                await client.aclose()
+        await self._ensure_mcp()
 
     async def execute(self, name: str, args: dict) -> str:
         """Execute a tool by name.
@@ -130,6 +159,7 @@ class LegacyToolProvider(ToolInterface):
     async def list_tools(self) -> list[dict]:
         """Return all available tools (builtins + MCP) as a dict list."""
         await self._ensure_mcp()
+        await self._retry_failed_mcp_servers()
 
         builtin_schemas = self._registry.list_openai_schemas()
         builtin_names: set[str] = set()

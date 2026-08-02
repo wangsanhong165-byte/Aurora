@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 from app.providers.tool.legacy_provider import LegacyToolProvider
+from app.modules.mcp import tool_adapter as tool_adapter_module
 
 
 def _schema(name: str) -> dict:
@@ -46,3 +48,34 @@ def test_mcp_schema_list_is_deduplicated_before_llm_request() -> None:
     names = [schema["function"]["name"] for schema in schemas]
 
     assert names.count("web_search") == 1
+
+
+def test_mcp_adapter_keeps_partial_results_and_records_failed_servers(monkeypatch):
+    class FakeClient:
+        def __init__(self, registry):
+            self.registry = registry
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def list_tools(self, server_name):
+            if server_name == "broken":
+                raise RuntimeError("server unavailable")
+            return [SimpleNamespace(
+                name="web_search",
+                description="Search the web",
+                inputSchema={"properties": {}, "required": []},
+            )]
+
+    monkeypatch.setattr(tool_adapter_module, "MCPClient", FakeClient)
+    registry = SimpleNamespace(servers={"broken": object(), "healthy": object()})
+    adapter = tool_adapter_module.ToolAdapter(registry)
+
+    schemas, tools = asyncio.run(adapter.get_tools(["broken", "healthy"]))
+
+    assert [schema["function"]["name"] for schema in schemas] == ["web_search"]
+    assert list(tools) == ["web_search"]
+    assert adapter.failed_servers == {"broken"}

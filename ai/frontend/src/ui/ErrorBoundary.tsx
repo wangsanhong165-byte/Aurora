@@ -2,6 +2,7 @@
 
 import { Component } from 'react'
 import type { ReactNode, ErrorInfo } from 'react'
+import { theme } from '../core/theme'
 
 interface Props {
   children: ReactNode
@@ -52,19 +53,19 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     height: '100%',
     gap: 12,
-    color: '#d8d7dc',
+    color: theme.colors.text.primary,
     padding: 24,
   },
   icon: { fontSize: '2rem' },
   title: { fontSize: '1.1rem', fontWeight: 600 },
-  message: { fontSize: '0.85rem', color: '#8a8b94', maxWidth: 320, textAlign: 'center', wordBreak: 'break-word' },
+  message: { fontSize: '0.85rem', color: theme.colors.text.secondary, maxWidth: 320, textAlign: 'center', wordBreak: 'break-word' },
   retry: {
     marginTop: 8,
     padding: '6px 16px',
     borderRadius: 6,
-    border: '1px solid #34373f',
-    backgroundColor: '#1a1c22',
-    color: '#d8d7dc',
+    border: `1px solid ${theme.colors.border}`,
+    backgroundColor: theme.colors.bg.panel,
+    color: theme.colors.text.primary,
     cursor: 'pointer',
     fontSize: '0.85rem',
   },

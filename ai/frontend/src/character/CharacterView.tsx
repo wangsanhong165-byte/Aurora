@@ -3,6 +3,7 @@
 
 import { memo, useRef, useEffect, useState, useCallback } from 'react'
 import { useSelector, selectCharacter, selectSettings } from '../core/store'
+import { theme } from '../core/theme'
 import { eventBus } from '../core/event-bus'
 import { initRenderer, resizeRenderer, destroyRenderer, render, setViewOffset, setViewScale, resetView, getViewTransform } from './live2d/renderer'
 import { ModelManager, type ModelState } from './live2d/ModelManager'
@@ -15,6 +16,7 @@ import { Live2DModelAdapter } from './Live2DModelAdapter'
 import { observeElementResize } from './observe-resize'
 import { normalizeAvatarViewport } from './AvatarCapabilityProfile'
 import { isWindowDragging } from './window-drag-state'
+import { readPersistedViewport, savePersistedViewport } from './live2d/viewport-persistence'
 
 function modelUrl(name: string): string {
   return `/live2d-models/${name}/${name}.model3.json`
@@ -24,10 +26,23 @@ function applyModelViewport(modelName: string): void {
   const profiles = (window as any).__INITIAL_MODEL_INFO__?.avatarProfiles as
     | Record<string, { viewport?: { x?: number; y?: number; scale?: number } }>
     | undefined
-  const viewport = normalizeAvatarViewport(profiles?.[modelName]?.viewport)
+  let persisted
+  try {
+    persisted = readPersistedViewport(window.localStorage, modelName)
+  } catch (_) {
+    persisted = undefined
+  }
+  const viewport = normalizeAvatarViewport(persisted ?? profiles?.[modelName]?.viewport)
   resetView()
   setViewScale(viewport.scale)
   setViewOffset(viewport.x, viewport.y)
+}
+
+function persistModelViewport(modelName: string): void {
+  if (!modelName) return
+  try {
+    savePersistedViewport(window.localStorage, modelName, getViewTransform())
+  } catch (_) {}
 }
 
 /** Initialize components from avatar config or fallback to legacy accessories.
@@ -164,6 +179,7 @@ export const CharacterView = memo(function CharacterView() {
   const componentMgrRef = useRef<ComponentManager | null>(null)
   const modelMgrRef = useRef<ModelManager | null>(null)
   const adapterRef = useRef<Live2DModelAdapter | null>(null)
+  const modelNameRef = useRef('')
   const animRef = useRef<number>(0)
   const animRunningRef = useRef(false)     // guards against duplicate animation loops
   const lastTimeRef = useRef(0)
@@ -250,6 +266,7 @@ export const CharacterView = memo(function CharacterView() {
       ctrl.detach()
       adapter.detach()
       applyModelViewport(expectedName)
+      modelNameRef.current = expectedName
       ctrl.setModelName(expectedName, modelMgr.getExpressionNames())
       ctrl.setNativeMotionPlayer(modelMgr.getNativeMotionPlayer())
       adapter.attach(handle!)
@@ -375,6 +392,7 @@ export const CharacterView = memo(function CharacterView() {
       if (!drag.isDragging) return
       drag.isDragging = false
       canvas.style.cursor = ''
+      persistModelViewport(modelNameRef.current)
       eventBus.emit('character:interaction', { type: 'drag', phase: 'end', intensity: 0.2 })
     }
 
@@ -391,6 +409,7 @@ export const CharacterView = memo(function CharacterView() {
       const t = getViewTransform()
       const delta = e.deltaY > 0 ? 0.9 : 1.1
       setViewScale(t.scale * delta)
+      persistModelViewport(modelNameRef.current)
     }
 
     // Touch support for pinch zoom
@@ -415,6 +434,12 @@ export const CharacterView = memo(function CharacterView() {
         setViewScale(touchScaleAtStart * (dist / lastTouchDist))
       }
     }
+    const onTouchEnd = () => {
+      if (lastTouchDist > 0) {
+        persistModelViewport(modelNameRef.current)
+        lastTouchDist = 0
+      }
+    }
 
     canvas.addEventListener('mousedown', onMouseDown)
     window.addEventListener('mouseup', onMouseUp)
@@ -422,6 +447,8 @@ export const CharacterView = memo(function CharacterView() {
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('touchstart', onTouchStart, { passive: true })
     canvas.addEventListener('touchmove', onTouchMove, { passive: false })
+    canvas.addEventListener('touchend', onTouchEnd)
+    canvas.addEventListener('touchcancel', onTouchEnd)
 
     // Listen for accessory toggle from SettingsPanel
     const unsubAccessoryToggle = eventBus.on('accessory:toggle', ({ label }) => {
@@ -482,10 +509,13 @@ export const CharacterView = memo(function CharacterView() {
         canvas.removeEventListener('wheel', onWheel)
         canvas.removeEventListener('touchstart', onTouchStart)
         canvas.removeEventListener('touchmove', onTouchMove)
+        canvas.removeEventListener('touchend', onTouchEnd)
+        canvas.removeEventListener('touchcancel', onTouchEnd)
       }
       window.removeEventListener('mouseup', onMouseUp)
       window.removeEventListener('mousemove', onDragMove)
       resetView()
+      modelNameRef.current = ''
       if (ctrlRef.current) {
         ctrlRef.current.detach()
         ctrlRef.current = null
@@ -684,7 +714,7 @@ const styles: Record<string, React.CSSProperties> = {
     width: '100%',
     height: '100%',
     touchAction: 'none',
-    backgroundColor: '#0d0e12',
+    backgroundColor: theme.colors.bg.root,
   },
   fallback: {
     display: 'flex',
@@ -702,23 +732,23 @@ const styles: Record<string, React.CSSProperties> = {
   emotionLabel: {
     fontSize: '1.1rem',
     fontWeight: 600,
-    color: '#c47a5a',
+    color: theme.colors.accent,
     textTransform: 'uppercase',
     letterSpacing: '0.1em',
     textShadow: '0 2px 8px rgba(0,0,0,0.5)',
   },
   activityLabel: {
     fontSize: '0.85rem',
-    color: '#8a8b94',
+    color: theme.colors.text.secondary,
     fontStyle: 'italic',
   },
   hint: {
     fontSize: '0.75rem',
-    color: '#5a5b64',
+    color: theme.colors.text.muted,
     marginTop: 8,
   },
   loading: {
-    color: '#8a8b94',
+    color: theme.colors.text.secondary,
     fontSize: '0.9rem',
     zIndex: 1,
   },
