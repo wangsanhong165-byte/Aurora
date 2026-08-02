@@ -116,6 +116,19 @@ function controlTimeoutFor (command) {
   return 5_000
 }
 
+function classifyControlState ({
+  record,
+  statusOk,
+  processInfo = null,
+  identityMatches = false,
+}) {
+  if (!record) return { state: 'missing' }
+  if (statusOk) return { state: 'reusable' }
+  if (!processInfo) return { state: 'stale' }
+  if (!identityMatches) return { state: 'unverified' }
+  return { state: 'recoverable' }
+}
+
 function invokeClient (python, args, { quiet = false, timeoutMs } = {}) {
   const command = args[0] || 'status'
   const result = spawnSync(python, pythonArgs(python, ['-m', 'app.lifecycle.client', ...args]), {
@@ -144,27 +157,77 @@ function waitForControl (python, timeoutMs = 10000) {
   throw new Error('Lifecycle Supervisor did not open its control endpoint')
 }
 
-function ensureSupervisor (python) {
-  if (fs.existsSync(CONTROL_RECORD)) {
-    const result = invokeClient(python, ['status'], { quiet: true, timeoutMs: 1_500 })
-    if (result.status === 0) return
-    const record = JSON.parse(fs.readFileSync(CONTROL_RECORD, 'utf8'))
-    if (Number.isInteger(record.pid)) {
-      let alive = false
-      try {
-        process.kill(record.pid, 0)
-        alive = true
-      } catch (error) {
-        alive = error?.code === 'EPERM'
-      }
-      if (alive) {
-        throw new Error(
-          `Lifecycle Supervisor (PID ${record.pid}) is running but its control endpoint is unavailable. ` +
-          'Close the existing SoulLink process or run this command from the same Windows session.',
-        )
-      }
-    }
+function readControlRecord (controlRecord = CONTROL_RECORD) {
+  if (!fs.existsSync(controlRecord)) return null
+  try {
+    return JSON.parse(fs.readFileSync(controlRecord, 'utf8'))
+  } catch (error) {
+    throw new Error(`control_record_invalid: ${error.message}`)
   }
+}
+
+function parseJsonOutput (result) {
+  const lines = String(result?.stdout || '').trim().split(/\r?\n/).filter(Boolean)
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    try {
+      return JSON.parse(lines[index])
+    } catch (_) {}
+  }
+  return null
+}
+
+function inspectSupervisor (python, pid, invoke = invokeClient) {
+  const result = invoke(
+    python,
+    ['process-info', '--pid', String(pid)],
+    { quiet: true, timeoutMs: 1_500 },
+  )
+  return result.status === 0 ? parseJsonOutput(result) : null
+}
+
+function normalizePathForComparison (value) {
+  try {
+    return path.resolve(String(value)).replaceAll('\\', '/').toLowerCase()
+  } catch (_) {
+    return String(value).replaceAll('\\', '/').toLowerCase()
+  }
+}
+
+function supervisorIdentityMatches (record, processInfo, python, root = ROOT) {
+  const expected = record?.process
+  if (!expected || !processInfo) return false
+  const selectedPythonIsLauncher = path.basename(python).toLowerCase() === 'py.exe'
+  const command = Array.isArray(processInfo.command) ? processInfo.command : []
+  const expectedCommand = Array.isArray(expected.command) ? expected.command : []
+  return (
+    Number(record.pid) === Number(expected.pid)
+    && Number(processInfo.pid) === Number(expected.pid)
+    && Math.abs(Number(expected.create_time) - Number(processInfo.create_time)) < 0.01
+    && normalizePathForComparison(expected.executable) === normalizePathForComparison(processInfo.executable)
+    && (selectedPythonIsLauncher || normalizePathForComparison(expected.executable) === normalizePathForComparison(python))
+    && JSON.stringify(expectedCommand) === JSON.stringify(command)
+    && command.includes('-m')
+    && command.includes('app.lifecycle.supervisor')
+    && command.includes('--serve')
+    && normalizePathForComparison(expected.cwd || root) === normalizePathForComparison(processInfo.cwd)
+  )
+}
+
+function quarantineControlRecord (controlRecord = CONTROL_RECORD) {
+  if (!fs.existsSync(controlRecord)) return null
+  const directory = path.dirname(controlRecord)
+  const prefix = path.join(directory, 'lifecycle-control.stale.')
+  let target = `${prefix}${Date.now()}.json`
+  let suffix = 1
+  while (fs.existsSync(target)) {
+    target = `${prefix}${Date.now()}.${suffix}.json`
+    suffix += 1
+  }
+  fs.renameSync(controlRecord, target)
+  return target
+}
+
+function startSupervisor (python) {
   const logDir = path.join(ROOT, 'logs')
   fs.mkdirSync(logDir, { recursive: true })
   const output = fs.openSync(path.join(logDir, 'supervisor-bootstrap.log'), 'a')
@@ -176,7 +239,50 @@ function ensureSupervisor (python) {
     env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
   })
   child.unref()
-  waitForControl(python)
+}
+
+function ensureSupervisor (python, {
+  controlRecord = CONTROL_RECORD,
+  invoke = invokeClient,
+  inspect = inspectSupervisor,
+  spawnSupervisor = startSupervisor,
+  wait = waitForControl,
+} = {}) {
+  const record = readControlRecord(controlRecord)
+  if (record) {
+    const result = invoke(python, ['status'], { quiet: true, timeoutMs: 1_500 })
+    if (result.status === 0) return { state: 'reusable' }
+
+    const pid = Number(record.pid)
+    const processInfo = Number.isInteger(pid) ? inspect(python, pid, invoke) : null
+    const identityMatches = supervisorIdentityMatches(record, processInfo, python)
+    const classification = classifyControlState({
+      record,
+      statusOk: false,
+      processInfo,
+      identityMatches,
+    })
+
+    if (classification.state === 'stale') {
+      quarantineControlRecord(controlRecord)
+      spawnSupervisor(python)
+      wait(python)
+      return classification
+    }
+    if (classification.state === 'unverified') {
+      throw new Error(
+        `control_owner_unverified: lifecycle PID ${record.pid} is alive but its identity does not match the recorded Supervisor`,
+      )
+    }
+    throw new Error(
+      `control_endpoint_unavailable: Lifecycle Supervisor (PID ${record.pid}) is alive but its control endpoint is unavailable. ` +
+      'Use --recover-control only after confirming the process belongs to this workspace.',
+    )
+  }
+
+  spawnSupervisor(python)
+  wait(python)
+  return { state: 'started' }
 }
 
 function doctor (python) {
@@ -272,9 +378,11 @@ if (require.main === module) {
 }
 
 module.exports = {
+  classifyControlState,
   controlTimeoutFor,
   computeBuildFingerprint,
   ensureFrontendBuild,
+  ensureSupervisor,
   main,
   readRuntimeConfig,
   selectPython,
