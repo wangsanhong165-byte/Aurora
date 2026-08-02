@@ -177,12 +177,16 @@ function parseJsonOutput (result) {
 }
 
 function inspectSupervisor (python, pid, invoke = invokeClient) {
-  const result = invoke(
-    python,
-    ['process-info', '--pid', String(pid)],
-    { quiet: true, timeoutMs: 1_500 },
-  )
-  return result.status === 0 ? parseJsonOutput(result) : null
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = invoke(
+      python,
+      ['process-info', '--pid', String(pid)],
+      { quiet: true, timeoutMs: 1_500 },
+    )
+    if (result.status === 0) return parseJsonOutput(result)
+    if (attempt < 2) sleepSync(100)
+  }
+  return null
 }
 
 function normalizePathForComparison (value) {
@@ -225,6 +229,73 @@ function quarantineControlRecord (controlRecord = CONTROL_RECORD) {
   }
   fs.renameSync(controlRecord, target)
   return target
+}
+
+function sleepSync (milliseconds) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds)
+}
+
+function processIsAlive (pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error?.code === 'EPERM'
+  }
+}
+
+function withControlLock (controlRecord, callback, timeoutMs = 15_000) {
+  const lockPath = `${controlRecord}.lock`
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true })
+  const deadline = Date.now() + timeoutMs
+  let handle = null
+  while (!handle && Date.now() < deadline) {
+    try {
+      handle = fs.openSync(lockPath, 'wx')
+      fs.writeSync(handle, String(process.pid))
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error
+      let ownerPid = null
+      try { ownerPid = Number(fs.readFileSync(lockPath, 'utf8')) } catch (_) {}
+      if (Number.isInteger(ownerPid) && ownerPid > 0 && !processIsAlive(ownerPid)) {
+        try { fs.unlinkSync(lockPath) } catch (unlinkError) {
+          if (unlinkError?.code !== 'ENOENT') throw unlinkError
+        }
+      } else {
+        sleepSync(100)
+      }
+    }
+  }
+  if (handle === null) {
+    throw new Error('control_start_in_progress: another lifecycle command is acquiring the control plane')
+  }
+  try {
+    return callback()
+  } finally {
+    fs.closeSync(handle)
+    try { fs.unlinkSync(lockPath) } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+  }
+}
+
+function startReplacement ({
+  controlRecord,
+  spawnSupervisor,
+  wait,
+  result,
+}) {
+  const staleRecord = quarantineControlRecord(controlRecord)
+  try {
+    spawnSupervisor()
+    wait()
+    return result
+  } catch (error) {
+    if (staleRecord && !fs.existsSync(controlRecord)) {
+      fs.renameSync(staleRecord, controlRecord)
+    }
+    throw error
+  }
 }
 
 function terminateSupervisor (pid) {
@@ -290,54 +361,60 @@ function ensureSupervisor (python, {
   terminate = terminateSupervisor,
   waitForExit = waitForProcessExit,
 } = {}) {
-  const record = readControlRecord(controlRecord)
-  if (record) {
-    const result = invoke(python, ['status'], { quiet: true, timeoutMs: 1_500 })
-    if (result.status === 0) return { state: 'reusable' }
+  return withControlLock(controlRecord, () => {
+    const record = readControlRecord(controlRecord)
+    if (record) {
+      const result = invoke(python, ['status'], { quiet: true, timeoutMs: 1_500 })
+      if (result.status === 0) return { state: 'reusable' }
 
-    const pid = Number(record.pid)
-    const processInfo = Number.isInteger(pid) ? inspect(python, pid, invoke) : null
-    const identityMatches = supervisorIdentityMatches(record, processInfo, python)
-    const classification = classifyControlState({
-      record,
-      statusOk: false,
-      processInfo,
-      identityMatches,
-    })
-
-    if (classification.state === 'stale') {
-      quarantineControlRecord(controlRecord)
-      spawnSupervisor(python)
-      wait(python)
-      return classification
-    }
-    if (classification.state === 'unverified') {
-      throw new Error(
-        `control_owner_unverified: lifecycle PID ${record.pid} is alive but its identity does not match the recorded Supervisor`,
-      )
-    }
-    if (allowRecovery) {
-      const recovery = recoverControl({
+      const pid = Number(record.pid)
+      const processInfo = Number.isInteger(pid) ? inspect(python, pid, invoke) : null
+      const identityMatches = supervisorIdentityMatches(record, processInfo, python)
+      const classification = classifyControlState({
         record,
+        statusOk: false,
         processInfo,
         identityMatches,
-        terminate,
-        waitForExit,
       })
-      quarantineControlRecord(controlRecord)
-      spawnSupervisor(python)
-      wait(python)
-      return recovery
-    }
-    throw new Error(
-      `control_endpoint_unavailable: Lifecycle Supervisor (PID ${record.pid}) is alive but its control endpoint is unavailable. ` +
-      'Use --recover-control only after confirming the process belongs to this workspace.',
-    )
-  }
 
-  spawnSupervisor(python)
-  wait(python)
-  return { state: 'started' }
+      if (classification.state === 'stale') {
+        return startReplacement({
+          controlRecord,
+          spawnSupervisor: () => spawnSupervisor(python),
+          wait: () => wait(python),
+          result: classification,
+        })
+      }
+      if (classification.state === 'unverified') {
+        throw new Error(
+          `control_owner_unverified: lifecycle PID ${record.pid} is alive but its identity does not match the recorded Supervisor`,
+        )
+      }
+      if (allowRecovery) {
+        const recovery = recoverControl({
+          record,
+          processInfo,
+          identityMatches,
+          terminate,
+          waitForExit,
+        })
+        return startReplacement({
+          controlRecord,
+          spawnSupervisor: () => spawnSupervisor(python),
+          wait: () => wait(python),
+          result: recovery,
+        })
+      }
+      throw new Error(
+        `control_endpoint_unavailable: Lifecycle Supervisor (PID ${record.pid}) is alive but its control endpoint is unavailable. ` +
+        'Use --recover-control only after confirming the process belongs to this workspace.',
+      )
+    }
+
+    spawnSupervisor(python)
+    wait(python)
+    return { state: 'started' }
+  })
 }
 
 function doctor (python) {

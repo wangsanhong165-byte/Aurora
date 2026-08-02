@@ -104,6 +104,39 @@ test('ensureSupervisor quarantines a record for an exited process', () => {
   fs.rmSync(directory, { recursive: true, force: true })
 })
 
+test('ensureSupervisor restores the old record when replacement cannot open control', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soulctl-test-'))
+  const controlRecord = path.join(directory, 'lifecycle-control.json')
+  const original = JSON.stringify({ pid: 10 })
+  fs.writeFileSync(controlRecord, original)
+
+  assert.throws(() => ensureSupervisor('D:/conda/python.exe', {
+    controlRecord,
+    invoke: () => ({ status: 1, stdout: '' }),
+    inspect: () => null,
+    spawnSupervisor: () => {},
+    wait: () => { throw new Error('control endpoint unavailable') },
+  }), /control endpoint unavailable/)
+
+  assert.equal(fs.readFileSync(controlRecord, 'utf8'), original)
+  assert.equal(fs.readdirSync(directory).some(name => name.startsWith('lifecycle-control.stale.')), false)
+  fs.rmSync(directory, { recursive: true, force: true })
+})
+
+test('ensureSupervisor releases its coordination lock after a successful reuse', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soulctl-test-'))
+  const controlRecord = path.join(directory, 'lifecycle-control.json')
+  fs.writeFileSync(controlRecord, JSON.stringify({ pid: 10 }))
+
+  ensureSupervisor('D:/conda/python.exe', {
+    controlRecord,
+    invoke: () => ({ status: 0, stdout: '' }),
+  })
+
+  assert.equal(fs.existsSync(`${controlRecord}.lock`), false)
+  fs.rmSync(directory, { recursive: true, force: true })
+})
+
 test('recover-control terminates only a verified supervisor', () => {
   const calls = []
   const result = recoverControl({

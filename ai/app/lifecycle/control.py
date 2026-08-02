@@ -164,7 +164,13 @@ class ControlServer:
         try:
             request = connection.recv()
             response = self.control.handle(request)
-            connection.send(response)
+            try:
+                connection.send(response)
+            except (BrokenPipeError, EOFError, OSError):
+                # A timed-out or cancelled client may close the pipe before
+                # the response is written. That must not destabilize the
+                # long-lived Supervisor process.
+                return
             if request.get("command") == "shutdown" and response.get("ok"):
                 self.running = False
                 wake = Client(
