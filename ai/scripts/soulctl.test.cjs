@@ -81,6 +81,22 @@ test('ensureSupervisor does not replace an unverified live process', () => {
   fs.rmSync(directory, { recursive: true, force: true })
 })
 
+test('ensureSupervisor retries a transient control endpoint failure', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soulctl-test-'))
+  const controlRecord = path.join(directory, 'lifecycle-control.json')
+  fs.writeFileSync(controlRecord, JSON.stringify({ pid: 10 }))
+  let attempts = 0
+
+  const result = ensureSupervisor('D:/conda/python.exe', {
+    controlRecord,
+    invoke: () => ({ status: attempts++ === 0 ? 1 : 0, stdout: '' }),
+  })
+
+  assert.deepEqual(result, { state: 'reusable' })
+  assert.equal(attempts, 2)
+  fs.rmSync(directory, { recursive: true, force: true })
+})
+
 test('ensureSupervisor quarantines a record for an exited process', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'soulctl-test-'))
   const controlRecord = path.join(directory, 'lifecycle-control.json')

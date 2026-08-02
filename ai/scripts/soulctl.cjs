@@ -189,6 +189,16 @@ function inspectSupervisor (python, pid, invoke = invokeClient) {
   return null
 }
 
+function probeControl (python, invoke = invokeClient) {
+  let result = null
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    result = invoke(python, ['status'], { quiet: true, timeoutMs: 1_500 })
+    if (result.status === 0) return result
+    if (attempt < 2) sleepSync(150)
+  }
+  return result
+}
+
 function normalizePathForComparison (value) {
   try {
     return path.resolve(String(value)).replaceAll('\\', '/').toLowerCase()
@@ -364,7 +374,7 @@ function ensureSupervisor (python, {
   return withControlLock(controlRecord, () => {
     const record = readControlRecord(controlRecord)
     if (record) {
-      const result = invoke(python, ['status'], { quiet: true, timeoutMs: 1_500 })
+      const result = probeControl(python, invoke)
       if (result.status === 0) return { state: 'reusable' }
 
       const pid = Number(record.pid)
