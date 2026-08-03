@@ -61,3 +61,45 @@ def test_uvx_server_reuses_available_python_runtime(tmp_path: Path, monkeypatch)
 
     assert search is not None
     assert search.env["UV_PYTHON"] == "D:/conda/python.exe"
+
+
+def test_registry_skips_windows_store_python_alias(tmp_path: Path, monkeypatch):
+    config_path = tmp_path / "config" / "mcp_servers.json"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcp_servers": {
+                    "time": {"command": "python", "args": ["-m", "mcp_server_time"]},
+                    "search": {"command": "uvx", "args": ["example-mcp"]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    conda_root = tmp_path / "conda"
+    env_python = conda_root / "envs" / "qwen3-asr" / "python.exe"
+    base_python = conda_root / "python.exe"
+    env_python.parent.mkdir(parents=True)
+    base_python.write_text("", encoding="ascii")
+    env_python.write_text("", encoding="ascii")
+    windows_store_python = tmp_path / "WindowsApps" / "python.exe"
+
+    monkeypatch.delenv("SOULLINK_MCP_PYTHON", raising=False)
+    monkeypatch.delenv("MCP_PYTHON", raising=False)
+    monkeypatch.setattr(
+        server_registry_module.shutil,
+        "which",
+        lambda name: str(windows_store_python) if name == "python" else f"{name}.exe",
+    )
+    monkeypatch.setattr(server_registry_module.sys, "executable", str(env_python))
+
+    registry = ServerRegistry(config_path)
+
+    time_server = registry.get_server("time")
+    search_server = registry.get_server("search")
+    assert time_server is not None
+    assert search_server is not None
+    assert Path(time_server.command) == base_python
+    assert search_server.env["UV_PYTHON"] == str(base_python)

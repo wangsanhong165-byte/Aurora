@@ -13,6 +13,41 @@ from .types import MCPServer
 logger = logging.getLogger("bridge.mcp.sr")
 
 
+def _is_windows_store_alias(value: str | None) -> bool:
+    return "windowsapps" in str(value or "").casefold()
+
+
+def _resolve_python_executable() -> str | None:
+    """Resolve a real Python for MCP child processes.
+
+    Windows may expose the Microsoft Store ``python.exe`` alias through PATH
+    even when the application itself is running inside a working Conda
+    environment.  That alias exits with 9009 when used as an MCP child
+    interpreter, so prefer an explicit override, a real PATH entry, or the
+    Conda base interpreter beside the active environment.
+    """
+    candidates: list[tuple[str | None, bool]] = [
+        (os.environ.get("SOULLINK_MCP_PYTHON"), True),
+        (os.environ.get("MCP_PYTHON"), True),
+        (shutil.which("python"), False),
+    ]
+
+    executable = Path(sys.executable)
+    if len(executable.parents) >= 3 and executable.parent.parent.name.casefold() == "envs":
+        candidates.append((str(executable.parents[2] / "python.exe"), True))
+    if sys.base_prefix and sys.base_prefix != sys.prefix:
+        candidates.append((str(Path(sys.base_prefix) / "python.exe"), True))
+    candidates.append((str(executable), True))
+
+    for candidate, require_exists in candidates:
+        if not candidate or _is_windows_store_alias(candidate):
+            continue
+        if require_exists and not Path(candidate).exists():
+            continue
+        return str(candidate)
+    return None
+
+
 class ServerRegistry:
     """Manages MCP server definitions loaded from a JSON config file."""
 
@@ -34,11 +69,7 @@ class ServerRegistry:
         npx_ok = shutil.which("npx") is not None
         uvx_ok = shutil.which("uvx") is not None
         node_ok = shutil.which("node") is not None
-        python_executable = shutil.which("python")
-        if python_executable is None:
-            conda_python = Path(sys.executable).resolve().parents[1] / "python.exe"
-            if conda_python.exists():
-                python_executable = str(conda_python)
+        python_executable = _resolve_python_executable()
 
         for name, details in servers_cfg.items():
             if "command" not in details:

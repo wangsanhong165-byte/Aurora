@@ -8,6 +8,17 @@ const ROOT_DIR = path.resolve(__dirname, '..')
 
 // Minimum interval between full subprocess spawns for status (ms)
 const MIN_REFRESH_INTERVAL = 15_000
+const REQUEST_TIMEOUTS = Object.freeze({
+  start: 480_000,
+  restart: 480_000,
+  stop: 30_000,
+  shutdown: 30_000,
+  status: 30_000,
+})
+
+function requestTimeoutFor (command) {
+  return REQUEST_TIMEOUTS[command] || REQUEST_TIMEOUTS.status
+}
 
 class ProcessManager {
   constructor () {
@@ -18,10 +29,11 @@ class ProcessManager {
     this.ownsLaunch = false
     this._status = { availability: 'BLOCKED', services: [], capabilities: [] }
     this._refreshPromise = null
+    this._restartPromise = null
     this._lastRefreshTimestamp = 0
   }
 
-  _request (command, extra = {}, timeoutMs = 30000) {
+  _request (command, extra = {}, timeoutMs = requestTimeoutFor(command)) {
     const args = [
       '-m', 'app.lifecycle.client', command,
       '--launch-id', this.launchId,
@@ -69,20 +81,16 @@ class ProcessManager {
   }
 
   startAll () {
-    // Fire-and-forget: the lifecycle orchestrator's start command is acknowledged
-    // in the background. The cached _status updates via refresh() when services
-    // become ready, and the Electron statusTimer polls it periodically.
-    // The 30s _request timeout no longer blocks the main window — if the
-    // orchestrator finishes after that, refresh() picks up the new state.
-    this._request('start', { profile: this.profile })
-      .catch(() => {
-        // Ignore timeout: services may still be loading in the orchestrator.
-        // The timeout only means the subprocess was killed, not the services.
-        // refresh() later picks up the true state once the orchestrator finishes.
-      })
-    return Promise.resolve(this._status)
+    // Keep the bootstrap window responsive while the lifecycle request waits
+    // for GSVI/TTS warmup, ASR preload, and the final Bridge readiness.
+    return this._request('start', { profile: this.profile }, requestTimeoutFor('start'))
   }
-  restartAll () { return this._request('restart', { profile: this.profile }) }
+  restartAll () {
+    if (this._restartPromise) return this._restartPromise
+    this._restartPromise = this._request('restart', { profile: this.profile })
+      .finally(() => { this._restartPromise = null })
+    return this._restartPromise
+  }
   async stopAll () {
     if (!this.ownsLaunch) return this._status
     await this._request('stop')
@@ -124,4 +132,4 @@ class ProcessManager {
   }
 }
 
-module.exports = { ProcessManager }
+module.exports = { ProcessManager, requestTimeoutFor }

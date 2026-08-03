@@ -19,7 +19,7 @@ const {
   getPetBounds,
   selectRestorableBounds,
 } = require('./pet-window.cjs')
-const { canEnterCompanion } = require('./startup-policy.cjs')
+const { waitForUrl } = require('./startup-readiness.cjs')
 
 // ProcessManager — backend service lifecycle management
 const { ProcessManager } = require('../../electron/process-manager.cjs')
@@ -33,14 +33,26 @@ const ELECTRON_PID_FILE = path.join(__dirname, '..', '..', 'data', 'pids', 'elec
 // Live2D model files. Vite (5173) doesn't have the /live2d-models/ mount.
 const DEV_URL = process.env.VITE_URL || 'http://127.0.0.1:5173'
 const PROD_URL = process.env.BRIDGE_URL || 'http://127.0.0.1:9528'
-// Startup timeout: force the main UI to load after this many ms,
-// even if backend services haven't reached FULL_READY yet.
-const STARTUP_TIMEOUT_MS = 15_000
+// The bootstrap page stays visible while all GPU models are preloaded.
+const STARTUP_TIMEOUT_MS = 60_000
+const APP_READY_POLL_MS = 500
 const APP_LOAD_RETRY_MS = 1_000
 
 // ── State ────────────────────────────────────────────────────────────
 
 const pm = new ProcessManager()
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+    mainWindow.focus()
+  })
+}
 let mainWindow = null
 let tray = null
 let alwaysOnTop = false
@@ -101,12 +113,13 @@ function createWindow() {
     )
   })
 
-  // Close → hide to tray (not quit), unless forceQuit is set
-  mainWindow.on('close', (event) => {
+  // Closing the window is a real application exit. The exit path below
+  // shuts down the Supervisor and every registered service before Electron
+  // terminates, so no tray-only or orphaned backend process remains.
+  mainWindow.on('close', () => {
     if (!forceQuit) {
-      event.preventDefault()
-      mainWindow.hide()
-      return false
+      forceQuit = true
+      app.quit()
     }
   })
 
@@ -373,19 +386,10 @@ app.whenReady().then(async () => {
   // showing real-time service startup progress instead of stale "blocked".
   const startPromise = pm.startAll()
 
-  // Startup timeout: force the main UI to load after STARTUP_TIMEOUT_MS
-  // even if services aren't fully ready. The UI can show its own degraded state.
-  const startupTimer = setTimeout(() => {
-    if (!mainUiLoaded) {
-      console.log('[Electron] Startup timeout — loading main UI with degraded services')
-      loadAppUrl()
-    }
-  }, STARTUP_TIMEOUT_MS)
+  const targetUrl = isDev ? DEV_URL : PROD_URL
 
-  // Poll only the in-memory startup snapshot. loadAppUrl() clears this timer,
-  // so the stable renderer never triggers background lifecycle subprocesses.
-  // Periodically refresh from the orchestrator (rate-limited to 15s internally)
-  // so that services which finish after startAll's initial ack are picked up.
+  // Poll only the in-memory startup snapshot while the sequential GPU preload
+  // is running. loadAppUrl() clears this timer after the main UI is loaded.
   let statusPollCounter = 0
   statusTimer = setInterval(() => {
     statusPollCounter++
@@ -399,10 +403,6 @@ app.whenReady().then(async () => {
     mainWindow?.webContents.send('lifecycle:snapshot', status)
     // TEXT_READY is sufficient — the UI works for text chat while
     // voice services continue loading in the background.
-    if (!mainUiLoaded && canEnterCompanion(status)) {
-      clearTimeout(startupTimer)
-      loadAppUrl()
-    }
   }, 500)
 
   // Now show the window — services are already starting in the background.
@@ -410,22 +410,33 @@ app.whenReady().then(async () => {
   createTray()
 
   startPromise.then(status => {
-    ready = canEnterCompanion(status)
+    ready = status?.availability === 'FULL_READY'
     mainWindow?.webContents.send('lifecycle:snapshot', status)
-    if (!mainUiLoaded && ready) {
-      clearTimeout(startupTimer)
-      loadAppUrl()
+    if (!ready) {
+      const message = `Startup blocked: GPU voice services are not ready (${status?.availability || 'BLOCKED'})`
+      console.error(`[Electron] ${message}`)
+      mainWindow?.webContents.send('lifecycle:error', message)
+      return
     }
+    void waitForUrl(targetUrl, {
+      intervalMs: APP_READY_POLL_MS,
+      timeoutMs: STARTUP_TIMEOUT_MS,
+      shouldStop: () => mainUiLoaded || shutdownStarted,
+    }).then(available => {
+      if (available === false && !mainUiLoaded && !shutdownStarted) {
+        const message = 'Startup blocked: Bridge UI URL did not become ready'
+        console.error(`[Electron] ${message}`)
+        mainWindow?.webContents.send('lifecycle:error', message)
+        return
+      }
+      if (available === true && !mainUiLoaded && !shutdownStarted) {
+        void loadAppUrl()
+      }
+    })
   }).catch(err => {
     console.error('[Electron] Failed to start services:', err)
     mainWindow?.webContents.send('lifecycle:error', err.message)
-    // Even if services fail, load the UI after a short grace period
-    setTimeout(() => {
-      if (!mainUiLoaded) {
-        clearTimeout(startupTimer)
-        loadAppUrl()
-      }
-    }, 3000)
+    // Keep the bootstrap page visible so the user can see the failure state.
   })
 
   app.on('activate', () => {
@@ -438,7 +449,10 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  // On Windows: tray keeps running — only forceQuit exits completely
+  if (!forceQuit) {
+    forceQuit = true
+    app.quit()
+  }
 })
 
 app.on('before-quit', async (event) => {

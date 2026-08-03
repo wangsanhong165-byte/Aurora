@@ -10,6 +10,15 @@ import {
 import { isStageSubtitleVisible, toStageSubtitle } from './stage-subtitle.ts'
 import { resolveHistoryCommand } from '../conversation/history-command.ts'
 import { observeElementResize } from '../character/observe-resize.ts'
+import {
+  buildPromptConfigPayload,
+  describePromptMessage,
+  promptSourceEditorSeed,
+  promptSourcePreview,
+  promptConfigsEqual,
+  promptMessageStats,
+  summarizePromptContent,
+} from './prompt-view.ts'
 
 test('navigation selects content without closing the drawer', () => {
   const initial: DrawerState = { section: 'history', expanded: true, width: 380 }
@@ -21,6 +30,14 @@ test('navigation selects content without closing the drawer', () => {
   })
   assert.deepEqual(reduceDrawerState(initial, { type: 'select', section: 'settings' }), {
     section: 'settings',
+    expanded: true,
+    width: 380,
+  })
+})
+
+test('prompt is a valid drawer section', () => {
+  assert.deepEqual(createInitialDrawerState('prompt', 380), {
+    section: 'prompt',
     expanded: true,
     width: 380,
   })
@@ -123,4 +140,96 @@ test('element resize observer reports layout changes and disconnects on cleanup'
   assert.equal(resized, 1)
   cleanup()
   assert.equal(disconnected, true)
+})
+
+test('prompt messages receive semantic labels instead of repeated system labels', () => {
+  assert.deepEqual(
+    describePromptMessage({ role: 'system', content: 'LANGUAGE LOCK: Reply in English.' }),
+    {
+      kind: 'language',
+      title: '语言规则',
+      badge: '规则',
+      summary: 'Reply in English.',
+      defaultOpen: false,
+    },
+  )
+  assert.equal(
+    describePromptMessage({ role: 'system', content: 'Additional project instructions for this character: Keep it short.' }).title,
+    '自定义提示词',
+  )
+  assert.equal(
+    describePromptMessage({ role: 'system', content: 'Compiled memory context: remembered fact' }).title,
+    '记忆摘要',
+  )
+  assert.equal(
+    describePromptMessage({ role: 'system', content: '[Output Instructions]\nReturn valid JSON.' }).title,
+    '输出协议',
+  )
+  assert.equal(describePromptMessage({ role: 'system', content: 'You are Monika.' }).title, '角色设定')
+  assert.equal(describePromptMessage({ role: 'user', content: 'Hello' }).defaultOpen, true)
+  assert.equal(
+    describePromptMessage({ role: 'system', source_id: 'language', content: '完全替换后的文本' }).title,
+    '语言规则',
+  )
+})
+
+test('prompt summaries collapse whitespace and truncate long content', () => {
+  assert.equal(summarizePromptContent('Compiled memory context:\n  first\n\nsecond'), 'first second')
+  assert.equal(summarizePromptContent('123456789', 6), '12345…')
+})
+
+test('prompt stats separate system context from user turns', () => {
+  assert.deepEqual(promptMessageStats([
+    { role: 'system' },
+    { role: 'system' },
+    { role: 'user' },
+    { role: 'assistant' },
+  ]), { context: 2, user: 1, other: 1 })
+})
+
+test('static prompt replacement starts from the current default without a request snapshot', () => {
+  const source = {
+    id: 'language',
+    title: 'Language',
+    description: '',
+    dynamic: false,
+    editable: true,
+    mode: 'default' as const,
+    content: '',
+    default_content: 'LANGUAGE LOCK: Reply in English.',
+    last_content: '',
+  }
+
+  assert.equal(promptSourceEditorSeed(source), source.default_content)
+  assert.deepEqual(promptSourcePreview(source), {
+    label: '当前默认原文',
+    content: source.default_content,
+  })
+})
+
+test('prompt config payload is explicit about character and source policy', () => {
+  const draft = {
+    character_id: 'other',
+    addition: '角色附加内容',
+    sources: [{
+      id: 'persona',
+      title: '角色设定',
+      description: '',
+      dynamic: false,
+      editable: true,
+      mode: 'replace' as const,
+      content: '替换后的角色设定',
+      last_content: '旧角色设定',
+    }],
+  }
+
+  assert.deepEqual(buildPromptConfigPayload(draft), {
+    character_id: 'other',
+    addition: '角色附加内容',
+    sources: {
+      persona: { mode: 'replace', content: '替换后的角色设定' },
+    },
+  })
+  assert.equal(promptConfigsEqual(draft, { ...draft }), true)
+  assert.equal(promptConfigsEqual(draft, { ...draft, addition: '已修改' }), false)
 })

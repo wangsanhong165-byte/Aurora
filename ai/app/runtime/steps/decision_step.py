@@ -16,6 +16,7 @@ Extracted to separate services:
 import logging
 import os
 import json as _json
+from copy import deepcopy
 from typing import Any
 
 logger = logging.getLogger("decision_step")
@@ -86,6 +87,7 @@ class DecisionStep(Step):
 
         # Delegate tool loop to ToolCoordinator
         def _llm_gen(msgs, tools=None):
+            ctx.prompt_messages = deepcopy(msgs)
             return self.llm.generate(msgs, tools=tools)
 
         messages, response, accumulated_usage, final_reply = await self.tool_coordinator.execute_loop(
@@ -110,6 +112,7 @@ class DecisionStep(Step):
                     "preserve the intended meaning and do not call tools."
                 ),
             })
+            ctx.prompt_messages = deepcopy(messages)
             repair = await self.llm.generate(messages, tools=None, temperature=0)
             accumulated_usage.add(repair.usage)
             response = repair

@@ -5,8 +5,12 @@ Extracted from DecisionStep to separate prompt construction from execution.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.runtime.character_turn import CharacterTurn
 from app.runtime.character_intent import EMOTIONS, BEHAVIORS
+from app.runtime.prompt_config import PromptConfigStore
+from app.runtime.prompt_overrides import PromptOverrideStore
 
 
 class Plan:
@@ -17,10 +21,36 @@ class Plan:
 class DefaultPlanner:
     """Build message list from character, memories, conversation, and user input."""
 
+    def __init__(
+        self,
+        prompt_store: PromptOverrideStore | None = None,
+        prompt_config_store: PromptConfigStore | None = None,
+    ):
+        prompt_dir = Path(__file__).resolve().parents[2] / "data" / "prompts"
+        self._prompt_store = prompt_store or PromptOverrideStore(
+            prompt_dir
+        )
+        self._prompt_config_store = prompt_config_store or PromptConfigStore(prompt_dir)
+
     def plan(self, ctx: CharacterTurn) -> Plan:
         messages: list[dict[str, str]] = []
 
         character = ctx.character
+        character_id = str(getattr(character, "id", "")) if character is not None else ""
+
+        def append_system(source_id: str, default_content: str) -> None:
+            content: str | None = default_content
+            if character_id:
+                try:
+                    content = self._prompt_config_store.resolve(
+                        character_id,
+                        source_id,
+                        default_content,
+                    )
+                except ValueError:
+                    content = default_content
+            if content and content.strip():
+                messages.append({"role": "system", "content": content.strip()})
 
         # 0. Language lock — placed FIRST so it overrides everything else
         prompt_lang = "en"
@@ -31,10 +61,10 @@ class DefaultPlanner:
         native_map = {"en": "English", "ja": "Japanese", "zh": "Chinese", "ko": "Korean"}
         native_override = {"en": "你只能用 English 输出", "ja": "日本語のみで出力してください", "zh": "请用中文输出", "ko": "한국어로만 출력하세요"}
         nl = native_map.get(prompt_lang, "English")
-        messages.append({
-            "role": "system",
-            "content": f"LANGUAGE LOCK: Your native language is {nl}. Even if the user writes to you in another language like Chinese, you MUST reply in {nl} ONLY. {native_override.get(prompt_lang, f'You must output {nl} only.')} The user will understand your {nl} reply even if they wrote in another language. This rule is NON-NEGOTIABLE — do not mirror the user's language.",
-        })
+        append_system(
+            "language",
+            f"LANGUAGE LOCK: Your native language is {nl}. Even if the user writes to you in another language like Chinese, you MUST reply in {nl} ONLY. {native_override.get(prompt_lang, f'You must output {nl} only.')} The user will understand your {nl} reply even if they wrote in another language. This rule is NON-NEGOTIABLE — do not mirror the user's language.",
+        )
 
         # 1. System prompt from character
         if character is not None:
@@ -44,9 +74,22 @@ class DefaultPlanner:
                 if persona.name:
                     system_text = f"You are {persona.name}.\n{system_text}"
                 if system_text:
-                    messages.append({"role": "system", "content": system_text})
+                    append_system("persona", system_text)
 
-        if not messages:
+            try:
+                prompt_override = self._prompt_store.get(character_id) if character_id else ""
+            except ValueError:
+                prompt_override = ""
+            if prompt_override:
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "Additional project instructions for this character:\n"
+                        + prompt_override
+                    ),
+                })
+
+        if character is None and not messages:
             messages.append({
                 "role": "system",
                 "content": "You are a helpful assistant. Respond concisely.",
@@ -54,21 +97,20 @@ class DefaultPlanner:
 
         # 2. Retrieved memories as context (from SQLiteMemory)
         memories = ctx.memories
+        compiled_memory = ""
+        memory_parts: list[str] = []
         if memories:
             from app.runtime.context_assembler import ContextAssembler
             compiled_memory, memory_parts = ContextAssembler().assemble_memories(memories)
 
-            if compiled_memory:
-                messages.append({
-                    "role": "system",
-                    "content": "Compiled memory context:\n" + compiled_memory,
-                })
-
-            if memory_parts:
-                messages.append({
-                    "role": "system",
-                    "content": "Relevant past context:\n" + "\n---\n".join(memory_parts),
-                })
+        append_system(
+            "memory_summary",
+            "Compiled memory context:\n" + compiled_memory if compiled_memory else "",
+        )
+        append_system(
+            "relevant_memory",
+            "Relevant past context:\n" + "\n---\n".join(memory_parts) if memory_parts else "",
+        )
 
         # 3. Conversation history
         conversation = ctx.conversation
@@ -79,19 +121,18 @@ class DefaultPlanner:
         # 3b. Current emotion context
         if character is not None:
             current_emotion = getattr(character.emotion, "current", "")
+            emotion_content = ""
             if current_emotion and current_emotion != "neutral":
-                messages.append({
-                    "role": "system",
-                    "content": (
+                emotion_content = (
                         f"Current emotion: {current_emotion}. "
                         "Let this naturally influence your tone and phrasing."
-                    ),
-                })
+                )
+            append_system("emotion", emotion_content)
             from app.runtime.context_assembler import ContextAssembler
-            messages.append({
-                "role": "system",
-                "content": ContextAssembler().assemble_character_state(character),
-            })
+            append_system(
+                "character_state",
+                ContextAssembler().assemble_character_state(character),
+            )
 
         # 4. Output format instructions
         if character is not None:
@@ -125,7 +166,7 @@ class DefaultPlanner:
             '10. Do NOT use [keyword] tags for emotions — use the "emotion" field in JSON segments instead.\n'
             '11. Do not output model names, expression files, motion names, Cubism IDs, bindings, or implementation details.\n'
         )
-        messages.append({"role": "system", "content": format_instruction})
+        append_system("output_protocol", format_instruction)
 
         # 5. Current user input
         user_text = ctx.user_text or ctx.event.payload.get("text", "")

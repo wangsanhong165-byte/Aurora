@@ -175,7 +175,10 @@ class ServiceManifest:
     def availability(self, states: Mapping[str, str]) -> AvailabilityLevel:
         ready_levels: set[AvailabilityLevel] = set()
         for capability in self.capabilities.values():
-            if all(states.get(name) in {"ready", "degraded", "failed"} for name in capability.required_services):
+            # A failed process is terminal evidence that the capability is not
+            # available. Counting it as ready produced false FULL_READY states
+            # while GPU-backed services had already exited.
+            if all(states.get(name) == "ready" for name in capability.required_services):
                 ready_levels.add(capability.minimum_level)
         if AvailabilityLevel.VOICE_READY in ready_levels:
             declared = {
@@ -187,7 +190,7 @@ class ServiceManifest:
                 )
             }
             all_declared_ready = all(
-                states.get(name) in {"ready", "degraded", "failed"} for name in declared
+                states.get(name) == "ready" for name in declared
             )
             return AvailabilityLevel.FULL_READY if all_declared_ready else AvailabilityLevel.VOICE_READY
         if AvailabilityLevel.TEXT_READY in ready_levels:

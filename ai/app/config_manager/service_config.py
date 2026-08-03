@@ -21,8 +21,8 @@ class ServiceConfig:
 
     Usage:
         from app.config_manager.service_config import service_config
-        port = service_config.port("asr")       # 9101
-        url  = service_config.url("asr")        # "http://127.0.0.1:9101"
+        port = service_config.port("asr")       # 19201
+        url  = service_config.url("asr")        # "http://127.0.0.1:19201"
         host = service_config.host("asr")       # "127.0.0.1"
     """
 

@@ -1,5 +1,6 @@
 export type DrawerSection =
   | 'history'
+  | 'prompt'
   | 'character'
   | 'memory'
   | 'capabilities'
@@ -24,6 +25,7 @@ export const DEFAULT_DRAWER_WIDTH = 340
 
 const DRAWER_SECTIONS: DrawerSection[] = [
   'history',
+  'prompt',
   'character',
   'memory',
   'capabilities',

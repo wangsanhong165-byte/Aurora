@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { eventBus } from '../core/event-bus'
 import { DrawerPanel } from './DrawerPanel'
@@ -237,11 +237,29 @@ export function VoicePanel({ requestCommand }: { requestCommand: RequestCommand 
 export function CapabilityPanel({ requestCommand }: { requestCommand: RequestCommand }) {
   const [items, setItems] = useState<CapabilityItem[]>([])
   const [toggling, setToggling] = useState<string | null>(null)
-  const refresh = () => requestCommand('get_capability_view', {})
-    .then(data => setItems((data as any).view?.items ?? []))
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const refreshInFlight = useRef(false)
+
+  const refresh = async () => {
+    if (refreshInFlight.current) return
+    refreshInFlight.current = true
+    try {
+      const data = await requestCommand('get_capability_view', {})
+      setItems((data as any).view?.items ?? [])
+      setError('')
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      refreshInFlight.current = false
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
     void refresh()
+    const timer = window.setInterval(() => void refresh(), 5000)
+    return () => window.clearInterval(timer)
   }, [])
 
   const toggleCapability = async (item: CapabilityItem) => {
@@ -257,7 +275,18 @@ export function CapabilityPanel({ requestCommand }: { requestCommand: RequestCom
   return (
     <DrawerPanel title="能力">
       <div className="capability-view">
-        {items.length === 0 && <EmptyState>当前没有可用的外部能力。</EmptyState>}
+        {items.length === 0 && (
+          <EmptyState>
+            {loading
+              ? '正在加载外部能力…'
+              : error
+                ? '能力连接暂时中断，正在重试…'
+                : '当前没有可用的外部能力。'}
+          </EmptyState>
+        )}
+        {items.length > 0 && error && (
+          <p className="view-note">部分能力暂时不可用，正在重试…</p>
+        )}
         {items.map(item => {
           const isAvailable = item.status === 'available'
           return (

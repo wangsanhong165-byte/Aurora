@@ -1,6 +1,6 @@
 @echo off
 setlocal
-chcp 65001 >nul
+if exist "%SystemRoot%\System32\chcp.com" "%SystemRoot%\System32\chcp.com" 65001 >nul 2>&1
 cd /d "%~dp0"
 
 set "SOULLINK_NODE="

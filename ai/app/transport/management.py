@@ -60,6 +60,39 @@ class ManagementHandler:
         if action == "set_pinned":
             content = self._manager.set_pinned(params.get("content", ""))
             return {"content": content}
+        if action == "get_prompt_override":
+            return self._manager.get_prompt_override()
+        if action == "set_prompt_override":
+            try:
+                return self._manager.set_prompt_override(str(params.get("content", "")))
+            except ValueError as exc:
+                raise ManagementFailure("prompt_override_invalid", str(exc)) from exc
+        if action == "get_prompt_config":
+            try:
+                return self._manager.get_prompt_config(
+                    str(params.get("character_id", ""))
+                )
+            except ValueError as exc:
+                raise ManagementFailure("prompt_config_invalid", str(exc)) from exc
+        if action == "set_prompt_config":
+            sources = params.get("sources", {})
+            if not isinstance(sources, dict):
+                raise ManagementFailure("prompt_config_invalid", "sources must be an object")
+            try:
+                return self._manager.set_prompt_config(
+                    str(params.get("character_id", "")),
+                    sources,
+                    str(params.get("addition", "")),
+                )
+            except ValueError as exc:
+                raise ManagementFailure("prompt_config_invalid", str(exc)) from exc
+        if action == "get_prompt_view":
+            try:
+                return self._manager.get_prompt_view(
+                    str(params.get("character_id", ""))
+                )
+            except ValueError as exc:
+                raise ManagementFailure("prompt_view_unavailable", str(exc)) from exc
         if action == "get_memories":
             return {"memories": self._manager.get_memories(
                 bool(params.get("include_inactive", False)),

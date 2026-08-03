@@ -20,7 +20,7 @@
   },
   "gsvi": {
     "display_name": "语音模型", "category": "voice", "provider": "GPT-SoVITS", "startup_priority": 100,
-    "host": "127.0.0.1", "port": 9105, "health": "/ready", "timeout": 180,
+    "host": "127.0.0.1", "port": 19205, "health": "/ready", "timeout": 180,
     "readiness": true, "profiles": ["backend", "electron", "full"], "failure_policy": "isolate",
     "env": {"BROWSER": "none", "PATH": "{python_dir};{PATH}"},
     "cwd": "models/tts/GPT-SoVITS-v2pro-20250604-nvidia50",
@@ -32,33 +32,33 @@
   },
   "tts": {
     "display_name": "语音合成", "category": "voice", "startup_priority": 110,
-    "host": "127.0.0.1", "port": 9103, "health": "/health", "timeout": 120,
+    "host": "127.0.0.1", "port": 19203, "health": "/health", "timeout": 120,
     "readiness": true, "depends_on": ["gsvi"], "profiles": ["backend", "electron", "full"], "failure_policy": "isolate",
     "command": {"module": "app.modules.tts.api", "args": ["--env-file", "{root}/config/.env", "--host", "{host}", "--port", "{port}"]},
     "warmup": {"url": "http://{host}:{port}/warmup", "body": "{}", "timeout": 180}
   },
   "asr": {
-    "display_name": "语音识别", "category": "voice", "startup_priority": 90,
-    "host": "127.0.0.1", "port": 9101, "health": "/health", "timeout": 60,
-    "readiness": true, "profiles": ["backend", "electron", "full"], "failure_policy": "isolate",
+    "display_name": "语音识别", "category": "voice", "startup_priority": 120,
+    "host": "127.0.0.1", "port": 19201, "health": "/health", "timeout": 60,
+    "readiness": true, "depends_on": ["tts"], "profiles": ["backend", "electron", "full"], "failure_policy": "isolate",
     "command": {"module": "app.modules.asr.api", "args": ["--host", "{host}", "--port", "{port}"]}
   },
   "llm": {
     "display_name": "文本智能", "category": "text", "startup_priority": 10,
-    "host": "127.0.0.1", "port": 9102, "health": "/health", "timeout": 30,
+    "host": "127.0.0.1", "port": 19202, "health": "/health", "timeout": 30,
     "profiles": ["backend", "electron", "full"], "failure_policy": "isolate",
     "command": {"module": "app.modules.llm.api", "args": ["--env-file", "{root}/config/.env", "--host", "{host}", "--port", "{port}"]}
   },
   "memory": {
     "display_name": "角色记忆", "category": "text", "startup_priority": 20,
-    "host": "127.0.0.1", "port": 9104, "health": "/health", "timeout": 15,
+    "host": "127.0.0.1", "port": 19204, "health": "/health", "timeout": 15,
     "profiles": ["backend", "electron", "full"], "failure_policy": "isolate",
     "command": {"module": "app.modules.memory.api", "args": ["--host", "{host}", "--port", "{port}"]}
   },
   "bridge": {
     "display_name": "角色连接", "category": "text", "startup_priority": 30,
-    "host": "127.0.0.1", "port": 9528, "health": null, "timeout": 30,
-    "depends_on": ["llm", "memory"], "profiles": ["web", "backend", "electron", "full"],
+    "host": "127.0.0.1", "port": 9528, "health": null, "timeout": 90,
+    "depends_on": ["llm", "memory", "tts", "asr"], "profiles": ["web", "backend", "electron", "full"],
     "command": {"module": "app.bridge.server", "args": []}
   },
   "frontend": {

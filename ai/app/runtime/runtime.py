@@ -13,6 +13,7 @@ import os
 import logging
 import time
 import uuid
+from copy import deepcopy
 from typing import Any, Awaitable, Callable
 
 from app.core.initiative_queue import initiative_queue
@@ -53,6 +54,7 @@ class CharacterRuntime:
         self._turn_lock = None
         self._runtime_idle = True
         self._active_turn: CharacterTurn | None = None
+        self._last_prompt_snapshot: dict[str, Any] | None = None
         self._initiative_task: Any = None  # asyncio Task for draining
         self._proactive_handlers: list[Callable[[CharacterTurn], Awaitable[None]]] = []
         self._initiative_memory_selector = None
@@ -593,6 +595,15 @@ class CharacterRuntime:
         turn.turn_count = turn_count + 1
 
         turn = await self.pipeline.run(turn)
+
+        if turn.prompt_messages:
+            self._last_prompt_snapshot = {
+                "turn_id": turn.turn_id,
+                "created_at": turn.created_at,
+                "character_id": str(getattr(turn.character, "id", "")),
+                "messages": deepcopy(turn.prompt_messages),
+                "context_budget": deepcopy(turn.context_budget),
+            }
 
         # Notify memory provider for background processing (ticker, etc.)
         memory_provider = self.providers.get("memory")

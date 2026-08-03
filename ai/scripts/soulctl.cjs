@@ -111,7 +111,7 @@ function pythonArgs (python, args) {
 }
 
 function controlTimeoutFor (command) {
-  if (command === 'start' || command === 'restart') return 180_000
+  if (command === 'start' || command === 'restart') return 480_000
   if (command === 'stop') return 30_000
   return 5_000
 }
@@ -137,7 +137,7 @@ function invokeClient (python, args, { quiet = false, timeoutMs } = {}) {
 function waitForControl (python, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const result = invokeClient(python, ['status'], { quiet: true, timeoutMs: 800 })
+    const result = invokeClient(python, ['status'], { quiet: true, timeoutMs: 5_000 })
     if (result.status === 0) return
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100)
   }
@@ -146,7 +146,7 @@ function waitForControl (python, timeoutMs = 10000) {
 
 function ensureSupervisor (python) {
   if (fs.existsSync(CONTROL_RECORD)) {
-    const result = invokeClient(python, ['status'], { quiet: true, timeoutMs: 1_500 })
+    const result = invokeClient(python, ['status'], { quiet: true, timeoutMs: 10_000 })
     if (result.status === 0) return
     const record = JSON.parse(fs.readFileSync(CONTROL_RECORD, 'utf8'))
     if (Number.isInteger(record.pid)) {
@@ -158,10 +158,19 @@ function ensureSupervisor (python) {
         alive = error?.code === 'EPERM'
       }
       if (alive) {
-        throw new Error(
-          `Lifecycle Supervisor (PID ${record.pid}) is running but its control endpoint is unavailable. ` +
-          'Close the existing SoulLink process or run this command from the same Windows session.',
+        console.log(`[RECOVERY] Supervisor PID ${record.pid} is unresponsive; verifying workspace identities...`)
+        const recovery = spawnSync(
+          python,
+          pythonArgs(python, ['-m', 'app.lifecycle.recovery', '--root', ROOT]),
+          { cwd: ROOT, encoding: 'utf8', windowsHide: true, timeout: 30_000 },
         )
+        if (recovery.stdout) process.stdout.write(recovery.stdout)
+        if (recovery.status !== 0) {
+          throw new Error(
+            recovery.stderr?.trim() ||
+            `Lifecycle Supervisor (PID ${record.pid}) could not be recovered safely.`,
+          )
+        }
       }
     }
   }

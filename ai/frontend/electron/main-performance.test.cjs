@@ -55,6 +55,18 @@ test('startup refresh is bounded and stable runtime refresh remains on demand', 
   assert.match(statusHandler, /pm\.refresh\(\)/)
 })
 
+test('startup waits for full GPU readiness before loading the actual UI URL', () => {
+  const startupGate = sourceBetween(
+    'startPromise.then(status => {',
+    '  }).catch',
+  )
+
+  assert.match(startupGate, /status\?\.availability === 'FULL_READY'/)
+  assert.match(startupGate, /waitForUrl\(targetUrl, \{/)
+  assert.match(startupGate, /timeoutMs: STARTUP_TIMEOUT_MS/)
+  assert.match(startupGate, /shouldStop: \(\) => mainUiLoaded \|\| shutdownStarted/)
+})
+
 test('renderer console capture never blocks the Electron main process', () => {
   const consoleHandler = sourceBetween(
     "mainWindow.webContents.on('console-message'",
@@ -83,4 +95,31 @@ test('explicit application quit shuts down every registered workspace service', 
   )
 
   assert.match(beforeQuit, /await pm\.shutdownAll\(\)/)
+})
+
+test('closing the main window quits the application instead of leaving a tray process', () => {
+  const closeHandler = sourceBetween(
+    "mainWindow.on('close'",
+    "mainWindow.on('closed'",
+  )
+
+  assert.doesNotMatch(closeHandler, /event\.preventDefault\(\)/)
+  assert.doesNotMatch(closeHandler, /mainWindow\.hide\(\)/)
+  assert.match(closeHandler, /forceQuit = true/)
+  assert.match(closeHandler, /app\.quit\(\)/)
+})
+
+test('Electron is single-instance so repeated script clicks cannot race startup', () => {
+  assert.match(MAIN_SOURCE, /app\.requestSingleInstanceLock\(\)/)
+  assert.match(MAIN_SOURCE, /app\.on\('second-instance'/)
+  assert.match(MAIN_SOURCE, /mainWindow\.focus\(\)/)
+})
+
+test('bootstrap reads the lifecycle service status field returned by Python', () => {
+  const bootstrap = fs.readFileSync(
+    path.join(__dirname, 'bootstrap', 'bootstrap.js'),
+    'utf8',
+  )
+  assert.match(bootstrap, /svc\.status \|\| svc\.state/)
+  assert.match(bootstrap, /serviceStatus\(s\) === 'failed'/)
 })

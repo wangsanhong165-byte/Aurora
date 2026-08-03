@@ -1,4 +1,4 @@
-import { Brain, History, MessageSquareText, Settings, SlidersHorizontal, Sparkles, Wrench } from 'lucide-react'
+import { Brain, FilePenLine, History, MessageSquareText, Settings, SlidersHorizontal, Sparkles, Wrench } from 'lucide-react'
 
 import type { RecorderState } from '../audio/recorder'
 import { CharacterView } from '../character/CharacterView'
@@ -10,6 +10,7 @@ import { DrawerPanel } from './DrawerPanel'
 import { InputBar } from './InputBar'
 import { Layout, type DrawerItem } from './Layout'
 import { Live2DWorkbench, SettingsPanel } from './SettingsPanel'
+import { PromptPanel } from './PromptPanel'
 import { StageSubtitle } from './StageSubtitle'
 import {
   CapabilityPanel,
@@ -20,6 +21,7 @@ import type { DrawerSection } from './workspace-state'
 
 const DRAWER_ITEMS: DrawerItem[] = [
   { id: 'history', label: '聊天记录', icon: <History /> },
+  { id: 'prompt', label: '提示词', icon: <FilePenLine /> },
   { id: 'character', label: '角色', icon: <MessageSquareText /> },
   { id: 'memory', label: '记忆', icon: <Brain /> },
   { id: 'capabilities', label: '能力', icon: <Sparkles /> },
@@ -64,6 +66,14 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
             onCreate={props.onCreateHistory}
           />
         </DrawerPanel>
+      )
+    }
+    if (section === 'prompt') {
+      return (
+        <PromptPanel
+          requestCommand={props.requestCommand}
+          activeCharacterId={props.settings.activeCharacterId}
+        />
       )
     }
     if (section === 'settings') {

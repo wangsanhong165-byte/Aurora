@@ -30,7 +30,8 @@ def test_manifest_declares_memory_safe_gpu_service_order():
     manifest = json.loads((ROOT / "config/services.json").read_text(encoding="utf-8"))
     assert manifest["tts"]["depends_on"] == ["gsvi"]
     assert "warmup" in manifest["tts"]
-    assert "depends_on" not in manifest["asr"]
+    assert manifest["asr"]["depends_on"] == ["tts"]
+    assert manifest["bridge"]["depends_on"] == ["llm", "memory", "tts", "asr"]
     assert manifest["gsvi"]["readiness"] is True
     assert manifest["gsvi"]["command"]["executable"] == "{python}"
     assert manifest["gsvi"]["env"]["PATH"].startswith("{python_dir};")
@@ -40,7 +41,7 @@ def test_manifest_declares_memory_safe_gpu_service_order():
             ROOT / "config/services.json",
         ).for_profile("electron")
     ]
-    assert ordered.index("asr") < ordered.index("gsvi") < ordered.index("tts")
+    assert ordered.index("gsvi") < ordered.index("tts") < ordered.index("asr") < ordered.index("bridge")
 
 
 def test_bridge_timeout_covers_character_runtime_initialization():
@@ -49,7 +50,11 @@ def test_bridge_timeout_covers_character_runtime_initialization():
     manifest = json.loads(
         (ROOT / "config/services.json").read_text(encoding="utf-8")
     )
-    assert manifest["bridge"]["timeout"] >= 30
+    # A real cold start has reached 28-30 seconds while loading the character,
+    # histories, memory providers and capability registry. Keep a 3x safety
+    # window so normal disk/GPU contention does not turn a healthy Bridge into
+    # a lifecycle rollback.
+    assert manifest["bridge"]["timeout"] >= 90
 
 
 def test_python_supervisor_owns_lifecycle_core():

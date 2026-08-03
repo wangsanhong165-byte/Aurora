@@ -226,6 +226,31 @@ def test_availability_levels_allow_text_while_voice_is_warming(tmp_path: Path):
     assert manifest.availability({"bridge": "ready", "voice": "ready"}) == AvailabilityLevel.FULL_READY
 
 
+def test_failed_required_service_never_counts_as_ready(tmp_path: Path):
+    path = tmp_path / "services.json"
+    path.write_text(json.dumps({
+        "_meta": {
+            "capabilities": {
+                "text": {
+                    "minimum_level": "TEXT_READY",
+                    "required_services": ["bridge"],
+                },
+                "voice": {
+                    "minimum_level": "VOICE_READY",
+                    "required_services": ["voice"],
+                },
+            }
+        },
+        "bridge": {"port": 10001, "command": {"module": "bridge"}},
+        "voice": {"port": 10002, "command": {"module": "voice"}},
+    }), encoding="utf-8")
+    manifest = ServiceManifest.load(path)
+
+    assert manifest.availability({"bridge": "failed", "voice": "ready"}) == AvailabilityLevel.VOICE_READY
+    assert manifest.availability({"bridge": "ready", "voice": "failed"}) == AvailabilityLevel.TEXT_READY
+    assert manifest.availability({"bridge": "failed", "voice": "failed"}) == AvailabilityLevel.BLOCKED
+
+
 def test_event_stream_assigns_protocol_identity_and_monotonic_sequence():
     stream = EventStream("launch-1", "owner-1")
     first = stream.event("service_state", service_id="bridge", attempt=1)
@@ -380,3 +405,112 @@ def test_start_repairs_missing_voice_services_from_text_ready_state(tmp_path: Pa
     assert platform.spawn_count == 1
     assert result["availability"] == "FULL_READY"
     assert orchestrator.started == ["bridge", "voice"]
+
+
+def test_start_does_not_continue_to_bridge_when_voice_dependency_fails(tmp_path: Path):
+    path = tmp_path / "services.json"
+    path.write_text(json.dumps({
+        "tts": {
+            "port": 10001,
+            "health": "/health",
+            "readiness": True,
+            "command": {"module": "tts"},
+            "profiles": ["backend"],
+            "failure_policy": "isolate",
+        },
+        "asr": {
+            "port": 10002,
+            "health": "/health",
+            "readiness": True,
+            "command": {"module": "asr"},
+            "depends_on": ["tts"],
+            "profiles": ["backend"],
+            "failure_policy": "isolate",
+        },
+        "bridge": {
+            "port": 10003,
+            "command": {"module": "bridge"},
+            "depends_on": ["asr"],
+            "profiles": ["backend"],
+        },
+    }), encoding="utf-8")
+
+    class Process:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def poll(self):
+            return None
+
+    class Platform:
+        def __init__(self):
+            self.spawned = []
+            self.terminated = []
+
+        def port_owner(self, _port):
+            return None
+
+        def identity(self, pid, port):
+            return ProcessIdentity(pid, 1.0, "python.exe", ("python",), port)
+
+        def spawn(self, argv, _cwd, _env, _log):
+            process = Process(100 + len(self.spawned))
+            self.spawned.append(argv)
+            return process
+
+        def terminate_tree(self, _identity):
+            self.terminated.append(_identity.pid)
+            return True
+
+    class Probe:
+        def wait(self, service, _process):
+            return service.name != "tts"
+
+        def ready(self, _service):
+            return False
+
+    platform = Platform()
+    orchestrator = LifecycleOrchestrator(
+        tmp_path,
+        ServiceManifest.load(path),
+        registry=ProcessRegistry(tmp_path / "pids.json"),
+        platform=platform,
+        probe=Probe(),
+    )
+
+    with pytest.raises(LifecycleError, match="dependency asr is not ready"):
+        orchestrator.start("backend")
+
+    assert [argv[-1] for argv in platform.spawned] == ["tts"]
+    assert platform.terminated == [100]
+    assert orchestrator.started == []
+    assert orchestrator.registry.get("tts") is None
+
+
+def test_start_fails_fast_when_windows_reserves_a_service_port(tmp_path: Path):
+    path = tmp_path / "services.json"
+    path.write_text(json.dumps({
+        "llm": {
+            "host": "127.0.0.1",
+            "port": 19102,
+            "command": {"module": "llm"},
+            "profiles": ["backend"],
+        },
+    }), encoding="utf-8")
+
+    class Platform:
+        def port_owner(self, _port):
+            return None
+
+        def bind_error(self, _host, _port):
+            return PermissionError(10013, "port is excluded by Windows")
+
+    orchestrator = LifecycleOrchestrator(
+        tmp_path,
+        ServiceManifest.load(path),
+        registry=ProcessRegistry(tmp_path / "pids.json"),
+        platform=Platform(),
+    )
+
+    with pytest.raises(LifecycleError, match="cannot bind 127.0.0.1:19102"):
+        orchestrator.start("backend")

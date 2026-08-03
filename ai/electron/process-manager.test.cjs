@@ -1,7 +1,47 @@
 const assert = require('node:assert/strict')
 const test = require('node:test')
 
-const { ProcessManager } = require('./process-manager.cjs')
+const { ProcessManager, requestTimeoutFor } = require('./process-manager.cjs')
+
+test('startup commands keep the lifecycle client alive through model warmup', () => {
+  assert.equal(requestTimeoutFor('start'), 480_000)
+  assert.equal(requestTimeoutFor('restart'), 480_000)
+  assert.equal(requestTimeoutFor('status'), 30_000)
+})
+
+test('startAll passes the long startup timeout to the lifecycle client', () => {
+  const manager = new ProcessManager()
+  const calls = []
+  manager._request = (...args) => {
+    calls.push(args)
+    return Promise.resolve({ availability: 'BLOCKED', services: [], capabilities: [] })
+  }
+
+  manager.startAll()
+
+  assert.deepEqual(calls, [
+    ['start', { profile: 'electron' }, 480_000],
+  ])
+})
+
+test('startAll resolves only after the lifecycle start response is ready', async () => {
+  const manager = new ProcessManager()
+  let resolveRequest
+  manager._request = () => new Promise(resolve => {
+    resolveRequest = resolve
+  })
+
+  let settled = false
+  const pending = manager.startAll().then(status => {
+    settled = true
+    return status
+  })
+
+  await Promise.resolve()
+  assert.equal(settled, false)
+  resolveRequest({ availability: 'FULL_READY', services: [], capabilities: [] })
+  assert.equal((await pending).availability, 'FULL_READY')
+})
 
 test('concurrent refresh calls share one lifecycle status request', async () => {
   const manager = new ProcessManager()
@@ -26,6 +66,25 @@ test('concurrent refresh calls share one lifecycle status request', async () => 
 
   assert.equal(firstStatus.availability, 'TEXT_READY')
   assert.equal(secondStatus.availability, 'TEXT_READY')
+})
+
+test('concurrent restart calls share one lifecycle restart request', async () => {
+  const manager = new ProcessManager()
+  let requestCount = 0
+  let completeRequest
+  manager._request = command => {
+    assert.equal(command, 'restart')
+    requestCount += 1
+    return new Promise(resolve => { completeRequest = resolve })
+  }
+
+  const first = manager.restartAll()
+  const second = manager.restartAll()
+
+  assert.equal(requestCount, 1)
+  assert.equal(first, second)
+  completeRequest({ availability: 'FULL_READY', services: [], capabilities: [] })
+  assert.equal((await first).availability, 'FULL_READY')
 })
 
 test('refresh returns the cached status inside the refresh interval', async () => {

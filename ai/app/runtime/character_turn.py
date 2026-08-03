@@ -118,6 +118,7 @@ class CharacterTurn:
     initiative: dict[str, Any] = field(default_factory=dict)
     turn_count: int = 0
     context_budget: dict[str, Any] = field(default_factory=dict)
+    prompt_messages: list[dict[str, Any]] = field(default_factory=list)
     llm_usage: dict[str, Any] = field(default_factory=dict)
     learned_memories: list[dict[str, Any]] = field(default_factory=list)
     tool_audit: list[dict[str, Any]] = field(default_factory=list)

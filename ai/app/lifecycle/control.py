@@ -127,7 +127,11 @@ class ControlServer:
         self.listener = Listener(
             self.endpoint,
             family="AF_PIPE" if sys.platform == "win32" else "AF_UNIX",
-            authkey=self.token.encode("ascii"),
+            # Do not perform multiprocessing's challenge handshake inside
+            # Listener.accept(). A client that connects and then times out can
+            # otherwise monopolize the only accept loop forever. Authorization
+            # is still enforced by ControlPlane using the per-run token below.
+            authkey=None,
         )
         temporary = record.with_suffix(".tmp")
         temporary.write_text(json.dumps({
@@ -150,23 +154,46 @@ class ControlServer:
 
     def _handle_connection(self, connection) -> None:
         try:
-            request = connection.recv()
+            try:
+                request = connection.recv()
+            except (EOFError, OSError):
+                # A client may be killed by its bounded caller between connect
+                # and send. Keep that abandoned connection isolated to this
+                # daemon thread; the listener must remain available.
+                return
             response = self.control.handle(request)
-            connection.send(response)
-            if request.get("command") == "shutdown" and response.get("ok"):
+            shutdown_requested = request.get("command") == "shutdown" and response.get("ok")
+            if shutdown_requested:
+                # Mark the server for exit before replying. A bounded client
+                # may disconnect while shutdown is stopping child services;
+                # that must not leave the Supervisor alive indefinitely.
                 self.running = False
-                wake = Client(
-                    self.endpoint,
-                    family="AF_PIPE" if sys.platform == "win32" else "AF_UNIX",
-                    authkey=self.token.encode("ascii"),
-                )
-                wake.send({
-                    "schema_version": SCHEMA_VERSION,
-                    "token": self.token,
-                    "command": "status",
-                    "request_id": "shutdown-wakeup",
-                })
-                wake.close()
+            try:
+                connection.send(response)
+            except (BrokenPipeError, EOFError, OSError):
+                # A bounded client request may time out after the Supervisor
+                # has already completed the work. The connection is no longer
+                # useful, but this must not produce a noisy daemon-thread
+                # traceback or destabilize the control server.
+                pass
+            if shutdown_requested:
+                try:
+                    wake = Client(
+                        self.endpoint,
+                        family="AF_PIPE" if sys.platform == "win32" else "AF_UNIX",
+                        authkey=None,
+                    )
+                    wake.send({
+                        "schema_version": SCHEMA_VERSION,
+                        "token": self.token,
+                        "command": "status",
+                        "request_id": "shutdown-wakeup",
+                    })
+                except (BrokenPipeError, EOFError, OSError):
+                    pass
+                finally:
+                    if "wake" in locals():
+                        wake.close()
         finally:
             connection.close()
 
@@ -177,7 +204,7 @@ def send_request(root: Path, request: dict) -> dict:
     connection = Client(
         record["endpoint"],
         family=record["family"],
-        authkey=record["token"].encode("ascii"),
+        authkey=None,
     )
     try:
         connection.send(request)

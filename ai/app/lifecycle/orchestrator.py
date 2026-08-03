@@ -66,6 +66,9 @@ class LifecycleOrchestrator:
             try:
                 self._start_service(service)
             except LifecycleError:
+                self._failed_services.add(service.name)
+                self._emit("service_state", service_id=service.name, state="failed")
+                self._stop_names([service.name])
                 if service.failure_policy != "isolate":
                     self._stop_names(self.started[rollback_from:])
                     raise
@@ -80,6 +83,11 @@ class LifecycleOrchestrator:
         return self.status()
 
     def _start_service(self, service: Service) -> None:
+        for dependency in service.depends_on:
+            if dependency in self._failed_services or dependency not in self.started:
+                raise LifecycleError(
+                    f"{service.name}: dependency {dependency} is not ready"
+                )
         owner = self.platform.port_owner(service.port)
         if owner:
             actual = self.platform.identity(owner, service.port)
@@ -91,6 +99,13 @@ class LifecycleOrchestrator:
                 return
             raise LifecycleError(
                 f"{service.name}: port {service.port} is occupied by an external or unverified process"
+            )
+        bind_error = getattr(self.platform, "bind_error", lambda _host, _port: None)(
+            service.host, service.port
+        )
+        if bind_error is not None:
+            raise LifecycleError(
+                f"{service.name}: cannot bind {service.host}:{service.port}: {bind_error}"
             )
         log_dir = self.root / "logs" / "launches" / (self.launch_id or "legacy") / "services"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -124,17 +139,15 @@ class LifecycleOrchestrator:
             self.started.append(service.name)
         self._emit("service_state", service_id=service.name, state="running")
         if not self.probe.wait(service, process):
-            if service.failure_policy == "isolate":
-                import logging
-                logger = logging.getLogger("lifecycle.orchestrator")
-                logger.warning("%s: readiness timeout, isolating failure", service.name)
-                self._failed_services.add(service.name)
-                self._emit("service_state", service_id=service.name, state="failed")
-                return  # Other services continue
             raise LifecycleError(f"{service.name}: readiness timeout")
         if service.warmup:
             self._emit("service_state", service_id=service.name, state="warming")
-            self._warmup(service)
+            try:
+                self._warmup(service)
+            except Exception as exc:
+                if isinstance(exc, LifecycleError):
+                    raise
+                raise LifecycleError(f"{service.name}: warmup failed: {exc}") from exc
         self._emit("service_state", service_id=service.name, state="ready")
 
     def _warmup(self, service: Service) -> None:

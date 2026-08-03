@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import ctypes
+import socket
 from ctypes import wintypes
 from pathlib import Path
 
@@ -97,6 +98,22 @@ class PlatformProcessAdapter:
         for connection in psutil.net_connections(kind="inet"):
             if connection.status == psutil.CONN_LISTEN and connection.laddr.port == port:
                 return connection.pid
+        return None
+
+    def bind_error(self, host: str, port: int) -> OSError | None:
+        """Return the OS bind error before starting a slow model process.
+
+        On Windows, excluded port ranges fail with WinError 10013 without a
+        listening owner. Detecting that here avoids waiting for a readiness
+        timeout after the child has already exited.
+        """
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.bind((host, port))
+        except OSError as exc:
+            return exc
+        finally:
+            probe.close()
         return None
 
     def terminate_tree(self, identity: ProcessIdentity) -> bool:

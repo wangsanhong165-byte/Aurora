@@ -7,17 +7,19 @@ const detailBody = document.querySelector('#detail-body')
 
 const svcLabel = { ready: '就绪', warming: '启动中', failed: '失败', blocked: '等待', unavailable: '不可用' }
 const svcClass = s => `s-${s}`
+const serviceStatus = svc => svc.status || svc.state || 'unavailable'
 
 function renderServiceRows(services) {
   detailBody.replaceChildren(...(services || []).map(svc => {
     const row = document.createElement('div')
-    row.className = 'svc-row ' + svcClass(svc.state)
+    const currentStatus = serviceStatus(svc)
+    row.className = 'svc-row ' + svcClass(currentStatus)
     const name = document.createElement('span')
     name.className = 'n'
     name.textContent = svc.display_name || svc.id || svc.name
     const state = document.createElement('span')
     state.className = 's'
-    state.textContent = svcLabel[svc.state] || svc.state
+    state.textContent = svcLabel[currentStatus] || currentStatus
     row.append(name, state)
     return row
   }))
@@ -49,7 +51,7 @@ function render(snapshot) {
   // Error display
   const hasErr = caps.some(c => c.state === 'failed')
   const detailSvc = snapshot.services || []
-  const hasSvcErr = detailSvc.some(s => s.state === 'failed')
+  const hasSvcErr = detailSvc.some(s => serviceStatus(s) === 'failed')
 
   if (hasErr || hasSvcErr) {
     errorHost.style.display = 'block'

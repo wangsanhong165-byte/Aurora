@@ -19,9 +19,9 @@ class HealthProbe:
             with request.urlopen(
                 f"http://{service.host}:{service.port}{service.health}", timeout=2
             ) as response:
-                if response.status not in (200, 404):
+                if response.status != 200:
                     return False
-                if service.readiness and response.status == 200:
+                if service.readiness:
                     import json
                     payload = json.loads(response.read() or b"{}")
                     return payload.get("ready", True) is not False

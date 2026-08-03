@@ -18,11 +18,14 @@ import tempfile
 import threading
 import time
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from app.runtime.runtime import runtime as default_runtime
+from app.runtime.prompt_config import PromptConfigStore
+from app.runtime.prompt_overrides import PromptOverrideStore
 
 logger = logging.getLogger("runtime.management")
 
@@ -47,6 +50,8 @@ class RuntimeManager:
         # Pinned memories
         self._pinned_cache: str = ""
         self._pinned_path: Path | None = None
+        self._prompt_overrides = PromptOverrideStore(self._base_dir / "data" / "prompts")
+        self._prompt_configs = PromptConfigStore(self._base_dir / "data" / "prompts")
 
         self._ensure_dirs()
 
@@ -330,6 +335,214 @@ class RuntimeManager:
         path.write_text(content, encoding="utf-8")
         logger.info("[Pinned] Updated (%d chars)", len(content))
         return content
+
+    # ── Prompt overrides ─────────────────────────────────────────────
+
+    def get_prompt_override(self) -> dict[str, str]:
+        """Return the current character's user-owned prompt addition."""
+        character_id = self.get_character_id()
+        return {
+            "character_id": character_id,
+            "content": self._prompt_overrides.get(character_id),
+        }
+
+    def set_prompt_override(self, content: str) -> dict[str, str]:
+        """Persist the current character's user-owned prompt addition."""
+        character_id = self.get_character_id()
+        normalized = self._prompt_overrides.set(character_id, content)
+        logger.info("[PromptOverride] Updated for %s (%d chars)", character_id, len(normalized))
+        return {"character_id": character_id, "content": normalized}
+
+    def get_prompt_config(self, character_id: str = "") -> dict[str, Any]:
+        """Return the complete editable prompt policy for one character."""
+        requested_id = str(character_id or self.get_character_id())
+        rules = self._prompt_configs.get(requested_id)
+        previews = self._last_prompt_source_contents(requested_id, rules)
+        defaults = self._static_prompt_source_defaults(requested_id)
+        sources = []
+        for definition in self._prompt_configs.definitions():
+            source_id = str(definition["id"])
+            sources.append({
+                **definition,
+                **rules[source_id],
+                "default_content": defaults.get(source_id, ""),
+                "last_content": previews.get(source_id, ""),
+            })
+        return {
+            "character_id": requested_id,
+            "sources": sources,
+            "addition": self._prompt_overrides.get(requested_id),
+        }
+
+    def set_prompt_config(
+        self,
+        character_id: str,
+        sources: dict[str, Any],
+        addition: str,
+    ) -> dict[str, Any]:
+        """Persist one character's source policy and free-form addition."""
+        requested_id = str(character_id or self.get_character_id())
+        normalized_addition = str(addition).replace("\r\n", "\n").strip()
+        if len(normalized_addition) > self._prompt_overrides.MAX_CHARS:
+            raise ValueError(
+                f"prompt override exceeds {self._prompt_overrides.MAX_CHARS} characters"
+            )
+        self._prompt_configs.set(requested_id, sources)
+        self._prompt_overrides.set(requested_id, normalized_addition)
+        logger.info("[PromptConfig] Updated for %s", requested_id)
+        return self.get_prompt_config(requested_id)
+
+    def get_prompt_view(self, character_id: str = "") -> dict[str, Any]:
+        """Return the latest message list actually submitted to the LLM."""
+        requested_id = str(character_id or self.get_character_id())
+        # Validate the explicit ID before exposing file-backed data.
+        self._prompt_configs.get(requested_id)
+        snapshot = getattr(self._runtime, "_last_prompt_snapshot", None)
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        snapshot_character_id = str(snapshot.get("character_id", ""))
+        if snapshot_character_id and snapshot_character_id != requested_id:
+            snapshot = {}
+        messages = snapshot.get("messages", [])
+        if not isinstance(messages, list):
+            messages = []
+        budget = snapshot.get("context_budget", {})
+        if not isinstance(budget, dict):
+            budget = {}
+        decorated_messages = self._decorate_prompt_messages(requested_id, messages)
+        return {
+            "available": bool(decorated_messages),
+            "character_id": requested_id,
+            "snapshot_character_id": str(snapshot.get("character_id", "")),
+            "turn_id": str(snapshot.get("turn_id", "")),
+            "created_at": float(snapshot.get("created_at", 0) or 0),
+            "messages": decorated_messages,
+            "context_budget": deepcopy(budget),
+            "override": self._prompt_overrides.get(requested_id),
+        }
+
+    def _decorate_prompt_messages(
+        self,
+        character_id: str,
+        messages: list[Any],
+    ) -> list[dict[str, Any]]:
+        rules = self._prompt_configs.get(character_id)
+        replacements = {
+            entry["content"]: source_id
+            for source_id, entry in rules.items()
+            if entry.get("mode") == "replace" and entry.get("content")
+        }
+        decorated: list[dict[str, Any]] = []
+        for raw_message in messages:
+            if not isinstance(raw_message, dict):
+                continue
+            message = deepcopy(raw_message)
+            role = str(message.get("role", ""))
+            content = str(message.get("content", ""))
+            if role == "system":
+                message["source_id"] = (
+                    replacements.get(content)
+                    or self._source_id_from_content(content)
+                    or "system"
+                )
+            elif role == "user":
+                message["source_id"] = "user_input"
+            elif role == "assistant":
+                message["source_id"] = "assistant_history"
+            elif role == "tool":
+                message["source_id"] = "tool_result"
+            decorated.append(message)
+        return decorated
+
+    def _last_prompt_source_contents(
+        self,
+        character_id: str,
+        rules: dict[str, dict[str, str]],
+    ) -> dict[str, str]:
+        snapshot = getattr(self._runtime, "_last_prompt_snapshot", None)
+        if not isinstance(snapshot, dict) or str(snapshot.get("character_id", "")) != character_id:
+            return {}
+        messages = snapshot.get("messages", [])
+        if not isinstance(messages, list):
+            return {}
+
+        replacements = {
+            entry["content"]: source_id
+            for source_id, entry in rules.items()
+            if entry.get("mode") == "replace" and entry.get("content")
+        }
+        previews: dict[str, str] = {}
+        for message in messages:
+            if not isinstance(message, dict) or message.get("role") != "system":
+                continue
+            content = str(message.get("content", ""))
+            source_id = replacements.get(content) or self._source_id_from_content(content)
+            if source_id and source_id not in previews:
+                previews[source_id] = content
+        return previews
+
+    def _static_prompt_source_defaults(self, character_id: str) -> dict[str, str]:
+        """Build static defaults through the real planner, independent of snapshots."""
+        character = getattr(
+            getattr(self._runtime, "_character_step", None),
+            "character",
+            None,
+        )
+        if character is None or str(getattr(character, "id", "")) != character_id:
+            return {}
+
+        class _EmptyOverrideStore:
+            @staticmethod
+            def get(_character_id: str) -> str:
+                return ""
+
+        class _DefaultOnlyConfigStore:
+            @staticmethod
+            def resolve(
+                _character_id: str,
+                _source_id: str,
+                default_content: str,
+            ) -> str:
+                return default_content
+
+        from app.runtime.character_turn import CharacterTurn, TurnInput
+        from app.runtime.default_planner import DefaultPlanner
+
+        turn = CharacterTurn(input=TurnInput(text="__prompt_preview__"))
+        turn.character = character
+        messages = DefaultPlanner(
+            prompt_store=_EmptyOverrideStore(),
+            prompt_config_store=_DefaultOnlyConfigStore(),
+        ).plan(turn).messages
+
+        defaults: dict[str, str] = {}
+        static_sources = {"language", "persona", "output_protocol"}
+        for message in messages:
+            if not isinstance(message, dict) or message.get("role") != "system":
+                continue
+            content = str(message.get("content", ""))
+            source_id = self._source_id_from_content(content)
+            if source_id in static_sources and source_id not in defaults:
+                defaults[source_id] = content
+        return defaults
+
+    @staticmethod
+    def _source_id_from_content(content: str) -> str:
+        prefixes = (
+            ("LANGUAGE LOCK:", "language"),
+            ("Compiled memory context:", "memory_summary"),
+            ("Relevant past context:", "relevant_memory"),
+            ("Current emotion:", "emotion"),
+            ("[Dynamic character state]", "character_state"),
+            ("[Output Instructions]", "output_protocol"),
+        )
+        stripped = content.lstrip()
+        for prefix, source_id in prefixes:
+            if stripped.startswith(prefix):
+                return source_id
+        if stripped.startswith("Additional project instructions for this character:"):
+            return "addition"
+        return "persona"
 
     def _memory_store(self):
         provider = getattr(self._runtime, "providers", {}).get("memory")
