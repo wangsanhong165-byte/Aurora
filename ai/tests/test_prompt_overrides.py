@@ -210,7 +210,10 @@ def test_default_planner_places_override_after_character_setting(tmp_path):
     store = PromptOverrideStore(tmp_path / "data" / "prompts")
     store.set("monika", "附加项目规则")
 
-    messages = DefaultPlanner(prompt_store=store).plan(_turn()).messages
+    messages = DefaultPlanner(
+        prompt_store=store,
+        prompt_config_store=PromptConfigStore(tmp_path / "data" / "prompts"),
+    ).plan(_turn()).messages
     system_contents = [
         message["content"]
         for message in messages

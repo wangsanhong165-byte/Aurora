@@ -2,6 +2,7 @@ export type DrawerSection =
   | 'history'
   | 'prompt'
   | 'character'
+  | 'characters'
   | 'memory'
   | 'capabilities'
   | 'live2d'
@@ -27,6 +28,7 @@ const DRAWER_SECTIONS: DrawerSection[] = [
   'history',
   'prompt',
   'character',
+  'characters',
   'memory',
   'capabilities',
   'live2d',

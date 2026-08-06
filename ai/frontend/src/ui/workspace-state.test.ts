@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import './character-catalog.test.ts'
 
 import {
   clampDrawerWidth,
@@ -40,6 +41,12 @@ test('prompt is a valid drawer section', () => {
     section: 'prompt',
     expanded: true,
     width: 380,
+  })
+})
+
+test('character library is a valid drawer section', () => {
+  assert.deepEqual(createInitialDrawerState('characters', 380), {
+    section: 'characters', expanded: true, width: 380,
   })
 })
 

@@ -47,16 +47,33 @@
       "shrug"
     ],
     "behavior_map": {
-      "greet": { "expression": "happy", "motion": "wave" },
-      "agree": { "motion": "nod" },
-      "disagree": { "motion": "tilt" },
-      "think": { "motion": "thinking", "suppressIdle": true },
-      "excited": { "expression": "joyful", "motion": "wave", "motionIntensityScale": 1.15 }
+      "greet": {
+        "expression": "happy",
+        "motion": "wave"
+      },
+      "agree": {
+        "motion": "nod"
+      },
+      "disagree": {
+        "motion": "tilt"
+      },
+      "think": {
+        "motion": "thinking",
+        "suppressIdle": true
+      },
+      "excited": {
+        "expression": "joyful",
+        "motion": "wave",
+        "motionIntensityScale": 1.15
+      }
     },
     "personality": {
       "expressionIntensityScale": 0.9,
       "motionIntensityScale": 0.85,
-      "emotionBehavior": { "joyful": "excited", "cheerful": "excited" }
+      "emotionBehavior": {
+        "joyful": "excited",
+        "cheerful": "excited"
+      }
     },
     "accessories": {
       "护目镜": "8",
@@ -186,5 +203,15 @@
       "nod",
       "shrug"
     ]
+  },
+  "alice": {
+    "prompt_emotions": [
+      "neutral"
+    ],
+    "emotion_map": {
+      "neutral": ""
+    },
+    "behaviors": [],
+    "behavior_map": {}
   }
 }

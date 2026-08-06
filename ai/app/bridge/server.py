@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Response, WebSocket
+from fastapi import FastAPI, HTTPException, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.responses import FileResponse
@@ -29,6 +29,18 @@ _avatar_profiles: dict[str, Any] | None = None
 
 # UI mode tracking
 _ui_mode: str = "window"  # "window" or "pet"
+
+_LOCAL_UI_ORIGINS = {
+    "http://127.0.0.1:9528",
+    "http://localhost:9528",
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+}
+
+
+def _is_allowed_client_origin(origin: str) -> bool:
+    """Reject browser cross-site WebSocket access to local management commands."""
+    return not origin or origin.lower().rstrip("/") in _LOCAL_UI_ORIGINS
 
 # Runtime manager (lazy init)
 _manager: Any = None
@@ -297,7 +309,7 @@ async def resolve_tool_confirmation(request_id: str, payload: dict):
     return {"resolved": resolved}
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=sorted(_LOCAL_UI_ORIGINS),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -393,12 +405,14 @@ async def list_models():
 @app.post("/api/set-model")
 async def set_model(data: dict):
     """Receive model selection from frontend before page reload."""
-    global _live2d_model
+    global _live2d_config, _live2d_model
     name = data.get("model", "")
+    _live2d_config = None
     cfg = _load_live2d_config()
-    if name and name in cfg:
-        _live2d_model = name
-        logger.info("[Live2D] Model switched to: %s", name)
+    if not name or name not in cfg:
+        raise HTTPException(status_code=404, detail=f"Live2D model not found: {name}")
+    _live2d_model = name
+    logger.info("[Live2D] Model switched to: %s", name)
     return {"status": "ok"}
 
 
@@ -463,6 +477,9 @@ async def save_settings(data: dict):
 @app.websocket("/client-ws")
 async def client_websocket_endpoint(websocket: WebSocket):
     """Serve the canonical V3 runtime protocol."""
+    if not _is_allowed_client_origin(websocket.headers.get("origin", "")):
+        await websocket.close(code=1008, reason="untrusted origin")
+        return
     from app.transport.websocket.handler import RuntimeEventHandler
     from app.transport.session import WebSocketSession
 

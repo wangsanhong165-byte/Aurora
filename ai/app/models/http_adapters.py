@@ -42,12 +42,31 @@ class HTTPTTSAdapter:
         self.timeout = timeout
 
     def synthesize(self, text: str, **options: Any) -> bytes:
-        language = str(options.get("language") or os.environ.get("TTS_LANGUAGE", "zh"))
-        payload: dict[str, Any] = {"text": text, "language": language}
-        if speaker := options.get("speaker"):
-            payload["speaker"] = speaker
-        if ref_audio := options.get("ref_audio"):
-            payload["ref_audio"] = ref_audio
+        payload: dict[str, Any] = {"text": text}
+        allowed = (
+            "engine",
+            "voice",
+            "speaker",
+            "text_lang",
+            "prompt_lang",
+            "prompt_text",
+            "ref_audio_path",
+            "gpt_weights",
+            "sovits_weights",
+            "speed_factor",
+            "emotion",
+        )
+        for key in allowed:
+            if options.get(key) not in (None, ""):
+                payload[key] = options[key]
+
+        # Keep older callers working while normalizing onto the engine's names.
+        if "text_lang" not in payload:
+            payload["text_lang"] = str(
+                options.get("language") or os.environ.get("TTS_LANGUAGE", "zh")
+            )
+        if "ref_audio_path" not in payload and options.get("ref_audio"):
+            payload["ref_audio_path"] = options["ref_audio"]
         response = requests.post(
             f"{self.base_url}/v1/tts/synthesize",
             json=payload,

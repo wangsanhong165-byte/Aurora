@@ -9,29 +9,11 @@ export interface CharacterInfo {
 }
 
 export interface CharacterSelectProps {
+  characters: CharacterInfo[]
   activeCharacterId: string
   onSwitchCharacter: (characterId: string) => void
   disabled?: boolean
 }
-
-/** Default characters matching the Live2D config and config/characters/index.yaml layout */
-export const DEFAULT_CHARACTERS: CharacterInfo[] = [
-  {
-    id: 'monika',
-    name: 'Monika',
-    description: 'The cheerful Literature Club president',
-  },
-  {
-    id: 'youxiaomiao',
-    name: 'You Xiaomiao',
-    description: 'A lively and playful companion',
-  },
-  {
-    id: 'ariu',
-    name: 'Ariu',
-    description: 'A gentle and caring presence',
-  },
-]
 
 function AvatarPlaceholder({ name, size }: { name: string; size: number }) {
   const initial = name.charAt(0).toUpperCase()
@@ -60,6 +42,7 @@ function AvatarPlaceholder({ name, size }: { name: string; size: number }) {
 }
 
 export function CharacterSelect({
+  characters,
   activeCharacterId,
   onSwitchCharacter,
   disabled = false,
@@ -70,7 +53,7 @@ export function CharacterSelect({
         <span style={styles.headerTitle}>Characters</span>
       </div>
       <div style={styles.list}>
-        {DEFAULT_CHARACTERS.map((char) => {
+        {characters.map((char) => {
           const isActive = char.id === activeCharacterId
           return (
             <button

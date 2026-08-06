@@ -25,18 +25,6 @@ export interface SettingsPanelProps {
   onAccessoryToggle?: (label: string) => void
 }
 
-const CHARACTERS = [
-  { id: 'monika', label: 'Monika' },
-]
-
-const LIVE2D_MODELS = [
-  { id: 'Design_genius_White', label: 'Design Genius White' },
-  { id: 'youxiaomiao', label: 'You Xiaomiao' },
-  { id: 'ariu', label: 'Ariu' },
-  { id: 'mao_zh-Hans', label: 'Mao (CN)' },
-  { id: 'hiyori_zh-Hans', label: 'Hiyori (CN)' },
-]
-
 const LIVE2D_TOGGLES = [
   { key: 'live2dBlink' as const, label: '自动眨眼', desc: '根据模型能力自然控制双眼' },
   { key: 'live2dBreathe' as const, label: '呼吸微动', desc: '身体起伏与轻微摇摆' },
@@ -175,6 +163,18 @@ function GeneralTab({ settings, onSettingChange }: {
   settings: AppSettings
   onSettingChange: (key: string, value: unknown) => void
 }) {
+  const characters = [{ id: settings.activeCharacterId, label: settings.activeCharacterId }]
+  const [models, setModels] = useState<string[]>([settings.live2dModel])
+  useEffect(() => {
+    void fetch('/api/models')
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('models unavailable')))
+      .then((body: { models?: Array<{ name?: string }> }) => {
+        const names = (body.models ?? []).map(model => String(model.name || '')).filter(Boolean)
+        setModels(Array.from(new Set([settings.live2dModel, ...names])))
+      })
+      .catch(() => {})
+  }, [settings.live2dModel])
+
   return (
     <div style={styles.tabContent}>
       <div style={styles.sectionLabel}>Character</div>
@@ -185,7 +185,7 @@ function GeneralTab({ settings, onSettingChange }: {
           value={settings.activeCharacterId}
           onChange={(e) => onSettingChange('activeCharacterId', e.target.value)}
         >
-          {CHARACTERS.map((c) => (
+          {characters.map((c) => (
             <option key={c.id} value={c.id}>{c.label}</option>
           ))}
         </select>
@@ -197,8 +197,8 @@ function GeneralTab({ settings, onSettingChange }: {
           value={settings.live2dModel}
           onChange={(e) => onSettingChange('live2dModel', e.target.value)}
         >
-          {LIVE2D_MODELS.map((m) => (
-            <option key={m.id} value={m.id}>{m.label}</option>
+          {models.map((model) => (
+            <option key={model} value={model}>{model}</option>
           ))}
         </select>
       </SettingRow>
@@ -336,7 +336,7 @@ function AnimationTab({ settings, onSettingChange }: {
         <div>
           <div style={styles.heroTitle}>Live2D 表现工作台</div>
           <div style={styles.heroDesc}>
-            当前模型：{LIVE2D_MODELS.find(model => model.id === settings.live2dModel)?.label ?? settings.live2dModel}
+            当前模型：{settings.live2dModel}
           </div>
         </div>
         <span style={styles.profileBadge}>模型独立配置</span>

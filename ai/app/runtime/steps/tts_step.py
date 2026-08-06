@@ -5,12 +5,28 @@ without crashing the pipeline.
 """
 
 import logging
+from pathlib import Path
 
 from app.runtime.pipeline import Step
 from app.runtime.character_turn import CharacterTurn
 from app.interfaces.tts import TTSInterface
 
 logger = logging.getLogger("tts_step")
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _character_asset(character_id: str, value: object) -> str:
+    """Resolve a character-card asset without allowing it to escape its pack."""
+    relative = str(value or "").strip()
+    if not relative:
+        return ""
+    character_dir = (_PROJECT_ROOT / "config" / "characters" / character_id).resolve()
+    target = (character_dir / relative).resolve()
+    try:
+        target.relative_to(character_dir)
+    except ValueError:
+        return ""
+    return str(target)
 
 
 def _extract_voice_kwargs(ctx: CharacterTurn) -> dict:
@@ -26,20 +42,47 @@ def _extract_voice_kwargs(ctx: CharacterTurn) -> dict:
     tts_cfg = card.get("tts", {})
     kwargs: dict = {}
 
+    engine = tts_cfg.get("engine", "")
+    if engine:
+        kwargs["engine"] = engine
+
     voice = tts_cfg.get("voice", "")
     if voice:
         kwargs["voice"] = voice
 
-    lang = tts_cfg.get("prompt_lang", "")
-    if lang:
-        kwargs["language"] = lang
+    reply_language = card.get("reply_language") or tts_cfg.get("text_lang")
+    if reply_language:
+        kwargs["text_lang"] = reply_language
+
+    prompt_language = tts_cfg.get("prompt_lang", "")
+    if prompt_language:
+        kwargs["prompt_lang"] = prompt_language
+
+    prompt_text = tts_cfg.get("prompt_text", "")
+    if prompt_text:
+        kwargs["prompt_text"] = prompt_text
 
     ref_audio = tts_cfg.get("ref_audio", {})
     if isinstance(ref_audio, dict):
         emotion = ctx.emotion or "neutral"
         ref_path = ref_audio.get(emotion) or ref_audio.get("neutral")
         if ref_path:
-            kwargs["ref_audio"] = ref_path
+            resolved = _character_asset(str(getattr(character, "id", "")), ref_path)
+            if resolved:
+                kwargs["ref_audio_path"] = resolved
+
+    custom_model = tts_cfg.get("custom_model", {})
+    if isinstance(custom_model, dict):
+        t2s = _character_asset(
+            str(getattr(character, "id", "")), custom_model.get("t2s")
+        )
+        vits = _character_asset(
+            str(getattr(character, "id", "")), custom_model.get("vits")
+        )
+        if t2s:
+            kwargs["gpt_weights"] = t2s
+        if vits:
+            kwargs["sovits_weights"] = vits
 
     return kwargs
 

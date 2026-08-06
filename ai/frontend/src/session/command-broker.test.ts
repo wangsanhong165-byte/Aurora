@@ -23,3 +23,14 @@ test('rejects all pending commands when disposed', async () => {
   broker.dispose(new Error('connection closed'))
   await assert.rejects(pending, /connection closed/)
 })
+
+test('keeps complete character imports alive beyond the normal command timeout', async () => {
+  const sent: Array<Record<string, unknown>> = []
+  const broker = new CommandBroker(message => sent.push(message), 5, 100)
+  const pending = broker.request('create_character', {})
+
+  await new Promise(resolve => setTimeout(resolve, 20))
+  broker.resolve(String(sent[0].requestId), { character: { id: 'lantern' } })
+
+  assert.deepEqual(await pending, { character: { id: 'lantern' } })
+})

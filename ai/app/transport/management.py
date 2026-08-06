@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -46,6 +47,13 @@ class ManagementHandler:
             })]
 
     async def _execute(self, action: str, params: dict) -> dict[str, Any]:
+        if action == "get_character_catalog":
+            return await asyncio.to_thread(self._manager.get_character_catalog)
+        if action == "create_character":
+            try:
+                return await asyncio.to_thread(self._manager.create_character, params)
+            except (ValueError, OSError) as exc:
+                raise ManagementFailure("character_import_invalid", str(exc)) from exc
         if action == "get_histories":
             return {"histories": self._manager.get_history_list()}
         if action == "load_history":

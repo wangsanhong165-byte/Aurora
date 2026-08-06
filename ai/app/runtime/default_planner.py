@@ -18,6 +18,15 @@ class Plan:
         self.messages = messages
 
 
+def _reply_language(card: object) -> str:
+    if not isinstance(card, dict):
+        return "en"
+    tts = card.get("tts", {})
+    if not isinstance(tts, dict):
+        tts = {}
+    return str(card.get("reply_language") or tts.get("prompt_lang") or "en")
+
+
 class DefaultPlanner:
     """Build message list from character, memories, conversation, and user input."""
 
@@ -57,9 +66,9 @@ class DefaultPlanner:
         if character is not None:
             card = character.raw_card if hasattr(character, "raw_card") else {}
             if isinstance(card, dict):
-                prompt_lang = card.get("tts", {}).get("prompt_lang", "en")
-        native_map = {"en": "English", "ja": "Japanese", "zh": "Chinese", "ko": "Korean"}
-        native_override = {"en": "你只能用 English 输出", "ja": "日本語のみで出力してください", "zh": "请用中文输出", "ko": "한국어로만 출력하세요"}
+                prompt_lang = _reply_language(card)
+        native_map = {"en": "English", "ja": "Japanese", "zh": "Chinese", "ko": "Korean", "yue": "Cantonese Chinese"}
+        native_override = {"en": "你只能用 English 输出", "ja": "日本語のみで出力してください", "zh": "请用中文输出", "ko": "한국어로만 출력하세요", "yue": "请只用粤语输出"}
         nl = native_map.get(prompt_lang, "English")
         append_system(
             "language",
@@ -138,14 +147,13 @@ class DefaultPlanner:
         if character is not None:
             card = character.raw_card if hasattr(character, 'raw_card') else {}
             if isinstance(card, dict):
-                tts_cfg = card.get('tts', {})
-                prompt_lang = tts_cfg.get('prompt_lang', 'en')
+                prompt_lang = _reply_language(card)
             else:
                 prompt_lang = 'en'
         else:
             prompt_lang = 'en'
 
-        native_map = {'en': 'English', 'ja': 'Japanese', 'zh': 'Chinese', 'ko': 'Korean'}
+        native_map = {'en': 'English', 'ja': 'Japanese', 'zh': 'Chinese', 'ko': 'Korean', 'yue': 'Cantonese Chinese'}
         nl = native_map.get(prompt_lang, prompt_lang)
         presentation_emotions = ", ".join(sorted(EMOTIONS))
         presentation_behaviors = ", ".join(sorted(BEHAVIORS - {"idle"}))

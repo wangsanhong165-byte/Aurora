@@ -1,6 +1,10 @@
 {
   "$schema": "character/v3",
   "id": "monika",
+  "reply_language": "en",
+  "live2d": {
+    "model": "Design_genius_White"
+  },
   "name": {
     "zh": "Monika",
     "ja": "Monika"

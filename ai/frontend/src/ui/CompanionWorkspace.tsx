@@ -1,4 +1,4 @@
-import { Brain, FilePenLine, History, MessageSquareText, Settings, SlidersHorizontal, Sparkles, Wrench } from 'lucide-react'
+import { Brain, FilePenLine, History, MessageSquareText, Settings, SlidersHorizontal, Sparkles, UsersRound, Wrench } from 'lucide-react'
 
 import type { RecorderState } from '../audio/recorder'
 import { CharacterView } from '../character/CharacterView'
@@ -18,6 +18,8 @@ import {
   MemoryPanel,
 } from './UserViewPanels'
 import type { DrawerSection } from './workspace-state'
+import { CharacterManagerPanel } from './CharacterManagerPanel'
+import type { CharacterDescriptor } from './character-catalog'
 
 const DRAWER_ITEMS: DrawerItem[] = [
   { id: 'history', label: '聊天记录', icon: <History /> },
@@ -25,6 +27,7 @@ const DRAWER_ITEMS: DrawerItem[] = [
   { id: 'character', label: '角色', icon: <MessageSquareText /> },
   { id: 'memory', label: '记忆', icon: <Brain /> },
   { id: 'capabilities', label: '能力', icon: <Sparkles /> },
+  { id: 'characters', label: '角色库', icon: <UsersRound /> },
   { id: 'live2d', label: 'Live2D', icon: <SlidersHorizontal /> },
   { id: 'settings', label: '设置', icon: <Settings /> },
   { id: 'developer', label: '开发者', icon: <Wrench />, placement: 'bottom' },
@@ -49,6 +52,7 @@ export interface CompanionWorkspaceProps {
   onDeleteHistory: (uid: string) => void
   onCreateHistory: () => void
   onSettingChange: (key: string, value: unknown) => void
+  onCharacterActivate: (character: CharacterDescriptor) => Promise<void>
   onAccessoryToggle: (label: string) => void
 }
 
@@ -103,6 +107,12 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
     if (section === 'developer') {
       return <DeveloperWorkspace requestCommand={props.requestCommand} />
     }
+    if (section === 'characters') return (
+      <CharacterManagerPanel
+        requestCommand={props.requestCommand}
+        onActivate={props.onCharacterActivate}
+      />
+    )
     if (section === 'character') return <CharacterSelfPanel requestCommand={props.requestCommand} />
     if (section === 'memory') return <MemoryPanel requestCommand={props.requestCommand} />
     return <CapabilityPanel requestCommand={props.requestCommand} />

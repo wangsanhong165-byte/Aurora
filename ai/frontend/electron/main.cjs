@@ -11,7 +11,7 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
   process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, screen, shell } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, screen, shell, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const {
@@ -20,6 +20,7 @@ const {
   selectRestorableBounds,
 } = require('./pet-window.cjs')
 const { waitForUrl } = require('./startup-readiness.cjs')
+const { dialogOptionsFor } = require('./character-asset-dialog.cjs')
 
 // ProcessManager — backend service lifecycle management
 const { ProcessManager } = require('../../electron/process-manager.cjs')
@@ -206,6 +207,14 @@ function createTray() {
 // ── IPC handlers (window controls) ──
 
 function setupIPC() {
+  ipcMain.handle('character:selectAsset', async (_event, kind) => {
+    const result = await dialog.showOpenDialog(
+      mainWindow,
+      dialogOptionsFor(kind, path.join(__dirname, '..', '..')),
+    )
+    return result.canceled ? '' : (result.filePaths[0] || '')
+  })
+
   // Window controls (from existing UI)
   ipcMain.handle('window:minimize', () => {
     mainWindow?.minimize()

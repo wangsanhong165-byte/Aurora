@@ -34,6 +34,8 @@ def _load(model_dir: Path) -> Qwen3ASRModel:
         str(model_dir),
         dtype=dtype,
         device_map=device_map,
+        low_cpu_mem_usage=True,
+        use_safetensors=True,
         max_inference_batch_size=1,
         max_new_tokens=256,
     )

@@ -15,6 +15,16 @@ def test_asr_startup_loads_the_model_not_only_the_adapter():
     assert '_engine_ready = True' in api
 
 
+def test_asr_model_load_uses_the_low_memory_safetensors_path():
+    engine = (ROOT / "app/modules/asr/engines/qwen.py").read_text(encoding="utf-8")
+
+    # The first safetensors shard is over 4 GB.  On Windows, loading it through
+    # a full CPU state-dict copy can exhaust the commit limit before the model
+    # is moved to the GPU (WinError 1455), leaving the whole lifecycle blocked.
+    assert "low_cpu_mem_usage=True" in engine
+    assert "use_safetensors=True" in engine
+
+
 def test_tts_exposes_real_synthesis_warmup_and_ready_state():
     api = (ROOT / "app/modules/tts/api.py").read_text(encoding="utf-8")
 

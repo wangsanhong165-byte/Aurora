@@ -114,7 +114,9 @@ def _get_char_lang(char_id: str) -> str:
         if path.exists():
             import json
             card = json.loads(path.read_text("utf-8"))
-            lang = card.get("tts", {}).get("prompt_lang", "en")
+            lang = card.get("reply_language") or card.get("tts", {}).get("prompt_lang", "en")
+            if lang == "yue":
+                lang = "zh"  # Written Cantonese uses the Chinese memory prompt family.
             return lang if lang in _PROMPTS else "en"
     except Exception:
         pass

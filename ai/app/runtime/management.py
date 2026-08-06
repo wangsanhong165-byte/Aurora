@@ -26,6 +26,7 @@ from typing import Any
 from app.runtime.runtime import runtime as default_runtime
 from app.runtime.prompt_config import PromptConfigStore
 from app.runtime.prompt_overrides import PromptOverrideStore
+from app.character.catalog import CharacterCatalog
 
 logger = logging.getLogger("runtime.management")
 
@@ -52,6 +53,7 @@ class RuntimeManager:
         self._pinned_path: Path | None = None
         self._prompt_overrides = PromptOverrideStore(self._base_dir / "data" / "prompts")
         self._prompt_configs = PromptConfigStore(self._base_dir / "data" / "prompts")
+        self._character_catalog = CharacterCatalog(self._base_dir)
 
         self._ensure_dirs()
 
@@ -733,6 +735,17 @@ class RuntimeManager:
         return {"name": name.strip(), "enabled": bool(enabled)}
 
     # ── Character switching ─────────────────────────────────────────
+
+    def get_character_catalog(self) -> dict[str, Any]:
+        return {
+            "active_character_id": self.get_character_id(),
+            "characters": self._character_catalog.list(),
+        }
+
+    def create_character(self, specification: dict[str, Any]) -> dict[str, Any]:
+        character = self._character_catalog.create(specification)
+        logger.info("[CharacterCatalog] Imported complete pack: %s", character["id"])
+        return {"character": character}
 
     def switch_character(self, character_id: str) -> dict:
         """Switch the active character. Returns result dict."""

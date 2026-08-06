@@ -1,0 +1,78 @@
+{
+  "model": "alice",
+  "expressions": [
+    "neutral",
+    "happy",
+    "sad",
+    "angry",
+    "surprised",
+    "joyful",
+    "shy"
+  ],
+  "motions": [
+    "speak",
+    "greet",
+    "wave",
+    "nod",
+    "tilt",
+    "shrug",
+    "thinking",
+    "react",
+    "return_idle"
+  ],
+  "sequences": [
+    "greet",
+    "thinking",
+    "react"
+  ],
+  "parameters": {
+    "eye": {
+      "x": "ParamEyeBallX",
+      "y": "ParamEyeBallY"
+    },
+    "mouth": {
+      "open": "ParamMouthOpenY",
+      "form": "ParamMouthForm"
+    },
+    "face": {
+      "angleX": "ParamAngleX",
+      "angleY": "ParamAngleY"
+    }
+  },
+  "bindings": {
+    "eye.x": "ParamEyeBallX",
+    "eye.y": "ParamEyeBallY",
+    "head.x": "ParamAngleX",
+    "head.y": "ParamAngleY",
+    "head.z": "ParamAngleZ",
+    "body.x": "ParamBodyAngleX",
+    "body.y": "ParamBodyAngleY",
+    "mouth.open": "ParamMouthOpenY",
+    "mouth.form": "ParamMouthForm",
+    "breath": "ParamBreath",
+    "blink.left": "ParamEyeLOpen",
+    "blink.right": "ParamEyeROpen"
+  },
+  "motionStyle": {
+    "preset": "natural",
+    "microMotionGain": 1.0,
+    "idleActionGain": 0.95,
+    "gestureFrequency": 0.9,
+    "speechAccentGain": 0.95
+  },
+  "personality": {
+    "expressiveness": 0.78,
+    "softness": 0.68,
+    "shyness": 0.42
+  },
+  "capabilities": {
+    "headControl": true,
+    "bodyControl": true,
+    "gazeControl": true,
+    "eyeBlink": true
+  },
+  "performanceMode": "enhanced",
+  "parameterGain": 1.2,
+  "bodyMotionGain": 1.08,
+  "motionMap": {}
+}

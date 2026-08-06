@@ -83,7 +83,13 @@ export interface EventMap {
     durationMs?: number
     metadata?: Record<string, unknown>
   }
-  'character:switch_model': { name: string }
+  'character:switch_model': { name: string; requestId?: string }
+  'character:model_load_result': {
+    name: string
+    requestId: string
+    status: 'loaded' | 'failed' | 'superseded'
+    message?: string
+  }
   'accessory:loaded': { parts: Record<string, string>; state: Record<string, boolean> }
   'accessory:toggle': { label: string }
   'accessory:set': { label: string; enabled: boolean }

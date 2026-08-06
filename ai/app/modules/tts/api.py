@@ -155,8 +155,8 @@ def synthesize_endpoint(req: dict = Body(...)) -> Response:
     if not text:
         raise HTTPException(status_code=400, detail="text is empty")
     try:
-        engine = _get_engine(_resolve_engine())
-        opts = {k: v for k, v in req.items() if k != "text"}
+        engine = _get_engine(str(req.get("engine") or _resolve_engine()))
+        opts = {k: v for k, v in req.items() if k not in {"text", "engine"}}
         audio = engine.synthesize(text, **opts)
         return Response(content=audio, media_type="audio/wav")
     except Exception as exc:

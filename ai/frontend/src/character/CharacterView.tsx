@@ -473,20 +473,42 @@ export const CharacterView = memo(function CharacterView() {
     })
 
     // Listen for model switch
-    const unsubModel = eventBus.on('character:switch_model', async ({ name }) => {
+    const unsubModel = eventBus.on('character:switch_model', async ({ name, requestId }) => {
       const url = modelUrl(name)
       setLoadState('loading')
 
       const result = await modelMgr.load(url)
-      if (!alive || result.status === 'superseded') return
+      if (!alive) return
+      if (result.status === 'superseded') {
+        if (requestId) eventBus.emit('character:model_load_result', {
+          name, requestId, status: 'superseded', message: 'A newer model load replaced this request',
+        })
+        return
+      }
       if (result.status !== 'loaded' || !modelMgr.getModel()) {
         setLoadState('unavailable')
+        if (requestId) eventBus.emit('character:model_load_result', {
+          name,
+          requestId,
+          status: 'failed',
+          message: result.status === 'failed'
+            ? `Cubism could not load ${name}: ${String(result.error)}`
+            : `Cubism could not load ${name}`,
+        })
         return
       }
 
-      if (!attachCommittedModel(name, result.generation)) return
+      if (!attachCommittedModel(name, result.generation)) {
+        if (requestId) eventBus.emit('character:model_load_result', {
+          name, requestId, status: 'failed', message: `Cubism could not attach ${name}`,
+        })
+        return
+      }
       eventBus.emit('character:interaction', { type: 'scene', value: `model:${name}`, intensity: 0.28 })
       setLoadState('loaded')
+      if (requestId) eventBus.emit('character:model_load_result', {
+        name, requestId, status: 'loaded',
+      })
 
       // Persist model name so next session remembers it
       try { localStorage.setItem('live2d_model_name', name) } catch (_) {}

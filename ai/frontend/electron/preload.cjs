@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   startWindowDrag: () => ipcRenderer.send('window:dragStart'),
   endWindowDrag: () => ipcRenderer.send('window:dragEnd'),
   getSettings: () => ipcRenderer.invoke('app:getSettings'),
+  selectCharacterAsset: (kind) => ipcRenderer.invoke('character:selectAsset', kind),
 
   // ── ProcessManager / backend lifecycle ──
   getStatus: () => ipcRenderer.invoke('get-status'),

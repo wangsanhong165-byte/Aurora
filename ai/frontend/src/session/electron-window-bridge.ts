@@ -11,6 +11,7 @@ declare global {
       startWindowDrag: () => void
       endWindowDrag: () => void
       getSettings: () => Record<string, unknown>
+      selectCharacterAsset?: (kind: string) => Promise<string>
       getStatus?: () => Promise<{ services?: Array<Record<string, unknown>> }>
       onLifecycleSnapshot?: (callback: (snapshot: {
         availability?: string

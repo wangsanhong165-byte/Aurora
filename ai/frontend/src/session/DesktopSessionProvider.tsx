@@ -16,6 +16,8 @@ import type { AiActivity } from '../core/types'
 import type { AppSettings } from '../core/store'
 import type { ChatMessage } from '../core/types'
 import { CompanionWorkspace } from '../ui/CompanionWorkspace'
+import type { CharacterDescriptor } from '../ui/character-catalog'
+import { requestLive2DModelLoad } from './live2d-switch'
 import { resolveHistoryCommand } from '../conversation/history-command'
 import { PermissionDialog } from '../ui/PermissionDialog'
 import {
@@ -389,6 +391,51 @@ export function DesktopSessionWorkspace() {
     }
   }, [])
 
+  const handleCharacterActivate = useCallback(async (character: CharacterDescriptor) => {
+    const client = clientRef.current
+    if (!client) throw new Error('runtime disconnected')
+    const previousModel = settings.live2dModel
+    const nextModel = character.live2dModel
+    let modelSwitched = false
+    try {
+      if (nextModel && nextModel !== previousModel) {
+        const response = await fetch('/api/set-model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: nextModel }),
+        })
+        if (!response.ok) throw new Error(`Live2D model switch failed: ${response.status}`)
+        modelSwitched = true
+        await requestLive2DModelLoad(nextModel)
+      }
+      await client.requestCommand('switch_character', { character_id: character.id })
+      actions.setSetting('activeCharacterId', character.id)
+      if (nextModel) {
+        actions.setSetting('live2dModel', nextModel)
+      }
+    } catch (error) {
+      if (modelSwitched && previousModel) {
+        try {
+          const rollback = await fetch('/api/set-model', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: previousModel }),
+          })
+          if (!rollback.ok) {
+            throw new Error(`Live2D rollback failed: ${rollback.status}`)
+          }
+        } catch (rollbackError) {
+          const originalMessage = error instanceof Error ? error.message : String(error)
+          const rollbackMessage = rollbackError instanceof Error
+            ? rollbackError.message
+            : String(rollbackError)
+          throw new Error(`${originalMessage}; ${rollbackMessage}`)
+        }
+      }
+      throw error
+    }
+  }, [actions, settings.live2dModel])
+
   // Persist settings to backend whenever they change
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -467,6 +514,7 @@ export function DesktopSessionWorkspace() {
             .catch(() => setHistoryLoading(false))
         }}
         onSettingChange={handleSettingChange}
+        onCharacterActivate={handleCharacterActivate}
         onAccessoryToggle={handleAccessoryToggle}
       />
       {settings.windowMode !== 'pet' && <StatusBar />}
