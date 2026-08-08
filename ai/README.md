@@ -15,6 +15,10 @@ Monika Voice Companion 是一个运行在 Windows 上的本地 AI 语音陪伴�
 - **主动对话** — 空闲检测、屏幕监控触发主动关怀
 - **工具使用** — MCP 工具系统（搜索、时间等）
 
+### 角色与资源
+
+角色卡（`config/characters/<id>/character.json`）是薄声明，**引用**系统级资源而非复制：Live2D 模型（`models/live2d-models/`）与声线包（`config/voices/`）。前端角色资源库按「角色 / 声线 / 模型」三库拆分，角色创建只需选模型和声线；记忆面板可查看每角色的编译记忆（LLM 视角）。
+
 ---
 
 ## 环境要求
@@ -32,11 +36,11 @@ Monika Voice Companion 是一个运行在 Windows 上的本地 AI 语音陪伴�
 
 | 服务 | 端口 | 用途 |
 |------|------|------|
-| ASR | :9101 | Qwen3-ASR 语音识别 |
-| LLM | :9102 | OpenAI-compatible LLM API |
-| TTS | :9103 | TTS 统一入口 |
-| Memory | :9104 | SQLite+FTS5 记忆服务 |
-| GSVI | :9105 | GPT-SoVITS v2Pro |
+| ASR | :19201 | Qwen3-ASR 语音识别 |
+| LLM | :19202 | OpenAI-compatible LLM API |
+| TTS | :19203 | TTS 统一入口 |
+| Memory | :19204 | SQLite+FTS5 记忆服务 |
+| GSVI | :19205 | GPT-SoVITS v2Pro |
 | Bridge | :9528 | Web 服务 + WebSocket API |
 
 ---

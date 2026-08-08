@@ -1,7 +1,7 @@
 # Architecture — CharacterTurn Runtime V3
 
 > Date: 2026-07-29
-> Branch: `2.5`
+> Branch: `2.7`
 > This document describes the current implementation. Code and tests remain authoritative.
 
 ## Runtime ownership
@@ -126,17 +126,33 @@ expiry, timestamp, and payload.
 
 Initiative never interrupts an active user or speech turn.
 
+## Character and voice assets
+
+Character cards (`config/characters/<id>/character.json`) are thin declarations that
+**reference** system-level resources instead of embedding them:
+
+- Live2D models live in `models/live2d-models/<model_id>/`; `register_model` backfills
+  the side registries (`live2d_models.json`, `avatar_profiles/`).
+- Voice packs live in `config/voices/<voice_id>/` (`VoiceRegistry`); a card references one
+  via `tts.voice_id`, resolved by `tts_step` instead of per-character embedded assets.
+- `create_character` supports a reference spec `{model_id, voice_id}` that validates the
+  refs and writes only the card — nothing is copied.
+- `switch_character` persists the active character to `config/characters/index.yaml`
+  (`default`) so the next startup loads the same character.
+- The memory panel can show each character's compiled memory (`memory.md`) via
+  `get_compiled_memory_view`.
+
 ## Service configuration
 
 `config/services.json` is the single checked-in service-port source:
 
 | Service | Port |
 |---|---:|
-| ASR | 9101 |
-| LLM | 9102 |
-| TTS | 9103 |
-| Memory | 9104 |
-| GSVI | 9105 |
+| ASR | 19201 |
+| LLM | 19202 |
+| TTS | 19203 |
+| Memory | 19204 |
+| GSVI | 19205 |
 | Bridge | 9528 |
 | Vite frontend | 5173 |
 
