@@ -129,7 +129,7 @@ test('expression release keeps submitting until the real baseline is restored', 
   assert.equal(afterRelease.some(item => item.parameterId === 'ParamCheek'), false)
 })
 
-test('partial override fades from lower layer while full override is exclusive', () => {
+test('partial override fades from the baseline while full override is exclusive', () => {
   const mixer = new ParameterMixer()
   const submit = (id: string, value: number, priority: number, weight: number) => mixer.submit({
     id,
@@ -143,7 +143,9 @@ test('partial override fades from lower layer while full override is exclusive',
   })
   submit('idle', 10, 10, 1)
   submit('gesture', 30, 50, 0.25)
-  assert.equal(mixer.resolve().ParamArm, 15)
+  // Winner (priority 50) fades from the model baseline, not from the lower
+  // layer's pose: 0 + (30 - 0) * 0.25 = 7.5. Old in-between behaviour was 15.
+  assert.equal(mixer.resolve().ParamArm, 7.5)
 
   mixer.resetFrame()
   submit('idle', 10, 10, 1)

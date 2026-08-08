@@ -58,17 +58,27 @@ class CharacterCatalog:
                     else str(name_map or character_id)
                 )
                 tts = card.get("tts", {})
-                custom = tts.get("custom_model", {})
-                refs = tts.get("ref_audio", {})
-                voice_paths = [
-                    refs.get("neutral", "") if isinstance(refs, dict) else "",
-                    custom.get("t2s", "") if isinstance(custom, dict) else "",
-                    custom.get("vits", "") if isinstance(custom, dict) else "",
-                ]
-                voice_configured = all(
-                    relative and (directory / relative).is_file()
-                    for relative in voice_paths
-                )
+                voice_id = str(tts.get("voice_id", "")).strip()
+                if voice_id:
+                    from app.character.voices import VoiceRegistry
+                    try:
+                        voice_configured = bool(
+                            VoiceRegistry(self._base).get(voice_id).get("configured")
+                        )
+                    except (KeyError, ValueError):
+                        voice_configured = False
+                else:
+                    custom = tts.get("custom_model", {})
+                    refs = tts.get("ref_audio", {})
+                    voice_paths = [
+                        refs.get("neutral", "") if isinstance(refs, dict) else "",
+                        custom.get("t2s", "") if isinstance(custom, dict) else "",
+                        custom.get("vits", "") if isinstance(custom, dict) else "",
+                    ]
+                    voice_configured = all(
+                        relative and (directory / relative).is_file()
+                        for relative in voice_paths
+                    )
                 result.append({
                     "id": character_id,
                     "name": name,
@@ -85,11 +95,21 @@ class CharacterCatalog:
         return result
 
     def create(self, raw_spec: dict[str, Any]) -> dict[str, Any]:
-        """Validate and atomically install one complete character pack."""
+        """Validate and atomically install one character.
+
+        Two shapes are accepted:
+        - reference spec: ``{id, name, persona, reply_language, model_id,
+          voice_id}`` — the character only references system-level model and
+          voice packs, and nothing is copied.
+        - full-import spec: ``{assets: {...}, voice: {...}}`` — copies a
+          complete Live2D + voice pack into the character (legacy flow).
+        """
         with _IMPORT_LOCK:
             return self._create_locked(raw_spec)
 
     def _create_locked(self, raw_spec: dict[str, Any]) -> dict[str, Any]:
+        if self._is_reference_spec(raw_spec):
+            return self._create_reference(raw_spec)
         spec = self._validate_spec(raw_spec)
         character_id = spec["id"]
         character_dir = self._characters_dir / character_id
@@ -141,6 +161,154 @@ class CharacterCatalog:
             "reply_language": spec["reply_language"],
             "live2d_model": character_id,
             "voice_configured": True,
+        }
+
+    # ── reference-mode creation ──────────────────────────────────────────
+
+    @staticmethod
+    def _is_reference_spec(raw_spec: dict[str, Any]) -> bool:
+        return "model_id" in raw_spec and "voice_id" in raw_spec
+
+    def _create_reference(self, raw_spec: dict[str, Any]) -> dict[str, Any]:
+        spec = self._validate_reference_spec(raw_spec)
+        character_id = spec["id"]
+        character_dir = self._characters_dir / character_id
+        if character_dir.exists():
+            raise ValueError(f"character already exists: {character_id}")
+
+        self._characters_dir.mkdir(parents=True, exist_ok=True)
+        character_dir.mkdir()
+        previous_index = (
+            self._index_path.read_bytes() if self._index_path.exists() else None
+        )
+        try:
+            self._write_card(character_dir, self._reference_card(spec))
+            self._register_index(character_id, spec["name"])
+        except Exception:
+            shutil.rmtree(character_dir, ignore_errors=True)
+            if previous_index is None:
+                self._index_path.unlink(missing_ok=True)
+            else:
+                self._index_path.write_bytes(previous_index)
+            raise
+        return {
+            "id": character_id,
+            "name": spec["name"],
+            "reply_language": spec["reply_language"],
+            "live2d_model": spec["model_id"],
+            "voice_configured": True,
+        }
+
+    def _validate_reference_spec(self, raw_spec: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(raw_spec, dict):
+            raise ValueError("character specification must be an object")
+        character_id = str(raw_spec.get("id", "")).strip().lower()
+        if not self._ID.fullmatch(character_id):
+            raise ValueError("character id must use 2-48 lowercase letters, numbers, _ or -")
+        name = str(raw_spec.get("name", "")).strip()
+        persona = str(raw_spec.get("persona", "")).replace("\r\n", "\n").strip()
+        reply_language = str(raw_spec.get("reply_language", "")).strip().lower()
+        if not name or len(name) > 80:
+            raise ValueError("character name is required and must be at most 80 characters")
+        if not persona or len(persona) > 20_000:
+            raise ValueError("persona is required and must be at most 20000 characters")
+        if reply_language not in self._LANGUAGES:
+            raise ValueError(f"unsupported reply language: {reply_language}")
+
+        model_id = str(raw_spec.get("model_id", "")).strip()
+        if not model_id:
+            raise ValueError("model_id is required")
+        model_dir = self._models_dir / model_id
+        if not model_dir.is_dir() or not any(model_dir.glob("*.model3.json")):
+            raise ValueError(f"referenced Live2D model is not installed: {model_id}")
+
+        voice_id = str(raw_spec.get("voice_id", "")).strip()
+        if not voice_id:
+            raise ValueError("voice_id is required")
+        try:
+            from app.character.voices import VoiceRegistry
+            VoiceRegistry(self._base).resolve(voice_id)
+        except KeyError as exc:
+            raise ValueError(f"referenced voice is not installed: {voice_id}") from exc
+
+        return {
+            "id": character_id,
+            "name": name,
+            "persona": persona,
+            "reply_language": reply_language,
+            "model_id": model_id,
+            "voice_id": voice_id,
+        }
+
+    def _reference_card(self, spec: dict[str, Any]) -> dict[str, Any]:
+        from app.character.voices import VoiceRegistry
+        voice = VoiceRegistry(self._base).resolve(spec["voice_id"])
+        return {
+            "$schema": "character/v3",
+            "id": spec["id"],
+            "name": {"zh": spec["name"], "en": spec["name"], "ja": spec["name"]},
+            "reply_language": spec["reply_language"],
+            "identity": spec["persona"],
+            "character_setting": spec["persona"],
+            "live2d": {"model": spec["model_id"]},
+            "tts": {
+                "engine": "gsvi-v2pro",
+                "voice": voice["name"],
+                "voice_id": spec["voice_id"],
+                "prompt_text": voice["prompt_text"],
+                "prompt_lang": voice["prompt_lang"],
+            },
+            "rules": {"max_segments_per_reply": 5, "avoid": ["Markdown"]},
+        }
+
+    @staticmethod
+    def _write_card(character_dir: Path, card: dict[str, Any]) -> None:
+        (character_dir / "character.json").write_text(
+            json.dumps(card, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        (character_dir / "pinned.md").write_text("", encoding="utf-8")
+
+    def register_model(self, model_id: str) -> dict[str, Any]:
+        """Register a Live2D model directory at the system level.
+
+        Dropping a directory into models/live2d-models/<id> already makes it
+        visible to the model catalog; this additionally guarantees the two
+        side registries (live2d_models.json and avatar_profiles/<id>.json)
+        have entries so the model is switchable and attachable.
+        """
+        model_id = str(model_id or "").strip()
+        if not model_id or not self._ID.fullmatch(model_id):
+            raise ValueError("model id must use 2-48 lowercase letters, numbers, _ or -")
+        model_dir = self._models_dir / model_id
+        if not model_dir.is_dir() or not any(model_dir.glob("*.model3.json")):
+            raise ValueError(f"model is not installed: {model_id}")
+
+        live2d = self._read_json(self._live2d_config_path)
+        if model_id not in live2d:
+            live2d[model_id] = {
+                "prompt_emotions": ["neutral"],
+                "emotion_map": {"neutral": ""},
+                "behaviors": [],
+                "behavior_map": {},
+            }
+            self._atomic_text(
+                self._live2d_config_path,
+                json.dumps(live2d, ensure_ascii=False, indent=2) + "\n",
+            )
+
+        profile_path = self._profiles_dir / f"{model_id}.json"
+        if not profile_path.exists():
+            self._profiles_dir.mkdir(parents=True, exist_ok=True)
+            self._atomic_text(
+                profile_path,
+                json.dumps({"model": model_id}, ensure_ascii=False, indent=2) + "\n",
+            )
+
+        return {
+            "id": model_id,
+            "live2d_model": model_id,
+            "profile": "present",
         }
 
     def _validate_spec(self, raw_spec: dict[str, Any]) -> dict[str, Any]:
@@ -426,6 +594,20 @@ class CharacterCatalog:
             json.dumps(live2d, ensure_ascii=False, indent=2) + "\n",
         )
 
+        self._register_index(character_id, name)
+
+        # The frontend refuses to attach a Live2D model that has no avatar
+        # capability profile (attachCommittedModel requires
+        # avatarProfiles[model].model === model). Emit a minimal profile so an
+        # imported character is immediately activatable; the model keeps its
+        # default bindings/expressions when profile fields are absent.
+        self._profiles_dir.mkdir(parents=True, exist_ok=True)
+        self._atomic_text(
+            self._profiles_dir / f"{character_id}.json",
+            json.dumps({"model": character_id}, ensure_ascii=False, indent=2) + "\n",
+        )
+
+    def _register_index(self, character_id: str, name: str) -> None:
         index: dict[str, Any] = {}
         if self._index_path.exists():
             loaded = yaml.safe_load(self._index_path.read_text("utf-8"))
@@ -450,15 +632,19 @@ class CharacterCatalog:
             yaml.safe_dump(index, allow_unicode=True, sort_keys=False),
         )
 
-        # The frontend refuses to attach a Live2D model that has no avatar
-        # capability profile (attachCommittedModel requires
-        # avatarProfiles[model].model === model). Emit a minimal profile so an
-        # imported character is immediately activatable; the model keeps its
-        # default bindings/expressions when profile fields are absent.
-        self._profiles_dir.mkdir(parents=True, exist_ok=True)
+    def persist_default(self, character_id: str) -> None:
+        """Persist the active character so the next startup loads it."""
+        index: dict[str, Any] = {}
+        if self._index_path.exists():
+            loaded = yaml.safe_load(self._index_path.read_text("utf-8"))
+            if isinstance(loaded, dict):
+                index = loaded
+        if index.get("default") == character_id:
+            return
+        index["default"] = character_id
         self._atomic_text(
-            self._profiles_dir / f"{character_id}.json",
-            json.dumps({"model": character_id}, ensure_ascii=False, indent=2) + "\n",
+            self._index_path,
+            yaml.safe_dump(index, allow_unicode=True, sort_keys=False),
         )
 
     @staticmethod

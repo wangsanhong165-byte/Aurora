@@ -32,6 +32,7 @@ const LIVE2D_TOGGLES = [
   { key: 'live2dHeadTracking' as const, label: '头部跟随', desc: '头部和视线跟随光标' },
   { key: 'live2dExpression' as const, label: '表情系统', desc: '使用模型原生表情并平滑混合' },
   { key: 'live2dIdle' as const, label: '待机动画', desc: '连续微动、呼吸与随机凝视' },
+  { key: 'live2dClickFeedback' as const, label: '点击反馈', desc: '点击或拖动模型时触发互动回应' },
 ]
 
 const CALIBRATION_CONTROLS = [

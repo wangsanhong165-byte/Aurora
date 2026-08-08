@@ -1,21 +1,33 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildCharacterImportPayload, readCharacterCatalog } from './character-catalog.ts'
+import {
+  buildCharacterPayload,
+  buildVoicePayload,
+  readCharacterCatalog,
+  readModelCatalog,
+  readVoiceCatalog,
+} from './character-catalog.ts'
 
-test('builds one complete import payload without mixing reply and reference languages', () => {
-  assert.deepEqual(buildCharacterImportPayload({
+test('builds a thin reference character payload with model and voice ids', () => {
+  assert.deepEqual(buildCharacterPayload({
     id: ' Lantern ', name: 'Lantern', persona: 'A concise persona.',
-    replyLanguage: 'zh', promptLanguage: 'ja', promptText: 'reference transcript',
-    live2dDirectory: 'C:/assets/live2d', referenceAudio: 'C:/assets/reference.wav',
-    t2sModel: 'C:/assets/voice.ckpt', vitsModel: 'C:/assets/voice.pth',
+    replyLanguage: 'zh', modelId: 'Design_genius_White', voiceId: 'monika',
   }), {
     id: 'lantern', name: 'Lantern', persona: 'A concise persona.', reply_language: 'zh',
-    voice: { prompt_language: 'ja', prompt_text: 'reference transcript' },
-    assets: {
-      live2d_directory: 'C:/assets/live2d', reference_audio: 'C:/assets/reference.wav',
-      t2s_model: 'C:/assets/voice.ckpt', vits_model: 'C:/assets/voice.pth',
-    },
+    model_id: 'Design_genius_White', voice_id: 'monika',
+  })
+})
+
+test('builds a voice pack payload without mixing reply and reference languages', () => {
+  assert.deepEqual(buildVoicePayload({
+    id: ' Monika ', name: 'Monika', promptLanguage: 'en', promptText: 'reference',
+    referenceAudio: 'C:/assets/reference.wav', t2sModel: 'C:/assets/voice.ckpt',
+    vitsModel: 'C:/assets/voice.pth',
+  }), {
+    id: 'monika', name: 'Monika', prompt_text: 'reference', prompt_lang: 'en',
+    reference_audio: 'C:/assets/reference.wav', t2s_model: 'C:/assets/voice.ckpt',
+    vits_model: 'C:/assets/voice.pth',
   })
 })
 
@@ -32,4 +44,27 @@ test('reads only valid dynamic character descriptors from management data', () =
       { id: 'lantern', name: 'Lantern', replyLanguage: 'zh', live2dModel: 'lantern', voiceConfigured: true },
     ],
   })
+})
+
+test('reads voice descriptors and drops malformed entries', () => {
+  assert.deepEqual(readVoiceCatalog({
+    voices: [
+      { id: 'monika', name: 'Monika', prompt_text: 'reference', prompt_lang: 'en', configured: true },
+      { name: 'broken' },
+    ],
+  }), [
+    { id: 'monika', name: 'Monika', promptText: 'reference', promptLang: 'en', configured: true },
+  ])
+})
+
+test('reads model descriptors with registration state', () => {
+  assert.deepEqual(readModelCatalog({
+    models: [
+      { id: 'Design_genius_White', has_model3: true, profile: true },
+      { id: 'new_model', has_model3: true, profile: false },
+    ],
+  }), [
+    { id: 'Design_genius_White', hasModel3: true, profile: true },
+    { id: 'new_model', hasModel3: true, profile: false },
+  ])
 })

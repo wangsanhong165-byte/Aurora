@@ -29,6 +29,18 @@ def _character_asset(character_id: str, value: object) -> str:
     return str(target)
 
 
+def _resolve_voice(voice_id: object) -> dict | None:
+    """Resolve a system-level voice pack, returning {} when absent."""
+    value = str(voice_id or "").strip()
+    if not value:
+        return None
+    try:
+        from app.character.voices import VoiceRegistry
+        return VoiceRegistry(_PROJECT_ROOT).resolve(value)
+    except (KeyError, ValueError, OSError):
+        return None
+
+
 def _extract_voice_kwargs(ctx: CharacterTurn) -> dict:
     """Extract TTS voice parameters from the character card."""
     character = ctx.character
@@ -61,6 +73,24 @@ def _extract_voice_kwargs(ctx: CharacterTurn) -> dict:
     prompt_text = tts_cfg.get("prompt_text", "")
     if prompt_text:
         kwargs["prompt_text"] = prompt_text
+
+    # A system-level voice pack reference takes precedence over assets
+    # embedded in the character directory.
+    resolved_voice = _resolve_voice(tts_cfg.get("voice_id", ""))
+    if resolved_voice:
+        if resolved_voice.get("prompt_lang"):
+            kwargs["prompt_lang"] = resolved_voice["prompt_lang"]
+        if resolved_voice.get("prompt_text"):
+            kwargs["prompt_text"] = resolved_voice["prompt_text"]
+        if resolved_voice.get("ref_audio"):
+            kwargs["ref_audio_path"] = resolved_voice["ref_audio"]
+        if resolved_voice.get("gpt_weights"):
+            kwargs["gpt_weights"] = resolved_voice["gpt_weights"]
+        if resolved_voice.get("sovits_weights"):
+            kwargs["sovits_weights"] = resolved_voice["sovits_weights"]
+        if not kwargs.get("voice") and resolved_voice.get("name"):
+            kwargs["voice"] = resolved_voice["name"]
+        return kwargs
 
     ref_audio = tts_cfg.get("ref_audio", {})
     if isinstance(ref_audio, dict):

@@ -54,6 +54,22 @@ class ManagementHandler:
                 return await asyncio.to_thread(self._manager.create_character, params)
             except (ValueError, OSError) as exc:
                 raise ManagementFailure("character_import_invalid", str(exc)) from exc
+        if action == "get_voice_catalog":
+            return await asyncio.to_thread(self._manager.get_voice_catalog)
+        if action == "add_voice":
+            try:
+                return await asyncio.to_thread(self._manager.add_voice, params)
+            except (ValueError, OSError) as exc:
+                raise ManagementFailure("voice_add_invalid", str(exc)) from exc
+        if action == "get_model_catalog":
+            return await asyncio.to_thread(self._manager.get_model_catalog)
+        if action == "register_model":
+            try:
+                return await asyncio.to_thread(
+                    self._manager.register_model, str(params.get("model_id", ""))
+                )
+            except (ValueError, OSError) as exc:
+                raise ManagementFailure("model_register_invalid", str(exc)) from exc
         if action == "get_histories":
             return {"histories": self._manager.get_history_list()}
         if action == "load_history":
@@ -114,6 +130,8 @@ class ManagementHandler:
                 category=str(params.get("category", "all")),
                 limit=int(params.get("limit", 200)),
             )}
+        if action == "get_compiled_memory_view":
+            return {"view": self._manager.get_compiled_memory_view()}
         if action == "update_memory_view":
             result = self._manager.update_memory_view(str(params.get("ref", "")), params)
             return self._result_or_raise(result, "memory_update_failed")

@@ -193,6 +193,7 @@ export const CharacterView = memo(function CharacterView() {
   // Guards against duplicate event handlers and animation loops
   const petInitRef = useRef(false)
   const clickCountRef = useRef(0)          // total click events processed (debug)
+  const clickFeedbackRef = useRef(true)    // gate: model reacts to click/drag interactions
 
   // Build the model URL from a model name
   const getModelUrl = useCallback((modelName?: string): string => {
@@ -247,10 +248,11 @@ export const CharacterView = memo(function CharacterView() {
         | Record<string, { model?: string }>
         | undefined
       const profileModel = profiles?.[expectedName]?.model ?? ''
+      const hasProfile = Boolean(profiles?.[expectedName])
       const consistent = Boolean(handle && renderer)
         && diagnostics.requestedModel === expectedName
         && diagnostics.loadedModel === expectedName
-        && profileModel === expectedName
+        && (!hasProfile || profileModel === expectedName)
         && diagnostics.generation === generation
         && diagnostics.rendererGeneration === generation
       console.log('[Live2D] load identity', { ...diagnostics, profileModel })
@@ -384,7 +386,9 @@ export const CharacterView = memo(function CharacterView() {
       drag.offsetX = getViewTransform().x
       drag.offsetY = getViewTransform().y
       canvas.style.cursor = 'grabbing'
-      eventBus.emit('character:interaction', { type: 'drag', phase: 'start', intensity: 0.25 })
+      if (clickFeedbackRef.current) {
+        eventBus.emit('character:interaction', { type: 'drag', phase: 'start', intensity: 0.25 })
+      }
     }
 
     const onMouseUp = () => {
@@ -393,7 +397,9 @@ export const CharacterView = memo(function CharacterView() {
       drag.isDragging = false
       canvas.style.cursor = ''
       persistModelViewport(modelNameRef.current)
-      eventBus.emit('character:interaction', { type: 'drag', phase: 'end', intensity: 0.2 })
+      if (clickFeedbackRef.current) {
+        eventBus.emit('character:interaction', { type: 'drag', phase: 'end', intensity: 0.2 })
+      }
     }
 
     const onDragMove = (e: MouseEvent) => {
@@ -572,6 +578,7 @@ export const CharacterView = memo(function CharacterView() {
     ctrl.setMouseTracking(s.live2dHeadTracking)
     ctrl.exprCtrl.setEnabled(s.live2dExpression)
     ctrl.idleCtrl.setIdleEnabled(s.live2dIdle)
+    clickFeedbackRef.current = s.live2dClickFeedback
   }, [])
 
   useEffect(() => {
@@ -583,6 +590,7 @@ export const CharacterView = memo(function CharacterView() {
     settings.live2dHeadTracking,
     settings.live2dExpression,
     settings.live2dIdle,
+    settings.live2dClickFeedback,
     syncLive2dSettings,
   ])
 
@@ -615,6 +623,7 @@ export const CharacterView = memo(function CharacterView() {
       // Ignore click if the user was dragging the canvas
       if (dragRef.current.isDragging) return
       clickCountRef.current += 1
+      if (!clickFeedbackRef.current) return
       eventBus.emit('character:interaction', { type: 'touch', region: 'unknown', intensity: 0.42 })
       console.log('[PET] Click #%d → onInteraction() (ctrl instance #%d)',
         clickCountRef.current, petCtrl.instanceId)

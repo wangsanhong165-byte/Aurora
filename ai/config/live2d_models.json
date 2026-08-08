@@ -203,15 +203,5 @@
       "nod",
       "shrug"
     ]
-  },
-  "alice": {
-    "prompt_emotions": [
-      "neutral"
-    ],
-    "emotion_map": {
-      "neutral": ""
-    },
-    "behaviors": [],
-    "behavior_map": {}
   }
 }

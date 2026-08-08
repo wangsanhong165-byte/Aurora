@@ -5,6 +5,8 @@ memory.short.jsonl
 config/characters/Monika.char
 config/characters/*/model/*.ckpt
 config/characters/*/model/*.pth
+config/voices/*.ckpt
+config/voices/*.pth
 __pycache__/
 .idea/
 .claude/settings.local.json
@@ -40,6 +42,7 @@ frontend/*.pid
 
 # Private runtime state (never publish to source control)
 data/avatar_state.json
+data/settings.json
 data/memory/*.db*
 data/memory/compiled/
 data/memory/histories/

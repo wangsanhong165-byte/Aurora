@@ -27,6 +27,7 @@ from app.runtime.runtime import runtime as default_runtime
 from app.runtime.prompt_config import PromptConfigStore
 from app.runtime.prompt_overrides import PromptOverrideStore
 from app.character.catalog import CharacterCatalog
+from app.character.voices import VoiceRegistry
 
 logger = logging.getLogger("runtime.management")
 
@@ -54,6 +55,7 @@ class RuntimeManager:
         self._prompt_overrides = PromptOverrideStore(self._base_dir / "data" / "prompts")
         self._prompt_configs = PromptConfigStore(self._base_dir / "data" / "prompts")
         self._character_catalog = CharacterCatalog(self._base_dir)
+        self._voices = VoiceRegistry(self._base_dir)
 
         self._ensure_dirs()
 
@@ -578,6 +580,23 @@ class RuntimeManager:
             category=str(category or "all"),
         )
 
+    def get_compiled_memory_view(self) -> dict:
+        """Return the active character's compiled memory (the LLM-facing summary)."""
+        from app.memory.compiler import get_compiled_memory
+
+        character_id = self.get_character_id()
+        info = self._runtime.get_character_info()
+        name = str(info.get("name") or character_id)
+        try:
+            memory_md = get_compiled_memory(character_id)
+        except Exception:
+            memory_md = ""
+        return {
+            "characterId": character_id,
+            "characterName": name,
+            "memoryMd": memory_md,
+        }
+
     def update_memory_view(self, memory_ref: str, params: dict) -> dict:
         from app.runtime.user_views import build_memory_view, parse_memory_ref
 
@@ -747,6 +766,37 @@ class RuntimeManager:
         logger.info("[CharacterCatalog] Imported complete pack: %s", character["id"])
         return {"character": character}
 
+    def get_voice_catalog(self) -> dict[str, Any]:
+        return {"voices": self._voices.list()}
+
+    def add_voice(self, specification: dict[str, Any]) -> dict[str, Any]:
+        voice = self._voices.add(specification)
+        logger.info("[VoiceRegistry] Registered voice pack: %s", voice["id"])
+        return {"voice": voice}
+
+    def get_model_catalog(self) -> dict[str, Any]:
+        models = []
+        models_dir = self._base_dir / "models" / "live2d-models"
+        if models_dir.is_dir():
+            for directory in sorted(models_dir.iterdir()):
+                if not directory.is_dir():
+                    continue
+                model_json = next(directory.glob("*.model3.json"), None)
+                models.append({
+                    "id": directory.name,
+                    "has_model3": model_json is not None,
+                    "profile": (
+                        self._base_dir / "config" / "avatar_profiles"
+                        / f"{directory.name}.json"
+                    ).is_file(),
+                })
+        return {"models": models}
+
+    def register_model(self, model_id: str) -> dict[str, Any]:
+        model = self._character_catalog.register_model(str(model_id or ""))
+        logger.info("[CharacterCatalog] Registered model: %s", model["id"])
+        return {"model": model}
+
     def switch_character(self, character_id: str) -> dict:
         """Switch the active character. Returns result dict."""
         if not character_id.strip():
@@ -763,6 +813,12 @@ class RuntimeManager:
 
             # Re-init per-character state
             self.reinit_per_character()
+
+            # Persist the active character so the next startup loads it.
+            try:
+                self._character_catalog.persist_default(character_id)
+            except Exception as exc:
+                logger.warning("[Switch] Failed to persist default character: %s", exc)
 
             # Reload prompts
             try:

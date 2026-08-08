@@ -11,6 +11,7 @@ import pytest
 
 from app.character.catalog import CharacterCatalog
 from app.character.registry import CharacterRegistry
+from app.character.voices import VoiceRegistry
 from app.runtime.management import RuntimeManager
 from app.transport.management import ManagementHandler
 
@@ -253,3 +254,182 @@ def test_import_rejects_truncated_checkpoint_archive(tmp_path):
             "persona": "A concise persona.", "assets": assets,
             "voice": {"prompt_text": "reference", "prompt_language": "en"},
         })
+
+
+def _install_system_model(tmp_path: Path, model_id: str = "testmodel") -> None:
+    """Drop a minimal Live2D model directory into the system model library."""
+    model_dir = tmp_path / "models" / "live2d-models" / model_id
+    model_dir.mkdir(parents=True)
+    (model_dir / f"{model_id}.model3.json").write_text(json.dumps({
+        "Version": 3,
+        "FileReferences": {"Moc": "test.moc3", "Textures": ["texture_00.png"]},
+    }), encoding="utf-8")
+    (model_dir / "test.moc3").write_bytes(b"MOC3\x04" + b"\0" * 2048)
+    (model_dir / "texture_00.png").write_bytes(b"png")
+
+
+def _install_system_voice(tmp_path: Path, voice_id: str = "testvoice") -> None:
+    assets = _write_complete_asset_sources(tmp_path)
+    VoiceRegistry(tmp_path).add({
+        "id": voice_id,
+        "name": "Test Voice",
+        "prompt_text": "reference",
+        "prompt_lang": "en",
+        "reference_audio": assets["reference_audio"],
+        "t2s_model": assets["t2s_model"],
+        "vits_model": assets["vits_model"],
+    })
+
+
+def test_reference_character_creation_writes_only_a_thin_card(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+
+    created = catalog.create({
+        "id": "lantern",
+        "name": "Lantern",
+        "persona": "A concise persona.",
+        "reply_language": "zh",
+        "model_id": "testmodel",
+        "voice_id": "testvoice",
+    })
+
+    assert created == {
+        "id": "lantern",
+        "name": "Lantern",
+        "reply_language": "zh",
+        "live2d_model": "testmodel",
+        "voice_configured": True,
+    }
+
+    character_dir = tmp_path / "config" / "characters" / "lantern"
+    card = json.loads((character_dir / "character.json").read_text("utf-8"))
+    assert card["live2d"]["model"] == "testmodel"
+    assert card["tts"]["voice_id"] == "testvoice"
+    # No assets were copied into the character directory.
+    assert not (character_dir / "model").exists()
+    assert not (tmp_path / "models" / "live2d-models" / "lantern").exists()
+    # Reference creation must not fabricate a model registry entry or profile.
+    live2d_config_path = tmp_path / "config" / "live2d_models.json"
+    assert not live2d_config_path.exists()
+    assert not (tmp_path / "config" / "avatar_profiles" / "lantern.json").exists()
+    # Index still records the character.
+    index = yaml.safe_load(
+        (tmp_path / "config" / "characters" / "index.yaml").read_text("utf-8")
+    )
+    assert any(item["id"] == "lantern" for item in index["characters"])
+
+
+def test_reference_character_rejects_missing_model_or_voice(tmp_path):
+    _install_system_model(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+
+    with pytest.raises(ValueError, match="model is not installed"):
+        catalog.create({
+            "id": "lantern", "name": "Lantern", "persona": "persona",
+            "reply_language": "zh", "model_id": "ghost", "voice_id": "testvoice",
+        })
+    _install_system_voice(tmp_path)
+    with pytest.raises(ValueError, match="voice is not installed"):
+        catalog.create({
+            "id": "lantern", "name": "Lantern", "persona": "persona",
+            "reply_language": "zh", "model_id": "testmodel", "voice_id": "ghost",
+        })
+    assert not (tmp_path / "config" / "characters" / "lantern").exists()
+
+
+def test_register_model_backfills_side_registries(tmp_path):
+    _install_system_model(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+
+    result = catalog.register_model("testmodel")
+    assert result["id"] == "testmodel"
+
+    live2d_config = json.loads(
+        (tmp_path / "config" / "live2d_models.json").read_text("utf-8")
+    )
+    assert "testmodel" in live2d_config
+    profile = json.loads(
+        (tmp_path / "config" / "avatar_profiles" / "testmodel.json").read_text("utf-8")
+    )
+    assert profile["model"] == "testmodel"
+    # Idempotent.
+    catalog.register_model("testmodel")
+    assert "testmodel" in json.loads(
+        (tmp_path / "config" / "live2d_models.json").read_text("utf-8")
+    )
+
+
+def test_management_api_lists_models_and_registers_model(tmp_path):
+    _install_system_model(tmp_path)
+    manager = RuntimeManager(base_dir=tmp_path, runtime=_Runtime())
+    handler = ManagementHandler()
+    handler._manager = manager
+
+    before = asyncio.run(handler.handle("get_model_catalog", {}, "m-1"))[0]
+    assert before.payload.data == {"models": [{
+        "id": "testmodel", "has_model3": True, "profile": False,
+    }]}
+
+    registered = asyncio.run(handler.handle(
+        "register_model", {"model_id": "testmodel"}, "m-2"
+    ))[0]
+    assert registered.payload.data["model"]["id"] == "testmodel"
+
+    after = asyncio.run(handler.handle("get_model_catalog", {}, "m-3"))[0]
+    assert after.payload.data["models"][0]["profile"] is True
+
+
+def test_management_api_lists_and_adds_voice_packs(tmp_path):
+    assets = _write_complete_asset_sources(tmp_path)
+    manager = RuntimeManager(base_dir=tmp_path, runtime=_Runtime())
+    handler = ManagementHandler()
+    handler._manager = manager
+
+    before = asyncio.run(handler.handle("get_voice_catalog", {}, "v-1"))[0]
+    assert before.payload.data == {"voices": []}
+
+    added = asyncio.run(handler.handle("add_voice", {
+        "id": "monika", "name": "Monika",
+        "prompt_text": "reference", "prompt_lang": "en",
+        "reference_audio": assets["reference_audio"],
+        "t2s_model": assets["t2s_model"],
+        "vits_model": assets["vits_model"],
+    }, "v-2"))[0]
+    assert added.payload.data["voice"]["id"] == "monika"
+
+    after = asyncio.run(handler.handle("get_voice_catalog", {}, "v-3"))[0]
+    assert after.payload.data["voices"] == [added.payload.data["voice"]]
+
+
+def test_persist_default_updates_index_yaml(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "monika", "name": "Monika", "persona": "persona",
+        "reply_language": "en", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+    catalog.create({
+        "id": "alice", "name": "Alice", "persona": "persona",
+        "reply_language": "zh", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+
+    # First created character becomes the default.
+    index = yaml.safe_load(
+        (tmp_path / "config" / "characters" / "index.yaml").read_text("utf-8")
+    )
+    assert index["default"] == "monika"
+
+    catalog.persist_default("alice")
+    index = yaml.safe_load(
+        (tmp_path / "config" / "characters" / "index.yaml").read_text("utf-8")
+    )
+    assert index["default"] == "alice"
+    # Idempotent.
+    catalog.persist_default("alice")
+    index = yaml.safe_load(
+        (tmp_path / "config" / "characters" / "index.yaml").read_text("utf-8")
+    )
+    assert index["default"] == "alice"

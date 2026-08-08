@@ -39,6 +39,7 @@ export interface AppSettings {
   live2dHeadTracking: boolean
   live2dExpression: boolean
   live2dIdle: boolean
+  live2dClickFeedback: boolean
   live2dPerformanceProfiles: Live2DPerformanceProfileOverrides
   live2dActions: Live2DActionsByModel
 }
@@ -90,6 +91,7 @@ const INITIAL_SETTINGS: AppSettings = {
   live2dHeadTracking: true,
   live2dExpression: true,
   live2dIdle: true,
+  live2dClickFeedback: true,
   live2dPerformanceProfiles: {},
   live2dActions: {},
 }

@@ -18,13 +18,7 @@
     "voice": "Monika",
     "prompt_text": "Like, come on, isn't it obvious? They all want your attention, and, you know, I'm just in the background watching them.",
     "prompt_lang": "en",
-    "ref_audio": {
-      "neutral": "model/monika_voice.flac_0009371520_0009560000.wav"
-    },
-    "custom_model": {
-      "t2s": "model/Monika-e15.ckpt",
-      "vits": "model/Monika_e8_s224.pth"
-    }
+    "voice_id": "monika"
   },
   "rules": {
     "max_segments_per_reply": 5,

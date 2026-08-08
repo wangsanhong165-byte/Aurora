@@ -66,6 +66,25 @@ function categoryLabel(category: string): string {
   return ({ about_you: '关于你', shared: '共同经历', self: '角色自身', preferences: '偏好习惯', goals: '持续目标', pinned: '已置顶' })[category] || category
 }
 
+/** Split the assembled memory.md into sections by `## heading` lines. */
+function parseCompiledMemory(md: string): Array<{ title: string; body: string }> {
+  const sections: Array<{ title: string; body: string[] }> = []
+  let current: { title: string; body: string[] } | null = null
+  for (const line of md.split('\n')) {
+    const match = line.match(/^##\s+(.*)$/)
+    if (match) {
+      if (current) sections.push(current)
+      current = { title: match[1].trim(), body: [] }
+    } else if (current) {
+      current.body.push(line)
+    }
+  }
+  if (current) sections.push(current)
+  return sections
+    .map(section => ({ title: section.title, body: section.body.join('\n').trim() }))
+    .filter(section => section.body)
+}
+
 // ── Character Self Panel ─────────────────────────────────────────
 
 export function CharacterSelfPanel({ requestCommand }: { requestCommand: RequestCommand }) {
@@ -114,6 +133,9 @@ export function CharacterSelfPanel({ requestCommand }: { requestCommand: Request
 
 export function MemoryPanel({ requestCommand }: { requestCommand: RequestCommand }) {
   const [view, setView] = useState<MemoryView>(EMPTY_MEMORY)
+  const [section, setSection] = useState<'library' | 'compiled'>('library')
+  const [compiled, setCompiled] = useState<{ characterId: string; characterName: string; memoryMd: string } | null>(null)
+  const [compiledFailed, setCompiledFailed] = useState(false)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<MemoryItem | null>(null)
   const [draft, setDraft] = useState('')
@@ -126,10 +148,25 @@ export function MemoryPanel({ requestCommand }: { requestCommand: RequestCommand
       .catch(() => {})
   }
 
+  const loadCompiled = () => {
+    setCompiledFailed(false)
+    return requestCommand('get_compiled_memory_view', {})
+      .then(data => setCompiled((data as any).view ?? null))
+      .catch(() => { setCompiled(null); setCompiledFailed(true) })
+  }
+
+  const switchSection = (next: 'library' | 'compiled') => {
+    setSection(next)
+    if (next === 'compiled') void loadCompiled()
+  }
+
   useEffect(() => {
     void refresh('all', '')
     const unsub = eventBus.on('connection:change', ({ connected }) => {
-      if (connected) void refresh(view.selectedCategory || 'all', query)
+      if (connected) {
+        void refresh(view.selectedCategory || 'all', query)
+        if (section === 'compiled') void loadCompiled()
+      }
     })
     return () => unsub()
   }, [])
@@ -146,6 +183,12 @@ export function MemoryPanel({ requestCommand }: { requestCommand: RequestCommand
   return (
     <DrawerPanel title="记忆">
       <div className="memory-view">
+        <div className="memory-view-toggle" aria-label="记忆视图">
+          <button type="button" className={section === 'library' ? 'is-active' : ''} onClick={() => switchSection('library')}>记忆库</button>
+          <button type="button" className={section === 'compiled' ? 'is-active' : ''} onClick={() => switchSection('compiled')}>编译记忆</button>
+        </div>
+        {section === 'library' && (
+        <>
         <form onSubmit={event => { event.preventDefault(); refresh(view.selectedCategory, query) }}>
           <input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索记忆…" />
           <button type="submit">搜索</button>
@@ -205,6 +248,36 @@ export function MemoryPanel({ requestCommand }: { requestCommand: RequestCommand
             </div>
           ))}
         </div>
+        </>
+        )}
+        {section === 'compiled' && (
+          <div className="memory-compiled">
+            {compiled ? (
+              <>
+                <div className="memory-compiled-meta">
+                  <strong>{compiled.characterName}</strong>
+                  <span className="muted">（{compiled.characterId}）· 进 LLM 提示词的编译记忆 · 只读</span>
+                </div>
+                {compiled.memoryMd ? (
+                  <div className="memory-compiled-sections">
+                    {parseCompiledMemory(compiled.memoryMd).map(({ title, body }) => (
+                      <section key={title} className="memory-compiled-section">
+                        <h4>{title}</h4>
+                        <div className="memory-compiled-body">{body}</div>
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState>该角色暂无编译记忆，先对话生成。</EmptyState>
+                )}
+              </>
+            ) : compiledFailed ? (
+              <EmptyState>读取编译记忆失败，请稍后重试。</EmptyState>
+            ) : (
+              <EmptyState>正在读取编译记忆…</EmptyState>
+            )}
+          </div>
+        )}
       </div>
     </DrawerPanel>
   )

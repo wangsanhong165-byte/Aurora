@@ -220,3 +220,44 @@ def test_frontend_uses_app_permission_dialog_and_no_frame_replay():
     assert "DeveloperWorkspace" in workspace
     assert "逐帧参数回放" in developer
     assert "requestAnimationFrame" not in developer
+
+
+def test_compiled_memory_view_returns_active_character_memory(tmp_path, monkeypatch):
+    from app.memory import compiler as memory_compiler
+    from app.runtime.management import RuntimeManager
+
+    char_dir = tmp_path / "data" / "memory" / "compiled" / "monika"
+    char_dir.mkdir(parents=True)
+    (char_dir / "memory.md").write_text(
+        "## 重要事实\n\n用户喜欢测试系统。\n\n## 今天\n\n用户今天修了 bug。\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(memory_compiler, "_BASE_DIR", tmp_path)
+
+    class _Runtime:
+        def get_character_info(self):
+            return {"card": {"id": "monika"}, "name": "Monika"}
+
+    manager = RuntimeManager(base_dir=tmp_path, runtime=_Runtime())
+    view = manager.get_compiled_memory_view()
+
+    assert view["characterId"] == "monika"
+    assert view["characterName"] == "Monika"
+    assert "用户喜欢测试系统" in view["memoryMd"]
+
+
+def test_compiled_memory_view_handles_missing_memory(tmp_path, monkeypatch):
+    from app.memory import compiler as memory_compiler
+    from app.runtime.management import RuntimeManager
+
+    monkeypatch.setattr(memory_compiler, "_BASE_DIR", tmp_path)
+
+    class _Runtime:
+        def get_character_info(self):
+            return {"card": {"id": "ghost"}, "name": "Ghost"}
+
+    manager = RuntimeManager(base_dir=tmp_path, runtime=_Runtime())
+    view = manager.get_compiled_memory_view()
+
+    assert view["characterId"] == "ghost"
+    assert view["memoryMd"] == ""

@@ -277,23 +277,31 @@ export class ParameterMixer {
       }
     }
 
-    // Resolve from low to high priority. A partial high layer fades from the
-    // already-resolved lower layer; a full-weight override is exclusive.
-    {
-      const ordered = [...values].sort((a, b) => a.priority - b.priority)
-      let result = this._baseline(paramId)
-      for (const contribution of ordered) {
-        const weight = Math.max(0, Math.min(1, contribution.weight))
-        if (contribution.mode === 'override') {
-          result += (contribution.value - result) * weight
-        } else if (contribution.mode === 'add') {
-          result += contribution.value * weight
-        } else {
-          result *= 1 + (contribution.value - 1) * weight
-        }
-      }
-      return result
+    // Exclusive arbitration for 'override' contributions: the highest-priority
+    // override owns the parameter and fades from the model baseline by its own
+    // weight. Lower-priority overrides never pre-load the value, so two
+    // opposing poses cannot land the parameter in-between ("ghost arms").
+    // 'add' and 'multiply' contributions accumulate on top of the resolved
+    // override, matching the reference SDK's exclusive-group semantics.
+    const overrides = values.filter(v => v.mode === 'override')
+    const additions = values.filter(v => v.mode === 'add')
+    const multipliers = values.filter(v => v.mode === 'multiply')
+
+    let result = this._baseline(paramId)
+    if (overrides.length > 0) {
+      overrides.sort((a, b) => b.priority - a.priority || b.weight - a.weight)
+      const winner = overrides[0]
+      const weight = Math.max(0, Math.min(1, winner.weight))
+      result += (winner.value - result) * weight
     }
+    for (const contribution of additions) {
+      result += contribution.value * Math.max(0, Math.min(1, contribution.weight))
+    }
+    for (const contribution of multipliers) {
+      result *= 1 + (contribution.value - 1) * Math.max(0, Math.min(1, contribution.weight))
+    }
+    return result
+  }
 
     /* Legacy unweighted arbitration retained only as migration reference.
     const overrides = values.filter(v => v.mode === 'override')
@@ -329,8 +337,6 @@ export class ParameterMixer {
     }
     return result
     */
-  }
-
   // ── Apply resolved values to adapter ─────────────────────────
 
   /** Apply resolved parameters to the Live2DModelAdapter (the ONLY write path). */

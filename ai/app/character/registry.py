@@ -21,10 +21,6 @@ class CharacterRegistry:
 
     # ---- scan -----------------------------------------------------------
     def _scan(self) -> None:
-        from app.character.loader import CharacterPackLoader
-        loader = CharacterPackLoader(self._base)
-        loader.auto_import()
-
         if not self._chars_dir.exists():
             return
         for char_dir in sorted(self._chars_dir.iterdir()):

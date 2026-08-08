@@ -1,4 +1,4 @@
-import { Brain, FilePenLine, History, MessageSquareText, Settings, SlidersHorizontal, Sparkles, UsersRound, Wrench } from 'lucide-react'
+import { Database, FilePenLine, History, MessageSquareText, Settings, SlidersHorizontal, Sparkles, UsersRound, Wrench } from 'lucide-react'
 
 import type { RecorderState } from '../audio/recorder'
 import { CharacterView } from '../character/CharacterView'
@@ -25,7 +25,7 @@ const DRAWER_ITEMS: DrawerItem[] = [
   { id: 'history', label: '聊天记录', icon: <History /> },
   { id: 'prompt', label: '提示词', icon: <FilePenLine /> },
   { id: 'character', label: '角色', icon: <MessageSquareText /> },
-  { id: 'memory', label: '记忆', icon: <Brain /> },
+  { id: 'memory', label: '记忆', icon: <Database /> },
   { id: 'capabilities', label: '能力', icon: <Sparkles /> },
   { id: 'characters', label: '角色库', icon: <UsersRound /> },
   { id: 'live2d', label: 'Live2D', icon: <SlidersHorizontal /> },

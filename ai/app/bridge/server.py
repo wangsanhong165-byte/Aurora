@@ -25,7 +25,6 @@ _live2d_model: str = "Design_genius_White"
 # Avatar config (loaded from config/avatar.yaml)
 _avatar_config: dict[str, Any] | None = None
 _avatar_controller: Any = None
-_avatar_profiles: dict[str, Any] | None = None
 
 # UI mode tracking
 _ui_mode: str = "window"  # "window" or "pet"
@@ -86,21 +85,20 @@ def _load_live2d_config() -> dict[str, Any]:
 
 
 def _load_avatar_profiles() -> dict[str, Any]:
-    global _avatar_profiles
-    if _avatar_profiles is not None:
-        return _avatar_profiles
+    # Read fresh on every call: models are added at the system level during a
+    # running session, and the attach gate consumes these profiles.
     profiles_dir = BASE_DIR / "config" / "avatar_profiles"
-    _avatar_profiles = {}
+    profiles: dict[str, Any] = {}
     if profiles_dir.exists():
         for path in profiles_dir.glob("*.json"):
             try:
                 profile = json.loads(path.read_text("utf-8"))
                 profile.setdefault("sequences", ["greet"])
                 if profile.get("model"):
-                    _avatar_profiles[profile["model"]] = profile
+                    profiles[profile["model"]] = profile
             except Exception as exc:
                 logger.warning("[Live2D] Invalid avatar profile %s: %s", path.name, exc)
-    return _avatar_profiles
+    return profiles
 
 
 def _load_motion_presets() -> dict[str, Any]:
