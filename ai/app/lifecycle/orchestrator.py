@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from uuid import uuid4
 from pathlib import Path
 from urllib import request
 
 from .health import HealthProbe
+from .endpoints import EndpointResolutionError, EndpointResolver, PortRejection
 from .manifest import Service, ServiceManifest
 from .platform import PlatformProcessAdapter
 from .registry import ProcessIdentity, ProcessRegistry
@@ -41,6 +43,8 @@ class LifecycleOrchestrator:
         self.events: list[dict] = []
         self.stream: EventStream | None = None
         self._failed_services: set[str] = set()
+        self._effective_services: dict[str, Service] = {}
+        self._port_rejections: tuple[PortRejection, ...] = ()
 
     def start(
         self,
@@ -60,9 +64,10 @@ class LifecycleOrchestrator:
         prune_launch_logs(self.root)
         rollback_from = len(self.started)
         self._failed_services.clear()
+        services = self._resolve_services(profile)
         # Services with failure_policy="isolate" that time out are NOT rolled back.
         # Only abort-policy failures raise and trigger a full rollback.
-        for service in self.manifest.for_profile(profile):
+        for service in services:
             try:
                 self._start_service(service)
             except LifecycleError:
@@ -81,6 +86,67 @@ class LifecycleOrchestrator:
                 )
         self._emit("availability", availability=self.status()["availability"])
         return self.status()
+
+    def _resolve_services(self, profile: str) -> list[Service]:
+        selected = self.manifest.for_profile(profile)
+        pinned: dict[str, int] = {}
+        for service in selected:
+            registered = self._registered_effective_service(service)
+            if registered:
+                pinned[service.name] = registered.port
+
+        try:
+            plan = EndpointResolver(self.platform).resolve(
+                selected,
+                pinned_ports=pinned,
+            )
+        except EndpointResolutionError as exc:
+            raise LifecycleError(str(exc)) from exc
+
+        self._effective_services.update(plan.services)
+        self._port_rejections = plan.rejections
+        for rejection in plan.rejections:
+            self._emit(
+                "port_rejected",
+                service_id=rejection.service_id,
+                port=rejection.port,
+                reason=rejection.reason,
+                detail=rejection.detail,
+            )
+        for service in selected:
+            effective = self._effective_services[service.name]
+            self._emit(
+                "endpoint_resolved",
+                service_id=service.name,
+                host=effective.host,
+                port=effective.port,
+                preferred_port=service.port,
+                fallback=effective.port != service.port,
+            )
+        return [self._effective_services[service.name] for service in selected]
+
+    def _registered_effective_service(
+        self,
+        service: Service,
+        *,
+        require_ready: bool = True,
+    ) -> Service | None:
+        entry = self.registry.get(service.name)
+        if not entry:
+            return None
+        port = int(entry.get("port", 0))
+        if port not in service.port_candidates and not service.dynamic_port:
+            return None
+        owner = self.platform.port_owner(port)
+        if owner != entry.get("pid"):
+            return None
+        actual = self.platform.identity(owner, port)
+        effective = replace(service, port=port)
+        if actual and self.registry.matches(service.name, actual) and (
+            not require_ready or self.probe.ready(effective)
+        ):
+            return effective
+        return None
 
     def _start_service(self, service: Service) -> None:
         for dependency in service.depends_on:
@@ -123,6 +189,7 @@ class LifecycleOrchestrator:
             )
             for key, value in service.env.items()
         })
+        env.update(self._endpoint_environment())
         process = self.platform.spawn(
             service.argv(self.root),
             (self.root / service.cwd).resolve(),
@@ -150,6 +217,16 @@ class LifecycleOrchestrator:
                 raise LifecycleError(f"{service.name}: warmup failed: {exc}") from exc
         self._emit("service_state", service_id=service.name, state="ready")
 
+    def _endpoint_environment(self) -> dict[str, str]:
+        services = self._effective_services or self.manifest.services
+        values: dict[str, str] = {}
+        for name, service in services.items():
+            prefix = name.upper()
+            values[f"{prefix}_HOST"] = service.host
+            values[f"{prefix}_PORT"] = str(service.port)
+            values[f"{prefix}_URL"] = f"http://{service.host}:{service.port}"
+        return values
+
     def _warmup(self, service: Service) -> None:
         warmup = service.warmup or {}
         target = str(warmup.get("url", "")).format(host=service.host, port=service.port)
@@ -167,6 +244,8 @@ class LifecycleOrchestrator:
         self._stop_names(names)
         self.started.clear()
         self.processes.clear()
+        self._effective_services.clear()
+        self._port_rejections = ()
         return self.status()
 
     def stop_launch(self, launch_id: str) -> dict:
@@ -178,6 +257,8 @@ class LifecycleOrchestrator:
 
     def stop_all_registered(self) -> dict:
         self._stop_names([name for name, _entry in self.registry.items()])
+        self._effective_services.clear()
+        self._port_rejections = ()
         return self.status()
 
     def _stop_names(self, names: list[str]) -> None:
@@ -209,7 +290,16 @@ class LifecycleOrchestrator:
 
     def _build_status(self) -> dict:
         services = []
+        effective = dict(self.manifest.services)
         for name, service in self.manifest.services.items():
+            recovered = self._registered_effective_service(
+                service,
+                require_ready=False,
+            )
+            if recovered:
+                effective[name] = recovered
+        effective.update(self._effective_services)
+        for name, service in effective.items():
             owner = self.platform.port_owner(service.port)
             state = "stopped"
             if name in self._failed_services:
@@ -228,6 +318,7 @@ class LifecycleOrchestrator:
                 "provider": service.provider,
                 "required": any(name in item.required_services for item in self.manifest.capabilities.values()),
                 "status": state,
+                "host": service.host,
                 "port": service.port,
                 "pid": owner,
             })

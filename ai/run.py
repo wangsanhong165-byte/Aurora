@@ -25,7 +25,6 @@ os.environ.setdefault("PYTHONUTF8", "1")
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-from app.config_manager.service_config import service_config
 from app.lifecycle.control import send_request
 from app.core.config import DEFAULT_ENV_PATH, load_env_file
 
@@ -48,19 +47,19 @@ def start_lifecycle() -> None:
     _lifecycle_started = True
 
 
-def wait_lifecycle() -> bool:
+def wait_lifecycle() -> dict | None:
     try:
         response = send_request(BASE_DIR, {
             "schema_version": 1,
             "command": "status",
             "request_id": "run-py-status",
         })
-        return bool(
-            response.get("ok")
-            and response["result"].get("availability") == "FULL_READY"
-        )
+        result = response.get("result", {})
+        if response.get("ok") and result.get("availability") == "FULL_READY":
+            return result
+        return None
     except (OSError, ValueError):
-        return False
+        return None
 
 
 def stop_lifecycle() -> None:
@@ -249,16 +248,21 @@ def main() -> int:
     start_lifecycle()
     try:
         print("\nWaiting for services...")
-        if not wait_lifecycle():
+        lifecycle_status = wait_lifecycle()
+        if not lifecycle_status:
             return 1
 
         # ---- Web UI mode (bridge server) ----
         if args.web:
-            bridge_port = str(service_config.port("bridge"))
-            print(f"\nLive2D Bridge ready on http://127.0.0.1:{bridge_port} ...")
+            bridge = next(
+                service for service in lifecycle_status.get("services", [])
+                if service.get("id") == "bridge"
+            )
+            bridge_url = f"http://{bridge['host']}:{bridge['port']}"
+            print(f"\nLive2D Bridge ready on {bridge_url} ...")
             import webbrowser
-            webbrowser.open(f"http://127.0.0.1:{bridge_port}")
-            print(f"\n=== Monika Live2D ready! http://127.0.0.1:{bridge_port} ===")
+            webbrowser.open(bridge_url)
+            print(f"\n=== Monika Live2D ready! {bridge_url} ===")
             print("    Press Ctrl+C to stop\n")
             try:
                 while True:

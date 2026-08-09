@@ -3,6 +3,12 @@
 const http = require('node:http')
 const https = require('node:https')
 
+function serviceUrl (status, serviceId) {
+  const service = status?.services?.find(item => item.id === serviceId)
+  if (!service?.host || !Number.isInteger(service.port)) return null
+  return `http://${service.host}:${service.port}`
+}
+
 function probeUrl (url, timeoutMs = 1500) {
   const target = new URL(url)
   const transport = target.protocol === 'https:' ? https : http
@@ -48,4 +54,4 @@ async function waitForUrl (
   }
 }
 
-module.exports = { probeUrl, waitForUrl }
+module.exports = { probeUrl, serviceUrl, waitForUrl }

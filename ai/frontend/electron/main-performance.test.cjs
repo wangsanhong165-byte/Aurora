@@ -25,11 +25,11 @@ test('main UI transition stops startup lifecycle polling only after a successful
   )
 
   assert.match(loadAppUrl, /if \(mainUiLoaded \|\| mainUiLoading/)
-  assert.match(loadAppUrl, /return mainWindow\.loadURL\(targetUrl\)\.then/)
+  assert.match(loadAppUrl, /return mainWindow\.loadURL\(appUrl\)\.then/)
   assert.match(loadAppUrl, /clearInterval\(statusTimer\)/)
   assert.match(loadAppUrl, /statusTimer = null/)
   assert.ok(
-    loadAppUrl.indexOf('return mainWindow.loadURL(targetUrl)')
+    loadAppUrl.indexOf('return mainWindow.loadURL(appUrl)')
       < loadAppUrl.indexOf('clearInterval(statusTimer)'),
     'startup polling must remain active until the main UI actually loads',
   )
@@ -62,7 +62,8 @@ test('startup waits for full GPU readiness before loading the actual UI URL', ()
   )
 
   assert.match(startupGate, /status\?\.availability === 'FULL_READY'/)
-  assert.match(startupGate, /waitForUrl\(targetUrl, \{/)
+  assert.match(startupGate, /serviceUrl\(status, isDev \? 'frontend' : 'bridge'\)/)
+  assert.match(startupGate, /waitForUrl\(appUrl, \{/)
   assert.match(startupGate, /timeoutMs: STARTUP_TIMEOUT_MS/)
   assert.match(startupGate, /shouldStop: \(\) => mainUiLoaded \|\| shutdownStarted/)
 })

@@ -10,6 +10,7 @@ const {
   selectPython,
   npmInvocation,
   controlTimeoutFor,
+  serviceUrlFromLifecycleOutput,
 } = require('./soulctl.cjs')
 
 test('runtime config supports default and per-service Python', () => {
@@ -59,4 +60,18 @@ test('lifecycle control commands always have bounded timeouts', () => {
   assert.equal(controlTimeoutFor('stop'), 30_000)
   assert.equal(controlTimeoutFor('shutdown'), 5_000)
   assert.equal(controlTimeoutFor('start'), 480_000)
+})
+
+test('web launch prints the Bridge endpoint resolved by the lifecycle supervisor', () => {
+  const stdout = JSON.stringify({
+    ok: true,
+    result: {
+      services: [{ id: 'bridge', host: '127.0.0.1', port: 19306 }],
+    },
+  })
+
+  assert.equal(
+    serviceUrlFromLifecycleOutput(stdout, 'bridge'),
+    'http://127.0.0.1:19306',
+  )
 })

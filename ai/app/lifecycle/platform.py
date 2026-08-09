@@ -116,6 +116,19 @@ class PlatformProcessAdapter:
             probe.close()
         return None
 
+    def allocate_port(self, host: str, claimed: set[int]) -> int:
+        """Ask the OS for a currently bindable fallback outside excluded ranges."""
+        for _attempt in range(32):
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                probe.bind((host, 0))
+                port = int(probe.getsockname()[1])
+            finally:
+                probe.close()
+            if port not in claimed:
+                return port
+        raise OSError("the OS did not allocate a unique fallback port")
+
     def terminate_tree(self, identity: ProcessIdentity) -> bool:
         actual = self.identity(identity.pid, identity.port)
         if actual != identity:

@@ -144,7 +144,10 @@ Character cards (`config/characters/<id>/character.json`) are thin declarations 
 
 ## Service configuration
 
-`config/services.json` is the single checked-in service-port source:
+`config/services.json` is the single checked-in service-endpoint source. The table
+lists preferred ports; the Supervisor selects a configured fallback before it starts
+any process when a preferred port is occupied or excluded by Windows. If every named
+fallback is unavailable, it asks the OS for a currently bindable dynamic port:
 
 | Service | Port |
 |---|---:|
@@ -153,7 +156,7 @@ Character cards (`config/characters/<id>/character.json`) are thin declarations 
 | TTS | 19203 |
 | Memory | 19204 |
 | GSVI | 19205 |
-| Bridge | 9528 |
+| Bridge | 19206 |
 | Vite frontend | 5173 |
 
 Environment variables may override configured values at runtime.

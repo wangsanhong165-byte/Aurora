@@ -96,11 +96,15 @@ def test_frontend_connects_only_to_canonical_client_ws():
     app_source = (
         ROOT / "frontend" / "src" / "session" / "DesktopSessionProvider.tsx"
     ).read_text("utf-8")
+    client_source = (
+        ROOT / "frontend" / "src" / "runtime" / "client.ts"
+    ).read_text("utf-8")
     debug_source = (
         ROOT / "frontend" / "src" / "ui" / "DebugPanel.tsx"
     ).read_text("utf-8")
 
-    assert "/client-ws" in app_source
+    assert "runtimeWebSocketUrl(location)" in app_source
+    assert "/client-ws" in client_source
     assert "/v2/ws" not in app_source
     assert "/v2/ws" not in debug_source
 

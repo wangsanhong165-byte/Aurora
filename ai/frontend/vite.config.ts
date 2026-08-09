@@ -1,5 +1,11 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import services from '../config/services.json'
+
+const bridgeTarget = process.env.BRIDGE_URL
+  ?? `http://${services.bridge.host}:${services.bridge.port}`
+const bridgeWsTarget = bridgeTarget.replace(/^http/, 'ws')
+const frontendPort = Number(process.env.FRONTEND_PORT ?? services.frontend.port)
 
 export default defineConfig({
   plugins: [react()],
@@ -9,19 +15,19 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    port: 5174,
+    port: frontendPort,
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:9528',
+        target: bridgeTarget,
         changeOrigin: true,
       },
       '/client-ws': {
-        target: 'ws://127.0.0.1:9528',
+        target: bridgeWsTarget,
         ws: true,
       },
       '/live2d-models': {
-        target: 'http://127.0.0.1:9528',
+        target: bridgeTarget,
         changeOrigin: true,
       },
     },

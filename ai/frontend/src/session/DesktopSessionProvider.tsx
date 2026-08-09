@@ -2,6 +2,7 @@ import { useEffect, useRef, useCallback, useState } from 'react'
 import { useActions, useSelector, selectSettings } from '../core/store'
 import { eventBus } from '../core/event-bus'
 import { RuntimeAdapter } from '../runtime/adapter'
+import { runtimeWebSocketUrl } from '../runtime/client'
 import { AudioPlayer } from '../audio/player'
 import {
   bytesToBase64,
@@ -26,7 +27,7 @@ import {
   resolvePersistedLive2DModel,
 } from '../character/Live2DPerformanceSettings'
 
-const WS_URL = `ws://${location.hostname}:9528/client-ws`
+const WS_URL = runtimeWebSocketUrl(location)
 let idCounter = 0
 const nextId = () => `msg_${++idCounter}`
 

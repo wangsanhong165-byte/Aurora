@@ -20,6 +20,8 @@ class Service:
     host: str
     port: int
     command: Mapping[str, object]
+    fallback_ports: tuple[int, ...] = ()
+    dynamic_port: bool = False
     health: str | None = None
     timeout: int = 30
     depends_on: tuple[str, ...] = ()
@@ -56,6 +58,11 @@ class Service:
                 .replace("{port}", str(self.port))
             )
         return argv
+
+    @property
+    def port_candidates(self) -> tuple[int, ...]:
+        """Return the preferred port followed by unique configured fallbacks."""
+        return tuple(dict.fromkeys((self.port, *self.fallback_ports)))
 
 
 @dataclass(frozen=True)
@@ -109,6 +116,8 @@ class ServiceManifest:
                 host=host,
                 port=port,
                 command=merged.get("command", {"module": f"app.modules.{name}.api"}),
+                fallback_ports=tuple(int(item) for item in merged.get("fallback_ports", [])),
+                dynamic_port=bool(merged.get("dynamic_port", False)),
                 health=merged.get("health"),
                 timeout=int(merged.get("timeout", 30)),
                 depends_on=tuple(merged.get("depends_on", [])),

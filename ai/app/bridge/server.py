@@ -1,4 +1,5 @@
 """Live2D Bridge Server — serves frontend, Live2D models, WebSocket API."""
+import argparse
 import asyncio
 import io
 import json
@@ -13,6 +14,22 @@ from fastapi import FastAPI, HTTPException, Response, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from starlette.responses import FileResponse
+
+from app.config_manager.service_config import service_config
+
+
+def parse_bind_address(argv: list[str] | None = None) -> tuple[str, int]:
+    parser = argparse.ArgumentParser(description="SoulLink Bridge server")
+    parser.add_argument("--host", default=service_config.host("bridge"))
+    parser.add_argument("--port", type=int, default=service_config.port("bridge"))
+    args = parser.parse_args(argv)
+    return args.host, args.port
+
+
+_MAIN_BIND_ADDRESS = parse_bind_address() if __name__ == "__main__" else None
+if _MAIN_BIND_ADDRESS:
+    os.environ["BRIDGE_HOST"] = _MAIN_BIND_ADDRESS[0]
+    os.environ["BRIDGE_PORT"] = str(_MAIN_BIND_ADDRESS[1])
 
 # Character card state (used by switch-character)
 _char_card: dict[str, Any] | None = None
@@ -29,17 +46,18 @@ _avatar_controller: Any = None
 # UI mode tracking
 _ui_mode: str = "window"  # "window" or "pet"
 
-_LOCAL_UI_ORIGINS = {
-    "http://127.0.0.1:9528",
-    "http://localhost:9528",
-    "http://127.0.0.1:5173",
-    "http://localhost:5173",
-}
+def _local_ui_origins() -> set[str]:
+    origins: set[str] = set()
+    for service_id in ("bridge", "frontend"):
+        port = service_config.port(service_id)
+        origins.add(f"http://127.0.0.1:{port}")
+        origins.add(f"http://localhost:{port}")
+    return origins
 
 
 def _is_allowed_client_origin(origin: str) -> bool:
     """Reject browser cross-site WebSocket access to local management commands."""
-    return not origin or origin.lower().rstrip("/") in _LOCAL_UI_ORIGINS
+    return not origin or origin.lower().rstrip("/") in _local_ui_origins()
 
 # Runtime manager (lazy init)
 _manager: Any = None
@@ -307,7 +325,7 @@ async def resolve_tool_confirmation(request_id: str, payload: dict):
     return {"resolved": resolved}
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=sorted(_LOCAL_UI_ORIGINS),
+    allow_origins=sorted(_local_ui_origins()),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -603,8 +621,8 @@ if __name__ == "__main__":
     import shutil
     import uvicorn
 
-    port = int(os.environ.get("BRIDGE_PORT", "9528"))
-    logger.info("Starting uvicorn on port %d", port)
+    host, port = _MAIN_BIND_ADDRESS or parse_bind_address([])
+    logger.info("Starting uvicorn on %s:%d", host, port)
     if shutil.which("ffmpeg") is None:
         logger.warning("ffmpeg not found. Install for audio chunk/volume support:")
 
@@ -635,4 +653,4 @@ if __name__ == "__main__":
     logger.info("  Histories: %d entries", len(_get_manager().get_history_list()))
     logger.info("=" * 44)
 
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(app, host=host, port=port, log_level="warning")

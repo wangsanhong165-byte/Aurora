@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { RuntimeClient } from './client.ts'
+import { RuntimeClient, runtimeWebSocketUrl } from './client.ts'
 import type { RuntimeEvent } from './event-types.ts'
 
 function envelope(overrides: Partial<RuntimeEvent> = {}): RuntimeEvent {
@@ -18,6 +18,17 @@ function envelope(overrides: Partial<RuntimeEvent> = {}): RuntimeEvent {
     ...overrides,
   } as RuntimeEvent
 }
+
+test('runtime websocket follows the origin that served the desktop UI', () => {
+  assert.equal(
+    runtimeWebSocketUrl({ protocol: 'http:', host: '127.0.0.1:19306' }),
+    'ws://127.0.0.1:19306/client-ws',
+  )
+  assert.equal(
+    runtimeWebSocketUrl({ protocol: 'https:', host: 'localhost:19406' }),
+    'wss://localhost:19406/client-ws',
+  )
+})
 
 test('client accepts only validated V3 envelopes and rejects flat V2 frames', () => {
   const events: RuntimeEvent[] = []

@@ -19,7 +19,7 @@ const {
   getPetBounds,
   selectRestorableBounds,
 } = require('./pet-window.cjs')
-const { waitForUrl } = require('./startup-readiness.cjs')
+const { serviceUrl, waitForUrl } = require('./startup-readiness.cjs')
 const { dialogOptionsFor } = require('./character-asset-dialog.cjs')
 
 // ProcessManager — backend service lifecycle management
@@ -30,10 +30,8 @@ const { ProcessManager } = require('../../electron/process-manager.cjs')
 const isDev = process.env.SOULLINK_HOT === '1'
 const CONSOLE_LOG = path.join(__dirname, '..', 'console.log')
 const ELECTRON_PID_FILE = path.join(__dirname, '..', '..', 'data', 'pids', 'electron.pid')
-// Both dev and prod load from Bridge (9528) — it serves frontend dist/ AND
-// Live2D model files. Vite (5173) doesn't have the /live2d-models/ mount.
-const DEV_URL = process.env.VITE_URL || 'http://127.0.0.1:5173'
-const PROD_URL = process.env.BRIDGE_URL || 'http://127.0.0.1:9528'
+// Lifecycle status is the source of truth; explicit URLs are development overrides.
+const EXPLICIT_APP_URL = isDev ? process.env.VITE_URL : process.env.BRIDGE_URL
 // The bootstrap page stays visible while all GPU models are preloaded.
 const STARTUP_TIMEOUT_MS = 60_000
 const APP_READY_POLL_MS = 500
@@ -66,6 +64,7 @@ let statusTimer = null
 let mainUiLoaded = false
 let mainUiLoading = false
 let appLoadRetryTimer = null
+let appUrl = null
 
 // Frameless-window drag state (driven over IPC, see setupIPC). Polled from
 // the main process so dragging stays smooth while the renderer is busy
@@ -135,10 +134,9 @@ function createWindow() {
 }
 
 async function loadAppUrl() {
-  if (mainUiLoaded || mainUiLoading || !mainWindow || mainWindow.isDestroyed()) return
+  if (mainUiLoaded || mainUiLoading || !appUrl || !mainWindow || mainWindow.isDestroyed()) return
   mainUiLoading = true
-  const targetUrl = isDev ? DEV_URL : PROD_URL
-  return mainWindow.loadURL(targetUrl).then(() => {
+  return mainWindow.loadURL(appUrl).then(() => {
     mainUiLoaded = true
     if (statusTimer) {
       clearInterval(statusTimer)
@@ -395,8 +393,6 @@ app.whenReady().then(async () => {
   // showing real-time service startup progress instead of stale "blocked".
   const startPromise = pm.startAll()
 
-  const targetUrl = isDev ? DEV_URL : PROD_URL
-
   // Poll only the in-memory startup snapshot while the sequential GPU preload
   // is running. loadAppUrl() clears this timer after the main UI is loaded.
   let statusPollCounter = 0
@@ -427,7 +423,14 @@ app.whenReady().then(async () => {
       mainWindow?.webContents.send('lifecycle:error', message)
       return
     }
-    void waitForUrl(targetUrl, {
+    appUrl = EXPLICIT_APP_URL || serviceUrl(status, isDev ? 'frontend' : 'bridge')
+    if (!appUrl) {
+      const message = 'Startup blocked: lifecycle did not resolve the UI endpoint'
+      console.error(`[Electron] ${message}`)
+      mainWindow?.webContents.send('lifecycle:error', message)
+      return
+    }
+    void waitForUrl(appUrl, {
       intervalMs: APP_READY_POLL_MS,
       timeoutMs: STARTUP_TIMEOUT_MS,
       shouldStop: () => mainUiLoaded || shutdownStarted,

@@ -7,6 +7,13 @@ import type {
 } from './event-types.ts'
 import { parseRuntimeEvent } from './registry.ts'
 
+export function runtimeWebSocketUrl(
+  page: { protocol: string; host: string },
+): string {
+  const protocol = page.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${page.host}/client-ws`
+}
+
 export type ClientProtocolError = {
   code: string
   message: string

@@ -41,7 +41,9 @@ Monika Voice Companion 是一个运行在 Windows 上的本地 AI 语音陪伴�
 | TTS | :19203 | TTS 统一入口 |
 | Memory | :19204 | SQLite+FTS5 记忆服务 |
 | GSVI | :19205 | GPT-SoVITS v2Pro |
-| Bridge | :9528 | Web 服务 + WebSocket API |
+| Bridge | :19206 | Web 服务 + WebSocket API |
+
+表中为首选端口；启动器会先检查可绑定性，必要时选择备用或系统动态端口，并将实际地址传给全栈。
 
 ---
 
@@ -78,7 +80,7 @@ python run.py --ui tui
 
 # Web/Live2D 全功能模式
 soulctl.cmd web
-# 打开 http://127.0.0.1:9528
+# 启动器会打印本次实际使用的地址
 ```
 
 启动后自动拉起 ASR/LLM/TTS/Memory/GSVI 五个服务，进入持续监听。
@@ -108,7 +110,7 @@ python run.py --text
 soulctl.cmd web
 ```
 
-在浏览器打开 `http://127.0.0.1:9528`，使用带 Live2D 动画的图形界面。
+打开 `soulctl.cmd web` 打印的地址，使用带 Live2D 动画的图形界面。
 
 ---
 

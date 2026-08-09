@@ -134,6 +134,17 @@ function invokeClient (python, args, { quiet = false, timeoutMs } = {}) {
   return result
 }
 
+function serviceUrlFromLifecycleOutput (stdout, serviceId) {
+  try {
+    const response = JSON.parse(String(stdout || '').trim())
+    const service = response?.result?.services?.find(item => item.id === serviceId)
+    if (!service?.host || !Number.isInteger(service.port)) return ''
+    return `http://${service.host}:${service.port}`
+  } catch (_) {
+    return ''
+  }
+}
+
 function waitForControl (python, timeoutMs = 10000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -198,7 +209,14 @@ function doctor (python) {
   for (const [name, detail, ok] of checks) {
     console.log(`${ok ? '[OK]' : '[FAIL]'} ${name}: ${detail}`)
   }
-  return checks.every(item => item[2]) ? 0 : 1
+  const endpoints = spawnSync(
+    python,
+    pythonArgs(python, ['-m', 'app.lifecycle.doctor', '--root', ROOT]),
+    { cwd: ROOT, encoding: 'utf8', windowsHide: true, timeout: 30_000 },
+  )
+  if (endpoints.stdout) process.stdout.write(endpoints.stdout)
+  if (endpoints.stderr) process.stderr.write(endpoints.stderr)
+  return checks.every(item => item[2]) && endpoints.status === 0 ? 0 : 1
 }
 
 function holdForeground (python) {
@@ -262,7 +280,8 @@ async function main (argv = process.argv.slice(2)) {
   if (result.status !== 0) return result.status || 1
   if (mapped === 'stop') invokeClient(python, ['shutdown'], { quiet: true })
   if (command === 'web') {
-    console.log('Open http://127.0.0.1:9528 (Ctrl+C stops this launch)')
+    const bridgeUrl = serviceUrlFromLifecycleOutput(result.stdout, 'bridge')
+    console.log(`Open ${bridgeUrl || 'the resolved Bridge URL above'} (Ctrl+C stops this launch)`)
     holdForeground(python)
   } else if (command === 'start' && argv.includes('--foreground')) {
     holdForeground(python)
@@ -287,5 +306,6 @@ module.exports = {
   main,
   readRuntimeConfig,
   selectPython,
+  serviceUrlFromLifecycleOutput,
   npmInvocation,
 }
