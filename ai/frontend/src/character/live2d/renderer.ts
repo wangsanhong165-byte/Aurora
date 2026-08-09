@@ -22,7 +22,9 @@ let _cachedModelH = -1
 let _cachedModel: CubismModel | null = null
 let _modelMatrix: CubismModelMatrix | null = null
 let _baseProjection: CubismMatrix44 | null = null   // base projection WITHOUT viewport transform
-let _projection: CubismMatrix44 | null = null       // final projection WITH viewport (rebuilt each frame)
+let _projection: CubismMatrix44 | null = null       // final projection WITH viewport
+let _viewportMatrix: CubismMatrix44 | null = null
+let _projectionDirty = true
 
 // ── Viewport transform (drag + zoom) ──
 let _viewOffsetX = 0
@@ -63,6 +65,9 @@ export function createFrameworkRenderer(model: CubismModel): CubismRenderer_WebG
   renderer.initialize(model)
   renderer.startUp(_rs.gl)
   renderer.setIsPremultipliedAlpha(true)
+  // This canvas is dedicated to Cubism and render() establishes a known state.
+  // Avoid synchronous getParameter() state capture on every animation frame.
+  renderer.setPreserveExternalState(false)
 
   return renderer
 }
@@ -74,6 +79,7 @@ export function resizeRenderer(width: number, height: number): void {
   _rs.gl.viewport(0, 0, width, height)
   // Invalidate cached matrices on resize
   _cachedModelW = -1
+  _projectionDirty = true
 }
 
 // ── Texture helpers ──
@@ -202,12 +208,14 @@ function _buildBaseProjection(model: CubismModel): void {
     _modelMatrix.translateY(-bounds.centerY * _modelMatrix.getScaleY())
   }
   _baseProjection.multiplyByMatrix(_modelMatrix)
+  _projectionDirty = true
 }
 
 /** Invalidate projection cache so next render picks up viewport changes */
 function _invalidateProjection(): void {
   _cachedModelW = -1
   _cachedModel = null
+  _projectionDirty = true
 }
 
 // ── Main render ──
@@ -256,23 +264,25 @@ export function render(handle: CubismModelHandle, renderer: CubismRenderer_WebGL
   // Build / reuse base projection (cached by model dimensions)
   _buildBaseProjection(model)
 
-  // ALWAYS build final projection from base + viewport (not cached — viewport changes per frame)
-  _projection = new CubismMatrix44()
-  if (_baseProjection) {
-    // Copy base projection values
-    const baseTr = _baseProjection.getArray()
-    const finalTr = _projection.getArray()
-    for (let i = 0; i < 16; i++) finalTr[i] = baseTr[i]
+  // The viewport only changes on resize, drag or zoom. Reuse both matrices
+  // between frames so idle rendering does not create garbage every rAF.
+  if (!_projection) _projection = new CubismMatrix44()
+  if (!_viewportMatrix) _viewportMatrix = new CubismMatrix44()
+  if (_projectionDirty) {
+    if (_baseProjection) {
+      const baseTr = _baseProjection.getArray()
+      const finalTr = _projection.getArray()
+      for (let i = 0; i < 16; i++) finalTr[i] = baseTr[i]
+    } else {
+      _projection.loadIdentity()
+    }
+    _viewportMatrix.loadIdentity()
+    _viewportMatrix.scale(_viewScale, _viewScale)
+    _viewportMatrix.translate(_viewOffsetX, _viewOffsetY)
+    // _projection = viewport * base projection.
+    _projection.multiplyByMatrix(_viewportMatrix)
+    _projectionDirty = false
   }
-  // Build viewport transform and multiply on the left of the base projection.
-  // NOTE: scale() and translate() are ABSOLUTE setters (overwrite tr[0]/tr[5]/tr[12]/tr[13]),
-  // so we build the viewport matrix on a FRESH identity, then multiply onto _projection.
-  // This preserves the aspect ratio and model scale from the base projection.
-  const _vp = new CubismMatrix44()
-  _vp.scale(_viewScale, _viewScale)
-  _vp.translate(_viewOffsetX, _viewOffsetY)
-  // _projection = vp * _projection  (viewport * base)
-  _projection.multiplyByMatrix(_vp)
   renderer.setMvpMatrix(_projection!)
 
   renderer.drawModel()
@@ -316,6 +326,8 @@ export function destroyRenderer(): void {
   _modelMatrix = null
   _baseProjection = null
   _projection = null
+  _viewportMatrix = null
+  _projectionDirty = true
   _cachedModelW = -1
   _cachedModel = null
 }

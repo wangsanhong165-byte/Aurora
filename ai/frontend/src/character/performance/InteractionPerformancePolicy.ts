@@ -17,7 +17,18 @@ export interface InteractionDecision {
 }
 
 const DECISIONS: Record<InteractionEventType, Omit<InteractionDecision, 'intent'> & { intent: CharacterIntent }> = {
-  touch: { intent: { emotion: 'happy', behavior: 'agree', intensity: 0.42, attention: 'user', energy: 0.4 }, priority: 60, cooldownMs: 1400 },
+  touch: {
+    intent: {
+      emotion: 'happy',
+      behavior: 'agree',
+      intensity: 0.42,
+      attention: 'user',
+      energy: 0.4,
+      contextTags: ['interaction', 'touch'],
+    },
+    priority: 60,
+    cooldownMs: 1400,
+  },
   drag: { intent: { emotion: 'surprised', behavior: 'react', intensity: 0.3, attention: 'user', energy: 0.35 }, priority: 35, cooldownMs: 900 },
   inactivity: { intent: { emotion: 'neutral', behavior: 'idle', intensity: 0.22, attention: 'away', energy: 0.15 }, priority: 10, cooldownMs: 12000 },
   time: { intent: { emotion: 'happy', behavior: 'greet', intensity: 0.35, attention: 'user', energy: 0.3 }, priority: 20, cooldownMs: 60000 },

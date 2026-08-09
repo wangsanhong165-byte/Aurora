@@ -24,10 +24,17 @@ for (const file of files.filter(name => name.endsWith('.json'))) {
   const refs = model3.FileReferences ?? {}
   const displayInfoFile = refs.DisplayInfo ? path.join(modelDir, refs.DisplayInfo) : null
   let knownParameters = new Set()
+  let displayParameters = []
   if (displayInfoFile) {
     try {
       const display = await readJson(displayInfoFile)
-      knownParameters = new Set((display.Parameters ?? []).map(parameter => parameter.Id))
+      const groupNames = new Map((display.ParameterGroups ?? []).map(group => [group.Id, group.Name]))
+      displayParameters = (display.Parameters ?? []).map(parameter => ({
+        id: parameter.Id,
+        name: parameter.Name ?? '',
+        group: groupNames.get(parameter.GroupId) ?? '',
+      }))
+      knownParameters = new Set(displayParameters.map(parameter => parameter.id))
     } catch { /* DisplayInfo is optional. */ }
   }
 
@@ -84,6 +91,26 @@ for (const file of files.filter(name => name.endsWith('.json'))) {
     }
   }
   const profileIssues = []
+  const tailParameters = displayParameters.filter(parameter => /尾|tail|尻|しっぽ/i.test(`${parameter.name} ${parameter.group}`))
+  const armParameters = displayParameters.filter(parameter => /手|臂|arm/i.test(`${parameter.name} ${parameter.group}`))
+  let tailPhysicsInputs = []
+  if (refs.Physics && tailParameters.length) {
+    try {
+      const physics = await readJson(path.join(modelDir, refs.Physics))
+      const tailIds = new Set(tailParameters.map(parameter => parameter.id))
+      tailPhysicsInputs = [...new Set((physics.PhysicsSettings ?? []).flatMap(setting =>
+        (setting.Output ?? []).some(output => tailIds.has(output.Destination?.Id))
+          ? (setting.Input ?? []).map(input => input.Source?.Id).filter(Boolean)
+          : [],
+      ))]
+    } catch { /* Physics diagnostics remain optional. */ }
+  }
+  if (profile.idleTailMotion?.enabled && tailParameters.length === 0) {
+    profileIssues.push('idleTailMotion enabled but DisplayInfo has no tail parameter group')
+  }
+  if (profile.idleTailMotion?.enabled && tailParameters.length > 0 && tailPhysicsInputs.length === 0) {
+    profileIssues.push('idleTailMotion enabled but no physics input drives the named tail parameters')
+  }
   const motionStylePreset = profile.motionStyle?.preset
   if (motionStylePreset && !['natural', 'lively', 'calm', 'shy'].includes(motionStylePreset)) {
     profileIssues.push(`unknown motionStyle preset: ${motionStylePreset}`)
@@ -133,6 +160,17 @@ for (const file of files.filter(name => name.endsWith('.json'))) {
     nativeMotions,
     nativeMotionCatalog,
     mappingSuggestions,
+    namedCapabilities: {
+      tail: {
+        parameterCount: tailParameters.length,
+        parameters: tailParameters,
+        physicsInputs: tailPhysicsInputs,
+      },
+      arm: {
+        parameterCount: armParameters.length,
+        parameters: armParameters,
+      },
+    },
     assets: {
       DisplayInfo: Boolean(refs.DisplayInfo),
       Expressions: nativeExpressions.length,

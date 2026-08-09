@@ -3,7 +3,7 @@ import { Info, Palette, Settings2, type LucideIcon } from 'lucide-react'
 import { theme } from '../core/theme'
 import type { AppSettings } from '../core/store'
 import { electronWindowBridge } from '../session/electron-window-bridge'
-import { eventBus } from '../core/event-bus'
+import { eventBus, type EventMap } from '../core/event-bus'
 import {
   normalizeLive2DPerformanceSettings,
   readModelPerformanceDefaults,
@@ -405,6 +405,13 @@ function AnimationTab({ settings, onSettingChange }: {
         >
           恢复该模型默认值
         </button>
+        <button
+          type="button"
+          style={styles.textButton}
+          onClick={() => eventBus.emit('character:viewport_reset', undefined)}
+        >
+          恢复模型默认构图
+        </button>
       </div>
 
       <div style={styles.sectionDivider} />
@@ -442,6 +449,8 @@ function AnimationTab({ settings, onSettingChange }: {
         actionsByModel={settings.live2dActions ?? {}}
         onChange={actions => onSettingChange('live2dActions', actions)}
       />
+
+      <Live2DRuntimeMonitor model={settings.live2dModel} />
 
       <div style={styles.controlCard}>
         <div style={styles.calibrationHeader}>
@@ -526,6 +535,210 @@ function AnimationTab({ settings, onSettingChange }: {
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+function Live2DRuntimeMonitor({ model }: { model: string }) {
+  const [snapshot, setSnapshot] = useState<EventMap['character:performance_debug'] | null>(null)
+  const [capability, setCapability] = useState<EventMap['character:model_capability'] | null>(null)
+  const [probeId, setProbeId] = useState('')
+  const [probeValue, setProbeValue] = useState(0)
+  const [partProbeId, setPartProbeId] = useState('')
+  const [partProbeOpacity, setPartProbeOpacity] = useState(1)
+
+  useEffect(() => eventBus.on('character:performance_debug', setSnapshot), [])
+  useEffect(() => {
+    const dispose = eventBus.on('character:model_capability', next => {
+      if (next.model === model) setCapability(next)
+    })
+    eventBus.emit('character:model_capability_request', undefined)
+    return dispose
+  }, [model])
+  useEffect(() => () => {
+    eventBus.emit('character:parameter_probe', { clear: true })
+    eventBus.emit('character:part_probe', { clear: true })
+  }, [])
+
+  const frame = snapshot?.frame
+  const fps = frame?.averageIntervalMs ? 1000 / frame.averageIntervalMs : 0
+  const contested = snapshot ? Object.keys(snapshot.contestedParameters).length : 0
+  const motion = String(snapshot?.motion.motion ?? 'idle')
+  const coverage = (snapshot?.profileCoverage.coverage ?? 0) * 100
+  const probe = capability?.parameters.find(parameter => parameter.id === probeId)
+  const partProbe = capability?.parts.find(part => part.id === partProbeId)
+  const resolved = snapshot?.resolvedParameters ?? {}
+  const formatControl = (x: number | undefined, y: number | undefined) => (
+    x === undefined && y === undefined ? '—' : `${(x ?? 0).toFixed(2)} / ${(y ?? 0).toFixed(2)}`
+  )
+
+  return (
+    <div style={styles.runtimeMonitor}>
+      <div style={styles.calibrationHeader}>
+        <div>
+          <div style={styles.cardTitle}>实时表现监控</div>
+          <div style={styles.cardDesc}>逐帧采样控制、物理与渲染；界面以 4 Hz 汇总，不干扰动画循环。</div>
+        </div>
+        <span style={{ ...styles.profileBadge, color: frame && frame.longFrameCount === 0 ? '#77d6a0' : theme.colors.accent }}>
+          {frame ? `${fps.toFixed(0)} FPS` : '等待模型'}
+        </span>
+      </div>
+      <div style={styles.metricGrid}>
+        <RuntimeMetric label="帧间隔 P95" value={frame ? `${frame.p95IntervalMs.toFixed(1)} ms` : '—'} />
+        <RuntimeMetric label="单帧工作" value={frame ? `${frame.workMs.toFixed(1)} ms` : '—'} />
+        <RuntimeMetric label="控制 / 物理" value={frame ? `${frame.controllerMs.toFixed(1)} / ${frame.modelMs.toFixed(1)} ms` : '—'} />
+        <RuntimeMetric label="渲染" value={frame ? `${frame.renderMs.toFixed(1)} ms` : '—'} />
+        <RuntimeMetric label="长帧 (>33ms)" value={frame ? String(frame.longFrameCount) : '—'} />
+        <RuntimeMetric label="参数覆盖" value={snapshot ? `${coverage.toFixed(0)}%` : '—'} />
+        <RuntimeMetric label="参数冲突" value={snapshot ? String(contested) : '—'} />
+        <RuntimeMetric label="模型参数" value={capability ? String(capability.parameters.length) : '—'} />
+        <RuntimeMetric label="模型部件" value={capability ? String(capability.parts.length) : '—'} />
+      </div>
+      <div style={styles.runtimeLine}>
+        <span>动作：{motion}</span>
+        <span>占用通道：{snapshot?.activeChannels.join(', ') || '无'}</span>
+        <span>表情：{snapshot?.expression.name || 'neutral'}</span>
+        <span>眼球 X/Y：{formatControl(resolved.ParamEyeBallX, resolved.ParamEyeBallY)}</span>
+        <span>头部 X/Y：{formatControl(resolved.ParamAngleX, resolved.ParamAngleY)}</span>
+      </div>
+      {snapshot && contested > 0 && (
+        <details style={styles.parameterCatalog}>
+          <summary style={styles.parameterSummary}>查看参数所有权冲突（{contested}）</summary>
+          <div style={styles.conflictList}>
+            {Object.entries(snapshot.contestedParameters).slice(0, 12).map(([parameterId, owners]) => (
+              <div key={parameterId}>
+                <strong>{parameterId}</strong>：{owners
+                  .map(owner => `${owner.source}@${owner.priority}=${owner.value.toFixed(2)}`)
+                  .join('；')}
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+      {capability && (
+        <details style={styles.parameterCatalog}>
+          <summary style={styles.parameterSummary}>模型参数目录（{capability.parameters.length}）</summary>
+          <div style={styles.parameterList}>
+            {capability.parameters.map(parameter => (
+              <button
+                type="button"
+                key={parameter.id}
+                title={`${parameter.minimum} … ${parameter.maximum}; default ${parameter.defaultValue}`}
+                style={{ ...styles.parameterChip, borderColor: probeId === parameter.id ? theme.colors.accent : theme.colors.border }}
+                onClick={() => {
+                  setProbeId(parameter.id)
+                  setProbeValue(parameter.value)
+                }}
+              >
+                {parameter.displayName ? `${parameter.displayName} · ` : ''}{parameter.id}
+              </button>
+            ))}
+          </div>
+          <div style={styles.runtimeLine}>
+            {capability.parts
+              .filter(part => /尾|tail|尻|しっぽ/i.test(`${part.displayName ?? ''} ${part.id}`))
+              .map(part => (
+                <span key={part.id}>{part.displayName || part.id}：opacity {part.opacity.toFixed(2)}</span>
+              ))}
+          </div>
+          {probe && (
+            <div style={styles.probeControl}>
+              <div style={styles.cardDesc}>探针仍通过统一混合器写入；物理输出参数可能在同一帧被模型物理层接管。</div>
+              <RangeSetting
+                label={probe.displayName || probe.id}
+                value={probeValue}
+                min={probe.minimum}
+                max={probe.maximum}
+                step={Math.max(0.001, (probe.maximum - probe.minimum) / 100)}
+                onChange={value => {
+                  setProbeValue(value)
+                  eventBus.emit('character:parameter_probe', { parameterId: probe.id, value })
+                }}
+              />
+              <input
+                aria-label="参数探针精确值"
+                type="number"
+                min={probe.minimum}
+                max={probe.maximum}
+                step={Math.max(0.001, (probe.maximum - probe.minimum) / 100)}
+                value={probeValue}
+                style={styles.probeNumber}
+                onChange={event => {
+                  const value = Number(event.target.value)
+                  if (!Number.isFinite(value)) return
+                  setProbeValue(value)
+                  eventBus.emit('character:parameter_probe', { parameterId: probe.id, value })
+                }}
+              />
+              <button
+                type="button"
+                style={styles.textButton}
+                onClick={() => {
+                  eventBus.emit('character:parameter_probe', { clear: true })
+                  setProbeId('')
+                }}
+              >
+                清除参数探针
+              </button>
+            </div>
+          )}
+        </details>
+      )}
+      {capability && (
+        <details style={styles.parameterCatalog}>
+          <summary style={styles.parameterSummary}>模型部件目录（{capability.parts.length}）</summary>
+          <div style={styles.parameterList}>
+            {capability.parts.map(part => (
+              <button
+                type="button"
+                key={part.id}
+                title={`baseline opacity ${part.opacity}; parent ${part.parentIndex}`}
+                style={{ ...styles.parameterChip, borderColor: partProbeId === part.id ? theme.colors.accent : theme.colors.border }}
+                onClick={() => {
+                  setPartProbeId(part.id)
+                  setPartProbeOpacity(part.opacity)
+                }}
+              >
+                {part.displayName ? `${part.displayName} · ` : ''}{part.id}
+              </button>
+            ))}
+          </div>
+          {partProbe && (
+            <div style={styles.probeControl}>
+              <RangeSetting
+                label={partProbe.displayName || partProbe.id}
+                value={partProbeOpacity}
+                min={0}
+                max={1}
+                step={0.01}
+                onChange={opacity => {
+                  setPartProbeOpacity(opacity)
+                  eventBus.emit('character:part_probe', { partId: partProbe.id, opacity })
+                }}
+              />
+              <button
+                type="button"
+                style={styles.textButton}
+                onClick={() => {
+                  eventBus.emit('character:part_probe', { clear: true })
+                  setPartProbeId('')
+                }}
+              >
+                清除全部部件探针
+              </button>
+            </div>
+          )}
+        </details>
+      )}
+    </div>
+  )
+}
+
+function RuntimeMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={styles.metricItem}>
+      <span style={styles.metricLabel}>{label}</span>
+      <span style={styles.metricValue}>{value}</span>
     </div>
   )
 }
@@ -859,6 +1072,57 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', flexDirection: 'column', gap: 5,
     marginTop: theme.spacing.md, paddingTop: theme.spacing.md,
     borderTop: `1px solid ${theme.colors.border}`,
+  },
+  runtimeMonitor: {
+    display: 'flex', flexDirection: 'column', gap: theme.spacing.md,
+    padding: theme.spacing.md, borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.bg.surface, border: `1px solid ${theme.colors.border}`,
+  },
+  metricGrid: {
+    display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6,
+  },
+  metricItem: {
+    display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0,
+    padding: '7px 8px', borderRadius: theme.radius.sm,
+    backgroundColor: theme.colors.bg.elevated,
+  },
+  metricLabel: { color: theme.colors.text.muted, fontSize: theme.fontSize.xs },
+  metricValue: {
+    color: theme.colors.text.primary, fontSize: theme.fontSize.sm,
+    fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+  },
+  runtimeLine: {
+    display: 'flex', flexWrap: 'wrap', gap: '5px 12px',
+    color: theme.colors.text.secondary, fontSize: theme.fontSize.xs,
+  },
+  parameterCatalog: {
+    borderTop: `1px solid ${theme.colors.border}`, paddingTop: theme.spacing.sm,
+  },
+  parameterSummary: {
+    cursor: 'pointer', color: theme.colors.text.secondary, fontSize: theme.fontSize.xs,
+  },
+  parameterList: {
+    display: 'flex', flexWrap: 'wrap', gap: 4, maxHeight: 180, overflow: 'auto',
+    marginTop: theme.spacing.sm, color: theme.colors.text.muted, fontSize: 10,
+  },
+  conflictList: {
+    display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 150, overflow: 'auto',
+    marginTop: theme.spacing.sm, color: theme.colors.text.muted, fontSize: 10,
+    fontVariantNumeric: 'tabular-nums', lineHeight: 1.45,
+  },
+  parameterChip: {
+    padding: '2px 4px', borderRadius: 4, border: `1px solid ${theme.colors.border}`,
+    background: 'transparent', color: theme.colors.text.muted, fontSize: 10, cursor: 'pointer',
+  },
+  probeControl: {
+    display: 'flex', flexDirection: 'column', gap: theme.spacing.sm,
+    marginTop: theme.spacing.sm, paddingTop: theme.spacing.sm,
+    borderTop: `1px solid ${theme.colors.border}`,
+  },
+  probeNumber: {
+    width: 96, padding: '4px 6px', borderRadius: theme.radius.sm,
+    border: `1px solid ${theme.colors.border}`, background: theme.colors.bg.panel,
+    color: theme.colors.text.primary, fontSize: theme.fontSize.xs,
   },
 
   // ── About tab ──

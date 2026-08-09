@@ -4,7 +4,16 @@ import assert from 'node:assert/strict'
 import {
   normalizeLive2DPerformanceSettings,
   resolvePersistedLive2DModel,
+  resolveLive2DRenderDpr,
 } from './Live2DPerformanceSettings.ts'
+
+test('caps high-DPI Live2D rendering without upscaling invalid values', () => {
+  assert.equal(resolveLive2DRenderDpr(1.5), 1.25)
+  assert.equal(resolveLive2DRenderDpr(2), 1.25)
+  assert.equal(resolveLive2DRenderDpr(1), 1)
+  assert.equal(resolveLive2DRenderDpr('invalid'), 1)
+  assert.equal(resolveLive2DRenderDpr(0.5), 0.75)
+})
 
 test('normalizes persisted Live2D performance settings safely', () => {
   assert.deepEqual(normalizeLive2DPerformanceSettings({}), {

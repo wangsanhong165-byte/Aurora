@@ -21,18 +21,18 @@
       "laughing"
     ],
     "emotion_map": {
-      "neutral": "zs1",
-      "happy": "zs1",
-      "smile": "zs1",
-      "playful": "zs1",
-      "cheerful": "zs11",
-      "joyful": "zs11",
-      "laughing": "zs11",
+      "neutral": "",
+      "happy": "",
+      "smile": "",
+      "playful": "",
+      "cheerful": "",
+      "joyful": "",
+      "laughing": "",
       "love": "爱心",
       "angry": "生气",
       "blank": "白眼",
-      "confused": "圈圈",
-      "surprised": "圈圈",
+      "confused": "",
+      "surprised": "",
       "shy": "脸红",
       "embarrassed": "脸红",
       "pout": "嘟嘴",
@@ -49,10 +49,14 @@
     "behavior_map": {
       "greet": {
         "expression": "happy",
-        "motion": "wave"
+        "motion": "tilt"
+      },
+      "wave": {
+        "motion": "sway"
       },
       "agree": {
-        "motion": "nod"
+        "motion": "nod",
+        "motionIntensityScale": 1.1
       },
       "disagree": {
         "motion": "tilt"
@@ -63,7 +67,7 @@
       },
       "excited": {
         "expression": "joyful",
-        "motion": "wave",
+        "motion": "sway",
         "motionIntensityScale": 1.15
       }
     },

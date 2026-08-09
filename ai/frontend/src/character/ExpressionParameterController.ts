@@ -82,6 +82,7 @@ export class ParameterController {
 
   getTargetCount(id: string): number { return this.targets.filter(target => target.id === id).length }
   getActiveTargetParams(): Set<string> { return new Set(this.targets.map(target => target.id)) }
+  getOwnedParameterIds(): Set<string> { return new Set([...this.active, ...this.releasing]) }
 
   applyExpression(name: string, intensity: number, duration = 400, now = performance.now()): void {
     const preset = this.resolveExpression(name)

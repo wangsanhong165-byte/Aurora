@@ -46,6 +46,14 @@ export interface AvatarViewportConfig {
   scale?: number
 }
 
+export interface AvatarIdleTailMotion {
+  enabled?: boolean
+  initialDelayMs?: number
+  intervalMinMs?: number
+  intervalMaxMs?: number
+  intensity?: number
+}
+
 export interface AvatarPrivateEmotionBinding {
   target: string
   emotions?: string[]
@@ -72,6 +80,8 @@ export interface AvatarCapabilityProfile {
   personality?: CharacterPerformancePersonality
   capabilities?: AvatarPerformanceCapabilities
   motionMap?: Record<string, string>
+  /** Semantic behavior names mapped to executable logical/native motions. */
+  semanticMotionMap?: Record<string, string>
   expressionMap?: Record<string, string>
   parameterGain?: number
   bodyMotionGain?: number
@@ -82,6 +92,10 @@ export interface AvatarCapabilityProfile {
   lipSync?: AvatarLipSyncConfig
   /** Small per-model silent opening used only while authored native idle is active. */
   idleMouthOpen?: number
+  /** Model-specific gain for the logical breath input used by physics rigs. */
+  breathMotionGain?: number
+  /** Optional low-frequency tail gesture for models with a verified tail rig. */
+  idleTailMotion?: AvatarIdleTailMotion
   /** Model-specific initial framing for assets whose Cubism canvas origin is off-center. */
   viewport?: AvatarViewportConfig
 }

@@ -1,6 +1,6 @@
-import type { AvatarCapabilityProfile } from './AvatarCapabilityProfile'
-import { supportsExpression, supportsMotion, supportsSequence } from './AvatarCapabilityProfile'
-import type { CharacterIntent, CharacterBehaviorConfig, CharacterPresentationPlan, BehaviorMapping } from './CharacterBehaviorResolver'
+import type { AvatarCapabilityProfile } from './AvatarCapabilityProfile.ts'
+import { supportsExpression, supportsMotion } from './AvatarCapabilityProfile.ts'
+import type { CharacterIntent, CharacterBehaviorConfig, CharacterPresentationPlan, BehaviorMapping } from './CharacterBehaviorResolver.ts'
 
 export interface PerformanceModifiers {
   blinkRate: number
@@ -36,8 +36,20 @@ export class CharacterPerformancePolicy {
       Boolean(config.emotionMap?.[requestedExpression])
       || supportsExpression(profile, requestedExpression)
     ) ? requestedExpression : 'neutral'
-    const requestedMotion = behavior === 'greet' && supportsSequence(profile, 'greet') ? 'greet' : mapping.motion ?? base.motion
-    const motion = requestedMotion && supportsMotion(profile, requestedMotion) ? requestedMotion : undefined
+    // A profile sequence is descriptive metadata, not an executable motion.
+    // The old shortcut replaced a valid model mapping such as `arm_wave` with
+    // the literal name `greet`; unless a native motion or preset with that
+    // exact name exists, MotionArbiter correctly rejects it and the intent
+    // becomes visually silent.
+    const requestedMotion = profile?.semanticMotionMap?.[behavior]
+      ?? mapping.motion
+      ?? base.motion
+    const executableMotion = requestedMotion
+      ? profile?.semanticMotionMap?.[requestedMotion] ?? requestedMotion
+      : undefined
+    const motion = executableMotion && supportsMotion(profile, executableMotion)
+      ? executableMotion
+      : undefined
     const tagEnergyScale = contextTags.has('whisper') ? 0.58
       : contextTags.has('excited') ? 1.18
       : contextTags.has('reassuring') ? 0.78 : 1
@@ -48,7 +60,9 @@ export class CharacterPerformancePolicy {
     const transitionMs = contextTags.has('whisper') || contextTags.has('reassuring')
       ? 520 : emotion === 'surprised' || contextTags.has('excited') ? 140 : 360
     const baseMotionProbability = motion
-      ? ((behavior === 'greet' || behavior === 'speak') ? 1 : Math.min(0.75, 0.2 + intensity * 0.5))
+      ? contextTags.has('interaction')
+        ? 1
+        : ((behavior === 'greet' || behavior === 'speak') ? 1 : Math.min(0.75, 0.2 + intensity * 0.5))
       : 0
     const motionProbability = contextTags.has('close-up') || contextTags.has('whisper')
       ? baseMotionProbability * 0.55

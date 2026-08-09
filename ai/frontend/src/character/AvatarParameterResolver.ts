@@ -92,7 +92,9 @@ export class AvatarParameterResolver {
     if (!capabilities) return true
     if (logical.startsWith('head.')) return capabilities.headControl !== false
     if (logical.startsWith('body.')) return capabilities.bodyControl !== false
-    if (logical.startsWith('eye.')) return capabilities.gazeControl !== false
+    if (logical.startsWith('brow.')) return capabilities.browControl !== false
+    if (logical === 'eye.x' || logical === 'eye.y') return capabilities.gazeControl !== false
+    if (logical.startsWith('eye.')) return true
     if (logical.startsWith('blink.')) return capabilities.eyeBlink !== false
     if (logical === 'mouth.open') return capabilities.mouthControl !== false
     if (logical === 'mouth.form') return capabilities.mouthForm !== false
@@ -118,6 +120,7 @@ export class AvatarParameterResolver {
 
   private clampLogical(logical: string, value: number): number {
     if (logical.startsWith('eye.')) return clamp(value, -1, 1)
+    if (logical.startsWith('brow.')) return clamp(value, -1, 1)
     if (logical.startsWith('blink.')) return clamp(value, 0, 1)
     if (logical === 'mouth.open' || logical === 'breath') return clamp(value, 0, 1)
     if (logical === 'mouth.form') return clamp(value, -1, 1)

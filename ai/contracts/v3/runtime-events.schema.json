@@ -425,6 +425,199 @@
       "scope": "turn",
       "payload": {
         "$defs": {
+          "CharacterIntentSegmentPayload": {
+            "additionalProperties": false,
+            "properties": {
+              "emotion": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Emotion"
+              },
+              "behavior": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Behavior"
+              },
+              "intensity": {
+                "anyOf": [
+                  {
+                    "maximum": 1,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Intensity"
+              },
+              "attention": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "user",
+                      "screen",
+                      "away",
+                      "neutral"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Attention"
+              },
+              "energy": {
+                "anyOf": [
+                  {
+                    "maximum": 1,
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Energy"
+              },
+              "durationMs": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Durationms"
+              },
+              "naturalVAD": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/NaturalVadPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "contextTags": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Contexttags",
+                "type": "array"
+              },
+              "motionPlan": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/MotionPlanPayload"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "title": "CharacterIntentSegmentPayload",
+            "type": "object"
+          },
+          "MotionPlanPayload": {
+            "additionalProperties": false,
+            "properties": {
+              "durationMs": {
+                "maximum": 8000,
+                "minimum": 300,
+                "title": "Durationms",
+                "type": "integer"
+              },
+              "steps": {
+                "items": {
+                  "$ref": "#/$defs/MotionPlanStepPayload"
+                },
+                "maxItems": 16,
+                "minItems": 1,
+                "title": "Steps",
+                "type": "array"
+              }
+            },
+            "required": [
+              "durationMs",
+              "steps"
+            ],
+            "title": "MotionPlanPayload",
+            "type": "object"
+          },
+          "MotionPlanStepPayload": {
+            "additionalProperties": false,
+            "properties": {
+              "atMs": {
+                "minimum": 0,
+                "title": "Atms",
+                "type": "integer"
+              },
+              "durationMs": {
+                "maximum": 2500,
+                "minimum": 120,
+                "title": "Durationms",
+                "type": "integer"
+              },
+              "primitive": {
+                "enum": [
+                  "nod",
+                  "tilt_left",
+                  "tilt_right",
+                  "lean_forward",
+                  "lean_back",
+                  "sway",
+                  "look_left",
+                  "look_right",
+                  "breathe",
+                  "shrug",
+                  "arm_wave",
+                  "tail_sway"
+                ],
+                "title": "Primitive",
+                "type": "string"
+              },
+              "intensity": {
+                "maximum": 1,
+                "minimum": 0,
+                "title": "Intensity",
+                "type": "number"
+              }
+            },
+            "required": [
+              "atMs",
+              "durationMs",
+              "primitive",
+              "intensity"
+            ],
+            "title": "MotionPlanStepPayload",
+            "type": "object"
+          },
           "NaturalVadPayload": {
             "additionalProperties": false,
             "properties": {
@@ -459,6 +652,13 @@
           "behavior": {
             "title": "Behavior",
             "type": "string"
+          },
+          "intensity": {
+            "default": 0.5,
+            "maximum": 1,
+            "minimum": 0,
+            "title": "Intensity",
+            "type": "number"
           },
           "attention": {
             "default": "user",
@@ -506,6 +706,24 @@
               "type": "string"
             },
             "title": "Contexttags",
+            "type": "array"
+          },
+          "motionPlan": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/MotionPlanPayload"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/$defs/CharacterIntentSegmentPayload"
+            },
+            "title": "Segments",
             "type": "array"
           }
         },

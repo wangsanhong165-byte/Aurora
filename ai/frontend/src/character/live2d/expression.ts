@@ -48,7 +48,10 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_L_SMILE, value: 0.5 },
       { id: P.EYE_R_SMILE, value: 0.5 },
       { id: P.MOUTH_OPEN_Y, value: 0.2 },
-      { id: P.CHEEK, value: 0.3 },
+      // Cheek is not a portable semantic parameter. On some models it is a
+      // gentle blush; on this model it drives two oversized circular overlays.
+      // Keep model-specific blush in the native expression map instead of
+      // making the generic happy fallback write it.
     ],
   },
 
@@ -141,7 +144,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_L_OPEN, value: 0.7 },
       { id: P.EYE_R_OPEN, value: 0.7 },
       { id: P.MOUTH_OPEN_Y, value: 0.15 },
-      { id: P.CHEEK, value: 0.2 },
     ],
   },
 

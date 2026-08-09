@@ -1,1 +1,1 @@
-{"name":"shrug","duration":700,"keyframes":[{"time":0,"parameter":"body.y","value":5},{"time":500,"parameter":"body.y","value":0}]}
+{"name":"shrug","duration":700,"fadeInMs":180,"keyframes":[{"time":0,"parameter":"body.y","value":0},{"time":220,"parameter":"body.y","value":5},{"time":560,"parameter":"body.y","value":0},{"time":700,"parameter":"body.y","value":0}]}

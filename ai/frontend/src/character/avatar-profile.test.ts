@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 import {
@@ -6,6 +7,7 @@ import {
   type AvatarCapabilityProfile,
 } from './AvatarCapabilityProfile.ts'
 import { AvatarParameterResolver } from './AvatarParameterResolver.ts'
+import { logicalFaceFromFACS } from './performance/FACSState.ts'
 import { inspectIdleMotionChannels } from './live2d/IdleMotionInspection.ts'
 import { computeDrawableBounds } from './live2d/viewport.ts'
 
@@ -55,6 +57,100 @@ test('resolver omits channels explicitly unsupported by the model', () => {
 
   assert.deepEqual(resolver.values({ 'head.x': 2, 'body.x': 3 }), {
     ParamAngleX: 2,
+  })
+})
+
+test('face expression channels are independent from gaze capability', () => {
+  const resolver = new AvatarParameterResolver()
+  resolver.setProfile(profile({
+    capabilities: { gazeControl: false, browControl: true },
+    bindings: {
+      'eye.x': 'ParamEyeBallX',
+      'eye.left.smile': { target: 'ParamEyeLSmile', min: 0, max: 1 },
+      'brow.left.y': { target: 'ParamBrowLY', min: -1, max: 1 },
+    },
+  }))
+
+  assert.deepEqual(resolver.values({
+    'eye.x': 0.5,
+    'eye.left.smile': 0.5,
+    'brow.left.y': 0.5,
+  }), {
+    ParamEyeLSmile: 0.5,
+    ParamBrowLY: 0.5,
+  })
+})
+
+test('Design_genius_White routes body motion into its physical body inputs', () => {
+  const profile = JSON.parse(readFileSync(
+    new URL('../../../config/avatar_profiles/Design_genius_White.json', import.meta.url),
+    'utf8',
+  )) as { bindings: Record<string, string | { target: string }> }
+
+  const target = (logical: string) => {
+    const binding = profile.bindings[logical]
+    return typeof binding === 'string' ? binding : binding?.target
+  }
+
+  assert.deepEqual(
+    ['body.x', 'body.y', 'body.z'].map(target),
+    ['ParamBodyAngleX', 'ParamBodyAngleY', 'ParamBodyAngleZ'],
+  )
+})
+
+test('Design_genius_White does not advertise body rotation as an arm wave', () => {
+  const profile = JSON.parse(readFileSync(
+    new URL('../../../config/avatar_profiles/Design_genius_White.json', import.meta.url),
+    'utf8',
+  )) as AvatarCapabilityProfile
+
+  assert.equal(profile.motions.includes('arm_wave'), false)
+  assert.deepEqual(profile.semanticMotionMap, {
+    greet: 'tilt',
+    wave: 'sway',
+    agree: 'nod',
+    excited: 'sway',
+  })
+  assert.equal(profile.idleTailMotion?.enabled, true)
+})
+
+test('Design_genius_White behavior config cannot reintroduce the ghosting arm pose', () => {
+  const configs = JSON.parse(readFileSync(
+    new URL('../../../config/live2d_models.json', import.meta.url),
+    'utf8',
+  )) as Record<string, {
+    emotion_map: Record<string, string>
+    behavior_map: Record<string, { motion?: string }>
+  }>
+  const config = configs.Design_genius_White
+
+  assert.equal(Object.values(config.emotion_map).includes('zs11'), false)
+  assert.deepEqual({
+    greet: config.behavior_map.greet.motion,
+    wave: config.behavior_map.wave.motion,
+    agree: config.behavior_map.agree.motion,
+    excited: config.behavior_map.excited.motion,
+  }, {
+    greet: 'tilt',
+    wave: 'sway',
+    agree: 'nod',
+    excited: 'sway',
+  })
+})
+
+test('FACS face mapping stays subtle and avoids the model-specific cheek overlay', () => {
+  assert.deepEqual(logicalFaceFromFACS({
+    browInnerUp: 0.4,
+    browOuterUp: 0.2,
+    eyeSquint: 0.5,
+    mouthSmile: 0.6,
+    mouthPucker: 0.1,
+  }), {
+    'brow.left.y': 0.344,
+    'brow.right.y': 0.344,
+    'eye.left.smile': 0.5,
+    'eye.right.smile': 0.5,
+    'mouth.form': 0.5,
   })
 })
 

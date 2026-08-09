@@ -4,6 +4,24 @@
 import { CubismMoc } from './framework/model/cubismmoc'
 import { CubismModel } from './framework/model/cubismmodel'
 import { CubismFramework } from './framework/live2dcubismframework'
+import { CubismPhysics } from './framework/physics/cubismphysics'
+
+export interface ModelParameterMetadata {
+  id: string
+  displayName?: string
+  groupName?: string
+  minimum: number
+  maximum: number
+  defaultValue: number
+  value: number
+}
+
+export interface ModelPartMetadata {
+  id: string
+  displayName?: string
+  opacity: number
+  parentIndex: number
+}
 
 export interface CubismModelHandle {
   model: Live2DCubismCore.Model
@@ -20,8 +38,20 @@ export interface CubismModelHandle {
   addParameter: (id: string, value: number, weight?: number) => void
   /** Get a parameter value by ID */
   getParameter: (id: string) => number
+  /** Read the model's complete parameter catalog or a selected subset. */
+  getParameterMetadata: (ids?: Iterable<string>) => ModelParameterMetadata[]
+  /** Enrich opaque moc IDs with names from the optional cdi3 display file. */
+  setParameterDisplayInfo: (entries: Array<{ id: string; displayName?: string; groupName?: string }>) => void
+  getPartMetadata: () => ModelPartMetadata[]
+  setPartDisplayInfo: (entries: Array<{ id: string; displayName?: string }>) => void
   /** Set part opacity by ID */
   setPartOpacity: (id: string, opacity: number) => void
+  /** Load the model's physics3.json rig, when one is provided. */
+  setPhysics: (buffer: ArrayBuffer) => void
+  /** Evaluate physics after controller inputs have been written. */
+  updatePhysics: (deltaTimeSeconds: number) => void
+  /** Release the optional physics rig. */
+  releasePhysics: () => void
 }
 
 /** Initialize CubismFramework (call once at app startup) */
@@ -115,16 +145,31 @@ function _loadModelFromBufferUnsafe(buffer: ArrayBuffer): CubismModelHandle | nu
       paramIndexMap[name] = i
       paramNames.push(name)
     }
+    const parameterMetadata: ModelParameterMetadata[] = paramNames.map((id, index) => ({
+      id,
+      minimum: coreModel.parameters.minimumValues[index],
+      maximum: coreModel.parameters.maximumValues[index],
+      defaultValue: coreModel.parameters.defaultValues[index],
+      value: coreModel.parameters.values[index],
+    }))
 
     // Build part index map
     const partCount = frameworkModel.getPartCount()
     const partIndexMap: Record<string, number> = {}
+    const partMetadata: ModelPartMetadata[] = []
     for (let i = 0; i < partCount; i++) {
       const idObj = frameworkModel.getPartId(i)
       const name = idObj.getString().s
       partIndexMap[name] = i
+      partMetadata.push({
+        id: name,
+        opacity: coreModel.parts.opacities[i],
+        parentIndex: coreModel.parts.parentIndices[i],
+      })
     }
     console.log('[Cubism] Maps built OK, params:', paramCount, 'parts:', partCount)
+
+    let physics: CubismPhysics | null = null
 
     // Diagnostic: check which PARAM_IDS exist in this model
     const ourIDs = ['ParamAngleX','ParamAngleY','ParamAngleZ','ParamEyeLOpen','ParamEyeROpen','ParamBodyAngleX','ParamBodyAngleY','ParamEyeBallX','ParamEyeBallY','ParamMouthOpenY','ParamBrowLY','ParamBrowRY']
@@ -174,6 +219,57 @@ function _loadModelFromBufferUnsafe(buffer: ArrayBuffer): CubismModelHandle | nu
         frameworkModel.setPartOpacityByIndex(idx, opacity)
       }
     },
+
+    getParameterMetadata(ids?: Iterable<string>): ModelParameterMetadata[] {
+      const selected = ids ? new Set(ids) : null
+      return parameterMetadata
+        .filter(parameter => !selected || selected.has(parameter.id))
+        .map(parameter => ({
+          ...parameter,
+          value: coreModel.parameters.values[paramIndexMap[parameter.id]],
+        }))
+    },
+
+    setParameterDisplayInfo(entries): void {
+      const metadataById = new Map(parameterMetadata.map(parameter => [parameter.id, parameter]))
+      for (const entry of entries) {
+        const metadata = metadataById.get(entry.id)
+        if (!metadata) continue
+        metadata.displayName = entry.displayName
+        metadata.groupName = entry.groupName
+      }
+    },
+
+    getPartMetadata(): ModelPartMetadata[] {
+      return partMetadata.map(part => ({
+        ...part,
+        opacity: coreModel.parts.opacities[partIndexMap[part.id]],
+      }))
+    },
+
+    setPartDisplayInfo(entries): void {
+      const metadataById = new Map(partMetadata.map(part => [part.id, part]))
+      for (const entry of entries) {
+        const metadata = metadataById.get(entry.id)
+        if (metadata) metadata.displayName = entry.displayName
+      }
+    },
+
+    setPhysics(buffer: ArrayBuffer): void {
+      if (physics) CubismPhysics.delete(physics)
+      physics = CubismPhysics.create(buffer, buffer.byteLength)
+    },
+
+    updatePhysics(deltaTimeSeconds: number): void {
+      if (!physics) return
+      physics.evaluate(frameworkModel, Math.max(0, Math.min(deltaTimeSeconds, 0.05)))
+    },
+
+    releasePhysics(): void {
+      if (!physics) return
+      CubismPhysics.delete(physics)
+      physics = null
+    },
   }
 
   return handle
@@ -186,6 +282,7 @@ function _loadModelFromBufferUnsafe(buffer: ArrayBuffer): CubismModelHandle | nu
 
 /** Release framework model and moc resources */
 export function releaseModel(handle: CubismModelHandle): void {
+  handle.releasePhysics()
   handle.frameworkModel.release()
   CubismMoc.delete(handle.frameworkMoc)
 }

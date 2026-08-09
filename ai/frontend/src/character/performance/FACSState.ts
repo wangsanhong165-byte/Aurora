@@ -54,6 +54,29 @@ export function facsFromVAD(vad: VADVector): PartialFACSState {
   }
 }
 
+/**
+ * Convert the model-independent FACS state into the small logical face
+ * vocabulary exposed by avatar profiles. Values are deliberately subtle:
+ * authored expressions still own the pose, while this layer supplies the
+ * continuous life signal between discrete intents.
+ */
+export function logicalFaceFromFACS(facs: PartialFACSState): Record<string, number> {
+  const browInner = facs.browInnerUp ?? 0
+  const browOuter = facs.browOuterUp ?? 0
+  const squint = Math.max(0, facs.eyeSquint ?? 0)
+  const smile = facs.mouthSmile ?? 0
+  const pucker = facs.mouthPucker ?? 0
+  const brow = clamp(browInner * 0.72 + browOuter * 0.28, -1, 1)
+
+  return {
+    'brow.left.y': brow,
+    'brow.right.y': brow,
+    'eye.left.smile': clamp(squint, 0, 1),
+    'eye.right.smile': clamp(squint, 0, 1),
+    'mouth.form': clamp(smile - pucker, -1, 1),
+  }
+}
+
 export function neutralFACS(): FACSState {
   return {
     browInnerUp: 0, browOuterUp: 0,

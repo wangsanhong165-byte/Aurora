@@ -11,6 +11,7 @@ import { ParameterController, expressionTargetForBlend } from './ExpressionParam
 import { LatestModelLoadCoordinator } from './live2d/ModelLoadCoordinator.ts'
 import { AttentionController } from './performance/AttentionController.ts'
 import { shouldStartAuthoredIdle } from './AvatarCapabilityProfile.ts'
+import { FrameTimingMonitor } from './FrameTimingMonitor.ts'
 
 test('lip-sync noise gate stays closed and calibrated output never exceeds model maximum', () => {
   const analyzer = new AudioAnalyzer()
@@ -190,4 +191,23 @@ test('authored idle requires explicit profile opt-in', () => {
   assert.equal(shouldStartAuthoredIdle(undefined), false)
   assert.equal(shouldStartAuthoredIdle({ motions: ['speak', 'greet'] }), false)
   assert.equal(shouldStartAuthoredIdle({ motions: ['idle'] }), true)
+})
+
+test('frame timing monitor keeps a bounded rolling window and reports long frames', () => {
+  const monitor = new FrameTimingMonitor(30)
+  for (let index = 0; index < 35; index += 1) {
+    monitor.record({
+      intervalMs: index === 34 ? 45 : 10,
+      workMs: 5,
+      controllerMs: 1,
+      mixMs: 1,
+      modelMs: 1,
+      renderMs: 2,
+    })
+  }
+  const snapshot = monitor.snapshot()
+  assert.equal(snapshot.sampleCount, 30)
+  assert.equal(snapshot.intervalMs, 45)
+  assert.equal(snapshot.maxIntervalMs, 45)
+  assert.equal(snapshot.longFrameCount, 1)
 })

@@ -70,6 +70,7 @@ const EVENT_RULES: Record<EventType, PayloadRule> = {
       naturalVAD: 'object',
       contextTags: 'array',
       motionPlan: 'object',
+      segments: 'array',
     },
   },
   'character.expression': {

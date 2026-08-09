@@ -22,7 +22,28 @@ const presets: Record<string, MotionPreset> = {
       { time: 800, parameter: 'body.x', value: 0 },
     ],
   },
+  fade: {
+    name: 'fade',
+    duration: 500,
+    fadeInMs: 200,
+    keyframes: [
+      { time: 0, parameter: 'body.x', value: 4 },
+      { time: 500, parameter: 'body.x', value: 0 },
+    ],
+  },
 }
+
+test('logical motions fade in from the model baseline', () => {
+  let now = 0
+  const arbiter = new MotionArbiter(() => now)
+  arbiter.setPresets(presets)
+  arbiter.request({ name: 'fade', owner: 'test:fade', source: 'system', priority: 20 })
+
+  now = 100
+  const contribution = arbiter.update(0)[0]
+  assert.equal(contribution.value, 3.584)
+  assert.equal(contribution.weight, 0.5)
+})
 
 test('motion requests coexist when their control channels do not overlap', () => {
   let now = 0
@@ -105,4 +126,32 @@ test('LLM motion preempts the lower-priority speaking background', () => {
     arbiter.getDebugState().activeRequests.map(item => item.owner),
     ['intent-plan:turn-1'],
   )
+})
+
+test('active motion ownership is exposed per channel instead of suppressing all tracking', () => {
+  const arbiter = new MotionArbiter(() => 0)
+  arbiter.setPresets(presets)
+  arbiter.request({
+    name: 'sway', owner: 'system:body', source: 'system', priority: 20,
+    channels: ['body'],
+  })
+
+  assert.equal(arbiter.ownsChannel('body'), true)
+  assert.equal(arbiter.ownsChannel('head'), false)
+  assert.equal(arbiter.ownsChannel('gaze'), false)
+  assert.deepEqual(arbiter.getActiveChannels(), ['body'])
+})
+
+test('breath-driven tail motion owns only the tail channel', () => {
+  const arbiter = new MotionArbiter(() => 0)
+  arbiter.setPresets({
+    tail_sway: {
+      name: 'tail_sway', duration: 1000,
+      keyframes: [{ time: 0, parameter: 'breath', value: 0.5 }],
+    },
+  })
+  arbiter.request({ name: 'tail_sway', owner: 'idle:tail', source: 'idle', priority: 20 })
+  assert.equal(arbiter.ownsChannel('tail'), true)
+  assert.equal(arbiter.ownsChannel('head'), false)
+  assert.equal(arbiter.ownsChannel('gaze'), false)
 })

@@ -12,7 +12,7 @@ BEHAVIORS = {"greet", "listen", "think", "speak", "agree", "disagree", "laugh", 
 ATTENTIONS = {"user", "screen", "away", "neutral"}
 MOTION_PRIMITIVES = {
     "nod", "tilt_left", "tilt_right", "lean_forward", "lean_back",
-    "sway", "look_left", "look_right", "breathe", "shrug",
+    "sway", "look_left", "look_right", "breathe", "shrug", "arm_wave", "tail_sway",
 }
 
 @dataclass(frozen=True)

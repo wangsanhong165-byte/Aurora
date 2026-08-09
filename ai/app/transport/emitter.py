@@ -53,6 +53,22 @@ class TransportEmitter:
             events.append(self._event(turn, "asr.started", {"language": None}))
         return events
 
+    @staticmethod
+    def _intent_segments(turn: CharacterTurn) -> list[dict]:
+        """Project LLM segments to safe semantic fields for the avatar timeline."""
+        allowed = {
+            "emotion", "behavior", "attention", "energy", "intensity",
+            "durationMs", "naturalVAD", "contextTags", "motionPlan",
+        }
+        result: list[dict] = []
+        for raw in turn.segments:
+            if not isinstance(raw, dict):
+                continue
+            segment = {key: raw[key] for key in allowed if key in raw}
+            if segment:
+                result.append(segment)
+        return result
+
     def emit_completion(self, turn: CharacterTurn) -> list[DomainEvent]:
         if turn.error:
             return [
@@ -152,6 +168,7 @@ class TransportEmitter:
                 "durationMs": plan.duration_ms,
                 "contextTags": list(plan.context_tags),
                 "motionPlan": plan.motion_plan,
+                "segments": self._intent_segments(turn),
             }),
             self._event(turn, "turn.completed", {"reason": "complete"}),
             DomainEvent.create(

@@ -10,7 +10,7 @@
 // The renderer (infrastructure, not a business controller) may access
 // the handle via getHandleForRenderer().
 
-import type { CubismModelHandle } from './live2d/core'
+import type { CubismModelHandle, ModelParameterMetadata, ModelPartMetadata } from './live2d/core'
 import { PoseController } from './live2d/PoseController'
 
 interface BaselineAwareMixer {
@@ -58,6 +58,12 @@ export class Live2DModelAdapter {
     return (this._handle?.parameterIndex(id) ?? -1) >= 0
   }
 
+  getParameterMetadata(ids?: Iterable<string>): ModelParameterMetadata[] {
+    return this._handle?.getParameterMetadata(ids) ?? []
+  }
+
+  getPartMetadata(): ModelPartMetadata[] { return this._handle?.getPartMetadata() ?? [] }
+
   /** Set part opacity by ID. */
   setPartOpacity(id: string, opacity: number): void {
     this._handle?.setPartOpacity(id, opacity)
@@ -66,7 +72,8 @@ export class Live2DModelAdapter {
   // ── Model lifecycle ─────────────────────────────────────────
 
   /** Apply parameter changes to vertex data. Calls framework model.update(). */
-  updateModel(): void {
+  updateModel(deltaTimeSeconds = 0): void {
+    this._handle?.updatePhysics(deltaTimeSeconds)
     this._handle?.frameworkModel.update()
   }
 

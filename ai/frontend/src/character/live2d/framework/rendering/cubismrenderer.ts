@@ -48,11 +48,16 @@ export abstract class CubismRenderer {
   public drawModel(): void {
     if (this.getModel() == null) return;
 
-    this.saveProfile();
+    if (this._preserveExternalState) this.saveProfile();
 
     this.doDrawModel();
 
-    this.restoreProfile();
+    if (this._preserveExternalState) this.restoreProfile();
+  }
+
+  /** Skip WebGL state capture when the application exclusively owns the context. */
+  public setPreserveExternalState(enabled: boolean): void {
+    this._preserveExternalState = enabled;
   }
 
   /**
@@ -259,6 +264,7 @@ export abstract class CubismRenderer {
    * レンダラが保持する静的なリソースを開放する
    */
   public static staticRelease: any;
+  protected _preserveExternalState: boolean = true;
 
   protected _mvpMatrix4x4: CubismMatrix44; // Model-View-Projection 行列
   protected _modelColor: CubismTextureColor; // モデル自体のカラー（RGBA）

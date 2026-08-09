@@ -165,7 +165,7 @@ class DefaultPlanner:
             '3. All JSON keys MUST be in English.\n'
             '4. Return ONLY valid JSON, no commentary.\n'
             '5. Format: {"segments":[{"text":"...","emotion":"neutral","behavior":"speak","attention":"user","energy":0.5,"intensity":0.5,"naturalVAD":{"valence":0,"arousal":0,"dominance":0},"contextTags":[],"motionPlan":{"durationMs":1200,"steps":[{"atMs":0,"durationMs":600,"primitive":"nod","intensity":0.5}]}}],"tool_calls":[],"final_reply":"..."}\n'
-            '5a. motionPlan is optional. Use it only when a visible gesture materially helps; ordinary speech should omit it. Use at most 3 steps. Allowed primitives: nod, tilt_left, tilt_right, lean_forward, lean_back, sway, look_left, look_right, breathe, shrug. durationMs must be 300-8000, step durationMs 120-2500, and intensity 0-1.\n'
+            '5a. motionPlan is optional. Use it only when a visible gesture materially helps; ordinary speech should omit it. Use at most 3 steps. Allowed primitives: nod, tilt_left, tilt_right, lean_forward, lean_back, sway, look_left, look_right, breathe, shrug, arm_wave, tail_sway. Use arm_wave or tail_sway only for an intentional visible gesture. durationMs must be 300-8000, step durationMs 120-2500, and intensity 0-1.\n'
             '5b. Never output Param*, Cubism IDs, parameter values, keyframes, animation files, or extra motionPlan fields.\n'
             f'6. Every final segment MUST set an "emotion" from: {presentation_emotions}.\n'
             f'7. Every final segment MUST set a semantic "behavior" from: {presentation_behaviors}. Use "speak" for an ordinary spoken reply; use greet/agree/disagree/think only when they fit.\n'

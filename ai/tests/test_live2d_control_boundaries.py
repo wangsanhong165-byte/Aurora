@@ -44,7 +44,10 @@ def test_live2d_config_declares_behavior_mapping_without_parameter_ids():
     config = json.loads((ROOT / "config/live2d_models.json").read_text(encoding="utf-8"))
     mapping = config["Design_genius_White"]["behavior_map"]
 
-    assert mapping["greet"]["motion"] == "wave"
+    assert mapping["greet"]["motion"] == "tilt"
+    assert mapping["wave"]["motion"] == "sway"
+    assert mapping["agree"]["motion"] == "nod"
+    assert mapping["excited"]["motion"] == "sway"
     assert "Param" not in json.dumps(mapping)
 
 
@@ -152,10 +155,12 @@ def test_motion_arbiter_outputs_logical_contributions_only():
     assert "resolveMotionParameters" in controller
 
 
-def test_sequence_support_is_profile_gated():
+def test_sequence_metadata_cannot_bypass_executable_motion_gating():
     policy = (ROOT / "frontend/src/character/CharacterPerformancePolicy.ts").read_text(encoding="utf-8")
     profile = (ROOT / "frontend/src/character/AvatarCapabilityProfile.ts").read_text(encoding="utf-8")
-    assert "supportsSequence" in policy
+    assert "supportsMotion" in policy
+    assert "supportsSequence" not in policy
+    assert "A profile sequence is descriptive metadata" in policy
     assert "sequences?: string[]" in profile
 
 
@@ -339,8 +344,8 @@ def test_idle_behavior_exposes_correlated_body_drift():
     assert "BodySwayController" in idle
     assert "bodyX: number" in idle
     assert "bodyY: number" in idle
-    assert "'body.x': breathBX + idleSnapshot.bodyX" in controllers
-    assert "'body.y': breathBY + idleSnapshot.bodyY" in controllers
+    assert "gazeValues['body.x'] = breathBX + idleSnapshot.bodyX" in controllers
+    assert "gazeValues['body.y'] = breathBY + idleSnapshot.bodyY" in controllers
 
 
 def test_idle_action_scheduler_is_capability_aware_and_avoids_repetition():

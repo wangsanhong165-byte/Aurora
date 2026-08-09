@@ -245,6 +245,7 @@ export class RuntimeEventAdapter {
           naturalVAD: event.payload.naturalVAD ?? undefined,
           contextTags: event.payload.contextTags,
           motionPlan: event.payload.motionPlan ?? undefined,
+          segments: event.payload.segments,
         })
         return
       case 'character.expression':

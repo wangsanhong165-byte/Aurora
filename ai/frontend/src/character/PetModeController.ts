@@ -49,22 +49,19 @@ export class PetModeController {
   }
 
   /** User clicked the character in pet mode. */
-  onInteraction(): void {
-    if (this._state === 'OFF' || this._state === 'SPEAKING' || this._state === 'INTERACT') return
+  onInteraction(): boolean {
+    if (this._state === 'OFF' || this._state === 'SPEAKING' || this._state === 'INTERACT') return false
     const now = performance.now()
-    if (now - this._lastInteractionAt < INTERACT_COOLDOWN) return
+    if (now - this._lastInteractionAt < INTERACT_COOLDOWN) return false
     this._lastInteractionAt = now
 
     this._state = 'INTERACT'
     this._clearTimers()
 
-    // Pick a friendly response expression
+    // CharacterView already emits the canonical touch interaction. Do not
+    // synthesize a second intent here: restarting the same gesture twice in
+    // one click used to create a visible arm/pose ghost.
     console.log('[PET] INTERACT -> gentle acknowledgement')
-    eventBus.emit('character:intent', {
-      emotion: 'happy',
-      behavior: 'agree',
-      intensity: 0.38,
-    })
 
     // Return to idle after timeout
     this._interactTimer = setTimeout(() => {
@@ -74,6 +71,7 @@ export class PetModeController {
         this._scheduleIdle()
       }
     }, INTERACT_TIMEOUT)
+    return true
   }
 
   /** Runtime reports character is speaking. */

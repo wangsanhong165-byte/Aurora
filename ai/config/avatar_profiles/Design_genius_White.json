@@ -13,8 +13,10 @@
     "speak",
     "greet",
     "wave",
+    "tail_sway",
     "nod",
     "tilt",
+    "sway",
     "shrug",
     "thinking",
     "react",
@@ -25,6 +27,7 @@
     "thinking",
     "react"
   ],
+  "expressionMap": {},
   "parameters": {
     "eye": {
       "x": "ParamEyeBallX",
@@ -47,6 +50,31 @@
     "head.z": "ParamAngleZ",
     "body.x": "ParamBodyAngleX",
     "body.y": "ParamBodyAngleY",
+    "body.z": "ParamBodyAngleZ",
+    "brow.left.y": {
+      "target": "ParamBrowLY",
+      "scale": 0.55,
+      "min": -1,
+      "max": 1
+    },
+    "brow.right.y": {
+      "target": "ParamBrowRY",
+      "scale": 0.55,
+      "min": -1,
+      "max": 1
+    },
+    "eye.left.smile": {
+      "target": "ParamEyeLSmile",
+      "scale": 0.45,
+      "min": 0,
+      "max": 1
+    },
+    "eye.right.smile": {
+      "target": "ParamEyeRSmile",
+      "scale": 0.45,
+      "min": 0,
+      "max": 1
+    },
     "mouth.open": "ParamMouthOpenY",
     "mouth.form": "ParamMouthForm",
     "breath": "ParamBreath",
@@ -54,11 +82,12 @@
     "blink.right": "ParamEyeROpen"
   },
   "motionStyle": {
-    "preset": "natural",
-    "microMotionGain": 1.0,
-    "idleActionGain": 0.95,
-    "gestureFrequency": 0.9,
-    "speechAccentGain": 0.9
+    "preset": "lively",
+    "microMotionGain": 1.12,
+    "idleActionGain": 1.08,
+    "gestureFrequency": 1.12,
+    "bodyMotionGain": 1.12,
+    "speechAccentGain": 1.08
   },
   "personality": {
     "expressiveness": 0.78,
@@ -69,10 +98,31 @@
     "headControl": true,
     "bodyControl": true,
     "gazeControl": true,
-    "eyeBlink": true
+    "browControl": true,
+    "eyeBlink": true,
+    "mouthControl": true,
+    "mouthForm": true,
+    "breathControl": true
   },
   "performanceMode": "enhanced",
   "parameterGain": 1.05,
-  "bodyMotionGain": 1.0,
+  "bodyMotionGain": 1.12,
+  "breathMotionGain": 1.9,
+  "semanticMotionMap": {
+    "greet": "tilt",
+    "wave": "sway",
+    "agree": "nod",
+    "excited": "sway"
+  },
+  "idleTailMotion": {
+    "enabled": true,
+    "initialDelayMs": 4200,
+    "intervalMinMs": 8200,
+    "intervalMaxMs": 13600,
+    "intensity": 0.72
+  },
+  "viewport": {
+    "scale": 0.86
+  },
   "motionMap": {}
 }

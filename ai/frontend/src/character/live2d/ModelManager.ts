@@ -177,6 +177,50 @@ export class ModelManager {
       await loadTextures(renderer, textures)
       if (!token.isCurrent()) throw new DOMException('Superseded', 'AbortError')
 
+      // Physics is part of the model asset, not an optional visual decoration.
+      // Load it before the first frame so tail, cloth, sleeves, and other
+      // physics-driven meshes receive the body/breath inputs from the mixer.
+      if (references.Physics) {
+        const response = await fetch(`${baseUrl}/${references.Physics}`, { signal: token.signal })
+        if (response.ok) {
+          try {
+            handle.setPhysics(await response.arrayBuffer())
+            console.log('[ModelManager] physics loaded:', references.Physics)
+          } catch (error) {
+            console.warn('[ModelManager] physics parse failed; continuing without physics:', error)
+          }
+        } else {
+          console.warn('[ModelManager] physics fetch failed; continuing without physics:', response.status)
+        }
+      }
+
+      if (references.DisplayInfo) {
+        const response = await fetch(`${baseUrl}/${references.DisplayInfo}`, { signal: token.signal })
+        if (response.ok) {
+          try {
+            const displayInfo = await response.json() as {
+              Parameters?: Array<{ Id?: string; Name?: string; GroupId?: string }>
+              ParameterGroups?: Array<{ Id?: string; Name?: string }>
+            }
+            const groupNames = new Map(
+              (displayInfo.ParameterGroups ?? []).map(group => [String(group.Id ?? ''), String(group.Name ?? '')]),
+            )
+            handle.setParameterDisplayInfo((displayInfo.Parameters ?? []).map(parameter => ({
+              id: String(parameter.Id ?? ''),
+              displayName: String(parameter.Name ?? ''),
+              groupName: groupNames.get(String(parameter.GroupId ?? '')) ?? '',
+            })))
+            const parts = (displayInfo as { Parts?: Array<{ Id?: string; Name?: string }> }).Parts ?? []
+            handle.setPartDisplayInfo(parts.map(part => ({
+              id: String(part.Id ?? ''),
+              displayName: String(part.Name ?? ''),
+            })))
+          } catch (error) {
+            console.warn('[ModelManager] display info parse failed:', error)
+          }
+        }
+      }
+
       const expressionPresets: Record<string, ExpressionPreset> = {}
       const expressionNames: string[] = []
       for (const expression of references.Expressions ?? []) {

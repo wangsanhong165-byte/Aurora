@@ -42,5 +42,6 @@ class Live2DStep(Step):
                 duration_ms=intent.duration_ms,
                 natural_vad=intent.natural_vad,
                 context_tags=intent.context_tags,
+                motion_plan=intent.motion_plan,
             )
         ctx.live2d_intent = {**intent.to_dict(), "behavior": intent.behavior, "speaking": bool(ctx.audio)}

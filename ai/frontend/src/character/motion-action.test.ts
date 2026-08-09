@@ -3,7 +3,10 @@ import test from 'node:test'
 
 import {
   compileMotionAction,
+  compileMotionPlan,
+  isMotionPrimitiveSupported,
   normalizeMotionAction,
+  unsupportedMotionPrimitives,
   validateMotionPlan,
 } from './MotionAction.ts'
 
@@ -44,6 +47,24 @@ test('normalizes an authored action and compiles primitives to safe logical keyf
   assert.equal(preset.keyframes.every(frame => frame.time >= 0 && frame.time <= 1400), true)
 })
 
+test('compiles the model-specific arm and tail primitives through logical bindings', () => {
+  const action = normalizeMotionAction({
+    version: 1,
+    id: 'model_gesture_pair',
+    name: 'Model Gesture Pair',
+    durationMs: 1600,
+    steps: [
+      { atMs: 0, durationMs: 800, primitive: 'arm_wave', intensity: 0.8 },
+      { atMs: 800, durationMs: 800, primitive: 'tail_sway', intensity: 0.7 },
+    ],
+  })
+
+  const preset = compileMotionAction(action)
+  assert.ok(preset.keyframes.some(frame => frame.parameter === 'body.z'))
+  assert.ok(preset.keyframes.some(frame => frame.parameter === 'breath'))
+  assert.equal(preset.keyframes.every(frame => frame.time >= 0 && frame.time <= 1600), true)
+})
+
 test('motion plans are bounded in duration, step count, and intensity', () => {
   const result = validateMotionPlan({
     durationMs: 99_000,
@@ -57,4 +78,22 @@ test('motion plans are bounded in duration, step count, and intensity', () => {
 
   assert.equal(result.ok, false)
   assert.match(result.errors.join(' '), /duration|steps|intensity/i)
+})
+
+test('model-authored appendage primitives require an explicit capability', () => {
+  assert.equal(isMotionPrimitiveSupported('nod', []), true)
+  assert.equal(isMotionPrimitiveSupported('arm_wave', ['tail_sway']), false)
+  assert.equal(isMotionPrimitiveSupported('tail_sway', ['tail_sway']), true)
+
+  const action = normalizeMotionAction({
+    version: 1,
+    id: 'old_fake_wave',
+    name: 'Old fake wave',
+    durationMs: 1000,
+    steps: [{ atMs: 0, durationMs: 800, primitive: 'arm_wave', intensity: 0.8 }],
+  })
+  assert.deepEqual(unsupportedMotionPrimitives(action, ['tail_sway']), ['arm_wave'])
+
+  assert.equal(compileMotionPlan(action, 'llm_plan', 'AI 动作', ['tail_sway']), null)
+  assert.ok(compileMotionPlan(action, 'llm_plan', 'AI 动作', ['arm_wave']))
 })

@@ -1,0 +1,1 @@
+{"name":"tail_sway","duration":1600,"recoveryMs":240,"keyframes":[{"time":0,"parameter":"breath","value":0.5},{"time":280,"parameter":"breath","value":0.92},{"time":720,"parameter":"breath","value":0.08},{"time":1140,"parameter":"breath","value":0.86},{"time":1600,"parameter":"breath","value":0.5}]}

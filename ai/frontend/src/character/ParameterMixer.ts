@@ -46,6 +46,7 @@ export type ControlChannel =
   | 'breath'
   | 'accessory'
   | 'pose'
+  | 'calibration'
   | 'motion'
 
 export interface ParameterContribution {

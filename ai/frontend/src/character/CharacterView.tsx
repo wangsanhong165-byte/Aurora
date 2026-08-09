@@ -15,6 +15,7 @@ import { ComponentManager } from './ComponentManager'
 import { Live2DModelAdapter } from './Live2DModelAdapter'
 import { observeElementResize } from './observe-resize'
 import { normalizeAvatarViewport } from './AvatarCapabilityProfile'
+import { resolveLive2DRenderDpr } from './Live2DPerformanceSettings'
 import { isWindowDragging } from './window-drag-state'
 import { readPersistedViewport, savePersistedViewport } from './live2d/viewport-persistence'
 
@@ -189,7 +190,7 @@ export const CharacterView = memo(function CharacterView() {
   const { emotion, activity } = character
   const mountCount = useRef(0)
   // Drag and zoom state
-  const dragRef = useRef({ isDragging: false, startX: 0, startY: 0, offsetX: 0, offsetY: 0, scale: 1 })
+  const dragRef = useRef({ isDragging: false, didMove: false, startX: 0, startY: 0, offsetX: 0, offsetY: 0, scale: 1 })
   // Guards against duplicate event handlers and animation loops
   const petInitRef = useRef(false)
   const clickCountRef = useRef(0)          // total click events processed (debug)
@@ -273,7 +274,7 @@ export const CharacterView = memo(function CharacterView() {
       ctrl.setNativeMotionPlayer(modelMgr.getNativeMotionPlayer())
       adapter.attach(handle!)
       adapter.setPoseController(modelMgr.getPoseController())
-      ctrl.attach(adapter)
+      ctrl.attach(adapter, generation)
       _initComponents(compMgr, ctrl, expectedName)
       syncLive2dSettings(ctrl, settings)
       ctrl.paramCtrl.applyExpression('neutral', 1, 0)
@@ -322,20 +323,38 @@ export const CharacterView = memo(function CharacterView() {
       setLoadState('loaded')
     })()
 
-    let running = true
-    function animate(time: number) {
-      if (!running) return
-      const dt = Math.min((time - lastTimeRef.current) / 1000, 0.05)
-      lastTimeRef.current = time
+      let running = true
+      function animate(time: number) {
+        if (!running) return
+        const previousFrameTime = lastTimeRef.current
+        const intervalMs = previousFrameTime > 0 ? Math.max(0, time - previousFrameTime) : 0
+        const dt = Math.min(intervalMs / 1000, 0.05)
+        lastTimeRef.current = time
 
+      const workStarted = performance.now()
       ctrl.update(dt)
+      const controllerDone = performance.now()
       ctrl.mixer.resolve()
       ctrl.mixer.apply(adapter)
-      adapter.updateModel()
+      const mixDone = performance.now()
+      adapter.updateModel(dt)
+      const modelDone = performance.now()
+
       const h2 = adapter.getHandleForRenderer()
       if (h2) {
         render(h2, modelMgr.getRenderer())
       }
+      const renderDone = performance.now()
+        if (previousFrameTime > 0) {
+          ctrl.recordFrameTiming({
+            intervalMs,
+            workMs: renderDone - workStarted,
+            controllerMs: controllerDone - workStarted,
+            mixMs: mixDone - controllerDone,
+            modelMs: modelDone - mixDone,
+            renderMs: renderDone - modelDone,
+          })
+        }
 
       animRef.current = requestAnimationFrame(animate)
     }
@@ -344,8 +363,9 @@ export const CharacterView = memo(function CharacterView() {
     if (animRunningRef.current) {
       cancelAnimationFrame(animRef.current)
     }
-    animRunningRef.current = true
-    animRef.current = requestAnimationFrame(animate)
+      animRunningRef.current = true
+      lastTimeRef.current = 0
+      animRef.current = requestAnimationFrame(animate)
     console.log('[Live2D] animation loop started')
 
     // ── Mouse tracking (always follow cursor, no click needed) ──
@@ -381,14 +401,12 @@ export const CharacterView = memo(function CharacterView() {
     const onMouseDown = (e: MouseEvent) => {
       const drag = dragRef.current
       drag.isDragging = true
+      drag.didMove = false
       drag.startX = e.clientX
       drag.startY = e.clientY
       drag.offsetX = getViewTransform().x
       drag.offsetY = getViewTransform().y
       canvas.style.cursor = 'grabbing'
-      if (clickFeedbackRef.current) {
-        eventBus.emit('character:interaction', { type: 'drag', phase: 'start', intensity: 0.25 })
-      }
     }
 
     const onMouseUp = () => {
@@ -396,15 +414,24 @@ export const CharacterView = memo(function CharacterView() {
       if (!drag.isDragging) return
       drag.isDragging = false
       canvas.style.cursor = ''
-      persistModelViewport(modelNameRef.current)
-      if (clickFeedbackRef.current) {
-        eventBus.emit('character:interaction', { type: 'drag', phase: 'end', intensity: 0.2 })
+      if (drag.didMove) {
+        persistModelViewport(modelNameRef.current)
+        if (clickFeedbackRef.current) {
+          eventBus.emit('character:interaction', { type: 'drag', phase: 'end', intensity: 0.2 })
+        }
       }
     }
 
     const onDragMove = (e: MouseEvent) => {
       const drag = dragRef.current
       if (!drag.isDragging) return
+      if (!drag.didMove && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) >= 4) {
+        drag.didMove = true
+        if (clickFeedbackRef.current) {
+          eventBus.emit('character:interaction', { type: 'drag', phase: 'start', intensity: 0.25 })
+        }
+      }
+      if (!drag.didMove) return
       const dx = (e.clientX - drag.startX) / canvas.clientWidth * 2
       const dy = (e.clientY - drag.startY) / canvas.clientHeight * 2
       setViewOffset(drag.offsetX + dx, drag.offsetY - dy)
@@ -478,6 +505,19 @@ export const CharacterView = memo(function CharacterView() {
       }
     })
 
+    const unsubViewportReset = eventBus.on('character:viewport_reset', () => {
+      const modelName = modelNameRef.current
+      if (!modelName) return
+      try { window.localStorage.removeItem(`live2d_viewport_${modelName}`) } catch (_) {}
+      resetView()
+      const profiles = (window as any).__INITIAL_MODEL_INFO__?.avatarProfiles as
+        | Record<string, { viewport?: { x?: number; y?: number; scale?: number } }>
+        | undefined
+      const viewport = normalizeAvatarViewport(profiles?.[modelName]?.viewport)
+      setViewScale(viewport.scale)
+      setViewOffset(viewport.x, viewport.y)
+    })
+
     // Listen for model switch
     const unsubModel = eventBus.on('character:switch_model', async ({ name, requestId }) => {
       const url = modelUrl(name)
@@ -526,6 +566,7 @@ export const CharacterView = memo(function CharacterView() {
       unsubAccessoryToggle()
       unsubAccessorySet()
       unsubAccessoryRefresh()
+      unsubViewportReset()
       unsubModel()
       animRunningRef.current = false
       cancelAnimationFrame(animRef.current)
@@ -621,7 +662,10 @@ export const CharacterView = memo(function CharacterView() {
     const canvas = canvasRef.current
     const onPetClick = () => {
       // Ignore click if the user was dragging the canvas
-      if (dragRef.current.isDragging) return
+      if (dragRef.current.isDragging || dragRef.current.didMove) {
+        dragRef.current.didMove = false
+        return
+      }
       clickCountRef.current += 1
       if (!clickFeedbackRef.current) return
       eventBus.emit('character:interaction', { type: 'touch', region: 'unknown', intensity: 0.42 })
@@ -667,7 +711,7 @@ export const CharacterView = memo(function CharacterView() {
   useEffect(() => {
     const cvs = canvasRef.current
     if (!cvs) return
-    const dpr = window.devicePixelRatio || 1
+    const dpr = resolveLive2DRenderDpr(window.devicePixelRatio)
 
     const doResize = () => {
       // During a window drag the window size is pinned, but the reported size

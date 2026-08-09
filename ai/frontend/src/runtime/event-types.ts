@@ -126,6 +126,7 @@ export interface EventPayloadMap {
     naturalVAD?: { valence: number; arousal: number; dominance: number } | null
     contextTags: string[]
     motionPlan?: MotionPlan | null
+    segments?: Array<Record<string, unknown>>
   }
   'character.expression': { name: string; intensity: number; controller: string; priority: number }
   'character.motion': { name: string; controller: string; priority: number; loop: boolean }

@@ -17,7 +17,7 @@ import { AudioAnalyzer } from './AudioAnalyzer'
 import { SpeechPerformanceController } from './performance/SpeechPerformanceController'
 import { resolveMotionStyle } from './performance/MotionStyle'
 import { VADState } from './performance/VADState'
-import { facsFromVAD } from './performance/FACSState'
+import { facsFromVAD, logicalFaceFromFACS } from './performance/FACSState'
 import { VADMicroMotionController } from './performance/VADMicroMotionController'
 import { VADGestureController } from './performance/VADGestureController'
 import { PrivateEmotionOverlay } from './performance/PrivateEmotionOverlay'
@@ -30,11 +30,13 @@ import { CharacterStateMachine, type CharacterActivity } from './CharacterStateM
 import { CalibrationController } from './CalibrationController'
 import { AttentionController } from './performance/AttentionController'
 import { ParameterController } from './ExpressionParameterController'
+import { FrameTimingMonitor, type FrameTimingSample } from './FrameTimingMonitor'
 export { ParameterController, expressionTargetForBlend } from './ExpressionParameterController'
-import {
+  import {
   compileMotionAction,
   compileMotionPlan,
   normalizeMotionActions,
+  unsupportedMotionPrimitives,
   type MotionActionDefinition,
 } from './MotionAction'
 
@@ -230,11 +232,16 @@ export class IdleController {
   private blinkRate = 1
   private breathRate = 1
   private breathVariance = 0.42
+  private breathMotionGain = 1
 
   setTiming(blinkRate = 1, breathRate = 1, breathVariance = 0.42): void {
     this.blinkRate = Math.max(0.25, Math.min(2.5, blinkRate))
     this.breathRate = Math.max(0.5, Math.min(1.8, breathRate))
     this.breathVariance = Math.max(0, Math.min(1, breathVariance))
+  }
+
+  setBreathMotionGain(gain = 1): void {
+    this.breathMotionGain = Math.max(0.25, Math.min(3, gain))
   }
 
   private _breathBodyX = 0
@@ -276,9 +283,15 @@ export class IdleController {
 
   getBreathParams(): Record<string, number> {
     const breath = Math.sin(this.time * IdleController.BREATH_FREQ)
+    // Design_genius_White exposes body Z as a physics input for its sleeves
+    // and arms. Keep this subtle and route it through the normal mixer so the
+    // model has a visible resting sway without introducing a second write path.
+    const bodyZAmplitude = Math.min(1.25, 0.65 * this.breathMotionGain)
     return this.parameters.values({
       'body.x': breath * 0.7 * this.breathWeight,
       'body.y': breath * 1.2 * this.breathWeight,
+      'body.z': Math.sin(this.time * IdleController.BREATH_FREQ * 0.72)
+        * bodyZAmplitude * this.breathWeight,
       breath: this._blinkBreathValue,
     })
   }
@@ -293,7 +306,8 @@ export class IdleController {
       const breath = Math.sin(this.time * IdleController.BREATH_FREQ * this.breathRate)
       this._breathBodyX = breath * 0.7 * this.breathWeight
       this._breathBodyY = breath * 1.2 * this.breathWeight
-      this._blinkBreathValue = 0.5 + breath * 0.18 * this.breathWeight
+      const amplitude = Math.min(0.45, 0.18 * this.breathMotionGain)
+      this._blinkBreathValue = 0.5 + breath * amplitude * this.breathWeight
     }
 
     if (!this.blinking) return
@@ -363,6 +377,7 @@ export class CharacterController {
   stateMachine = new CharacterStateMachine()
   calibration = new CalibrationController()
   attention = new AttentionController()
+  frameTiming = new FrameTimingMonitor()
 
   // References set externally by the animation loop
   private adapter: Live2DModelAdapter | null = null
@@ -378,6 +393,7 @@ export class CharacterController {
   private lastDebugEmitAt = 0
   private headTrackingEnabled = true
   private _modelName = 'Design_genius_White'
+  private _modelGeneration = 0
   private _profile: AvatarCapabilityProfile | undefined
   private _style = resolveMotionStyle()
   private _performanceMode: PerformanceMode = 'enhanced'
@@ -402,8 +418,11 @@ export class CharacterController {
   // Tracks motion arbiter transitions for idle restart guard
   private _wasPlaying = false
   private _lastMotionEnded = false
+  private _idleTailElapsedMs = 0
+  private _idleTailNextAtMs = Number.POSITIVE_INFINITY
   private _baseMotionPresets: Record<string, import('./MotionArbiter').MotionPreset> = {}
   private _actionsByModel = new Map<string, MotionActionDefinition[]>()
+  private _intentTimelineTimers: ReturnType<typeof setTimeout>[] = []
 
   // Lip-sync mouth value from AudioAnalyzer (submitted to mixer)
   private _mouthOpenValue = 0
@@ -420,6 +439,11 @@ export class CharacterController {
     const profiles = (window as any).__INITIAL_MODEL_INFO__?.avatarProfiles as Record<string, AvatarCapabilityProfile> | undefined
     this._profile = profiles?.[name]
     this.parameterResolver.setProfile(this._profile)
+    const idleTail = this._profile?.idleTailMotion
+    this._idleTailElapsedMs = 0
+    this._idleTailNextAtMs = idleTail?.enabled
+      ? Math.max(1200, idleTail.initialDelayMs ?? 4200)
+      : Number.POSITIVE_INFINITY
     this.audioAnalyzer.configure(this.parameterResolver.getLipSyncConfig())
     this.idleBehavior.setMotionStyle(
       this._profile?.motionStyle,
@@ -429,6 +453,7 @@ export class CharacterController {
     this._style = resolveMotionStyle(this._profile?.motionStyle)
     this.speechPerformance.configure(this._style)
     this.idleCtrl.setTiming(this._style.blinkRate, this._style.breathRate, this._style.breathVariance)
+    this.idleCtrl.setBreathMotionGain(this._profile?.breathMotionGain ?? 1)
     this._performanceMode = this._profile?.performanceMode ?? 'enhanced'
     this.idleBehavior.setLegacy(this._performanceMode === 'legacy')
     this._parameterGain = this._profile?.parameterGain ?? 1.45
@@ -452,13 +477,15 @@ export class CharacterController {
     this.startNativeIdleIfAvailable()
   }
 
-  private refreshMotionPresets(): void {
-    const authored = this._actionsByModel.get(this._modelName) ?? []
-    const authoredPresets = Object.fromEntries(
-      authored.map(action => {
-        const preset = compileMotionAction(action)
-        return [preset.name.toLowerCase(), preset]
-      }),
+    private refreshMotionPresets(): void {
+      const authored = this._actionsByModel.get(this._modelName) ?? []
+      const authoredPresets = Object.fromEntries(
+        authored
+          .filter(action => unsupportedMotionPrimitives(action, this._profile?.motions).length === 0)
+          .map(action => {
+          const preset = compileMotionAction(action)
+          return [preset.name.toLowerCase(), preset]
+          }),
     )
     this.motionArbiter.setPresets({
       ...this._baseMotionPresets,
@@ -467,19 +494,21 @@ export class CharacterController {
   }
 
   /** Set the adapter reference and attach sub-controllers. */
-  attach(adapter: Live2DModelAdapter): void {
+  attach(adapter: Live2DModelAdapter, generation = 0): void {
     this.adapter = adapter
+    this._modelGeneration = generation
     adapter.configureMixerBaseline(this.mixer)
     this.paramCtrl.attach(adapter, this.mixer)
     this.idleCtrl.attach()
     this.audioAnalyzer.reset()
     this.speechPerformance.reset()
+    this.emitModelCapability()
 
     // Register mixer owners with priorities
     const ids = (...keys: string[]) => keys.map(key => this.parameterResolver.resolve(key)).filter((id): id is string => Boolean(id))
     this.mixer.registerOwner('gaze', ids('head.x', 'head.y', 'head.z', 'eye.x', 'eye.y', 'body.x', 'body.y'), 30)
     this.mixer.registerOwner('blink', ids('blink.left', 'blink.right'), 40)
-    this.mixer.registerOwner('breath', ids('breath', 'body.x', 'body.y'), 20)
+    this.mixer.registerOwner('breath', ids('breath', 'body.x', 'body.y', 'body.z'), 20)
     this.mixer.registerOwner('lip_sync', ids('mouth.open'), 60)
     this.mixer.registerOwner('idle_sway', ids('head.x', 'head.y', 'head.z'), 10)
 
@@ -520,15 +549,50 @@ export class CharacterController {
       }),
     )
 
+      this.cleanupFns.push(
+        eventBus.on('character:parameter_probe', ({ parameterId, value, clear }) => {
+        if (clear) {
+          this.calibration.clearRaw()
+          return
+        }
+        if (!parameterId || value === undefined || !this.adapter?.hasParameter(parameterId)) return
+        const metadata = this.adapter.getParameterMetadata([parameterId])[0]
+        if (!metadata) return
+          this.calibration.setRaw(
+            parameterId,
+            Math.max(metadata.minimum, Math.min(metadata.maximum, value)),
+            metadata.value,
+          )
+        }),
+      )
+
+      this.cleanupFns.push(
+        eventBus.on('character:part_probe', ({ partId, opacity, clear }) => {
+          if (clear) {
+            this.calibration.clearRawParts()
+            return
+          }
+          if (!partId || opacity === undefined) return
+          const metadata = this.adapter?.getPartMetadata().find(part => part.id === partId)
+          if (!metadata) return
+          this.calibration.setRawPart(partId, opacity, metadata.opacity)
+        }),
+      )
+
+    this.cleanupFns.push(
+      eventBus.on('character:model_capability_request', () => this.emitModelCapability()),
+    )
+
     this.cleanupFns.push(
       eventBus.on('character:actions_update', ({ model, actions }) => {
         this._actionsByModel.set(model, normalizeMotionActions(actions))
         if (model === this._modelName) this.refreshMotionPresets()
       }),
-      eventBus.on('character:action_preview', ({ action }) => {
-        const normalized = normalizeMotionActions([action])[0]
-        if (!normalized) return
-        const preset = compileMotionAction(normalized)
+        eventBus.on('character:action_preview', ({ action }) => {
+          const normalized = normalizeMotionActions([action])[0]
+          if (!normalized) return
+          if (unsupportedMotionPrimitives(normalized, this._profile?.motions).length) return
+          const preset = compileMotionAction(normalized)
         this.motionArbiter.registerPreset(preset)
         this.motionArbiter.request({
           name: preset.name,
@@ -609,9 +673,12 @@ export class CharacterController {
     )
 
     this.cleanupFns.push(
-      eventBus.on('runtime:character.intent', ({ turnId, emotion, behavior, attention, energy, intensity, durationMs, naturalVAD, contextTags, motionPlan }) => {
+      eventBus.on('runtime:character.intent', ({ turnId, emotion, behavior, attention, energy, intensity, durationMs, naturalVAD, contextTags, motionPlan, segments }) => {
         if (!this.stateMachine.isCurrentTurn(turnId)) return
-        this.applyIntent({ turnId, emotion, behavior, attention: attention as any, energy, intensity, durationMs, naturalVAD, contextTags, motionPlan })
+        this.applyIntentTimeline(
+          { turnId, emotion, behavior, attention: attention as any, energy, intensity, durationMs, naturalVAD, contextTags, motionPlan },
+          segments,
+        )
       }),
     )
 
@@ -622,10 +689,12 @@ export class CharacterController {
         }
       }),
       eventBus.on('runtime:turn.failed', ({ turnId }) => {
+        this.clearIntentTimeline()
         this.motionArbiter.cancelTurn(turnId)
         if (this.stateMachine.isCurrentTurn(turnId)) this.onActivityChange('idle', turnId)
       }),
       eventBus.on('runtime:turn.cancelled', ({ turnId }) => {
+        this.clearIntentTimeline()
         this.motionArbiter.cancelTurn(turnId)
         if (this.stateMachine.isCurrentTurn(turnId)) this.onActivityChange('idle', turnId)
       }),
@@ -636,6 +705,7 @@ export class CharacterController {
   setTurnId(turnId: string): void {
     const previousTurnId = this.stateMachine.turnId
     if (previousTurnId && previousTurnId !== turnId) {
+      this.clearIntentTimeline()
       this.motionArbiter.cancelTurn(previousTurnId)
     }
     this.stateMachine.force(this.stateMachine.activity, turnId)
@@ -706,6 +776,42 @@ export class CharacterController {
   }
 
   /** Execute a semantic presentation plan through existing expression/motion controllers. */
+  private clearIntentTimeline(): void {
+    for (const timer of this._intentTimelineTimers) clearTimeout(timer)
+    this._intentTimelineTimers = []
+  }
+
+  private applyIntentTimeline(
+    base: import('./CharacterBehaviorResolver').CharacterIntent,
+    segments?: Array<Record<string, unknown>>,
+  ): void {
+    this.clearIntentTimeline()
+    if (!segments || segments.length <= 1) {
+      this.applyIntent(base)
+      return
+    }
+
+    let offsetMs = 0
+    segments.forEach((segment, index) => {
+      const segmentIntent = {
+        ...base,
+        ...segment,
+        turnId: base.turnId,
+        motionPlan: segment.motionPlan,
+      } as import('./CharacterBehaviorResolver').CharacterIntent
+      if (index === 0) this.applyIntent(segmentIntent)
+      else {
+        const timer = setTimeout(() => this.applyIntent(segmentIntent), offsetMs)
+        this._intentTimelineTimers.push(timer)
+      }
+      const duration = typeof segment.durationMs === 'number' && Number.isFinite(segment.durationMs)
+        ? segment.durationMs
+        : 700
+      offsetMs += Math.max(300, Math.min(4000, duration))
+    })
+  }
+
+  /** Execute a semantic presentation plan through existing expression/motion controllers. */
   private applyIntent(intent: import('./CharacterBehaviorResolver').CharacterIntent): void {
     this._currentEmotion = intent.emotion || 'neutral'
     this._currentEmotionIntensity = Math.max(0, Math.min(1, intent.intensity ?? 1))
@@ -731,6 +837,8 @@ export class CharacterController {
       ? compileMotionPlan(
           intent.motionPlan,
           `ai_${intent.turnId || this.stateMachine.turnId || 'local'}`,
+          'AI 动作',
+          this._profile?.motions,
         )
       : null
     if (plannedMotion) {
@@ -804,6 +912,39 @@ export class CharacterController {
     })
   }
 
+  private updateIdleTailMotion(dt: number): void {
+    const config = this._profile?.idleTailMotion
+    if (!config?.enabled || this.currentActivity !== 'idle') {
+      if (this.motionArbiter.currentMotion?.toLowerCase() === 'tail_sway') {
+        this.motionArbiter.cancelOwner('idle:tail')
+      }
+      this._idleTailElapsedMs = 0
+      this._idleTailNextAtMs = config?.enabled
+        ? Math.max(1200, config.initialDelayMs ?? 4200)
+        : Number.POSITIVE_INFINITY
+      return
+    }
+
+    this._idleTailElapsedMs += Math.max(0, dt) * 1000
+    if (this._idleTailElapsedMs < this._idleTailNextAtMs || this.motionArbiter.isPlaying()) return
+
+    const started = this.motionArbiter.request({
+      name: 'tail_sway',
+      owner: 'idle:tail',
+      source: 'idle',
+      priority: 24,
+      intensity: Math.max(0.35, Math.min(1.2, config.intensity ?? 0.72)),
+      durationMs: 1600,
+      timeoutMs: 1900,
+    })
+    if (!started) return
+
+    const min = Math.max(2500, config.intervalMinMs ?? 8200)
+    const max = Math.max(min, config.intervalMaxMs ?? 13600)
+    this._idleTailElapsedMs = 0
+    this._idleTailNextAtMs = min + Math.random() * (max - min)
+  }
+
   private submitLogicalLayer(
     source: string,
     values: Record<string, number>,
@@ -839,6 +980,25 @@ export class CharacterController {
     this.speechPerformance.reset()
     this.mixer.setBaselineProvider(null)
     this.adapter = null
+  }
+
+  recordFrameTiming(sample: FrameTimingSample): void {
+    this.frameTiming.record(sample)
+  }
+
+  private emitModelCapability(): void {
+    if (!this.adapter) return
+      const capability = {
+        model: this._modelName,
+        generation: this._modelGeneration,
+        supportedMotions: [...(this._profile?.motions ?? [])],
+        supportedExpressions: [...(this._profile?.expressions ?? [])],
+        parameters: this.adapter.getParameterMetadata(),
+      parts: this.adapter.getPartMetadata(),
+    }
+    ;(globalThis as unknown as { __SOULLINK_MODEL_CAPABILITY__?: typeof capability })
+      .__SOULLINK_MODEL_CAPABILITY__ = capability
+    eventBus.emit('character:model_capability', capability)
   }
 
   // ── Accessory control ──
@@ -935,7 +1095,7 @@ export class CharacterController {
 
     // Step 1: Reset mixer frame
     this.mixer.resetFrame()
-    for (const pose of this.adapter.getPoseContributions()) {
+      for (const pose of this.adapter.getPoseContributions()) {
       this.mixer.submitPartOpacity({
         id: `pose:${pose.partId}`,
         partId: pose.partId,
@@ -947,6 +1107,7 @@ export class CharacterController {
     const vadSnapshot = this.vad.update(dt)
     this.idleBehavior.setVAD(vadSnapshot.current)
     this.idleBehavior.update(dt, this.currentActivity === 'idle' && !this.motionArbiter.isPlaying())
+    this.updateIdleTailMotion(dt)
     const idleSnapshot = this.idleBehavior.getSnapshot()
     const idleMotionScale = this._performanceMode === 'calibration' ? 1.45 : 1
     if (this._performanceMode !== 'legacy') {
@@ -980,6 +1141,29 @@ export class CharacterController {
     if (this._performanceMode === 'calibration') {
       this.submitLogicalLayer('calibration', this.calibration.values(), 90)
     }
+      for (const [parameterId, value] of Object.entries(this.calibration.takeRawRestores())) {
+        this.mixer.submit({
+          id: `calibration_raw_restore:${parameterId}`,
+          parameterId,
+          source: 'calibration_raw_restore',
+          channel: 'calibration',
+          value,
+          priority: 95,
+          createdAt: performance.now(),
+        })
+      }
+      for (const [parameterId, value] of Object.entries(this.calibration.rawValues())) {
+      this.mixer.submit({
+        id: `calibration_raw:${parameterId}`,
+        parameterId,
+        source: 'calibration_raw',
+        channel: 'calibration',
+        value,
+        priority: 95,
+        createdAt: performance.now(),
+      })
+    }
+    const expressionOwned = this.paramCtrl.getOwnedParameterIds()
     const privateParams = this.privateEmotion.update(
       this._performanceMode === 'legacy' ? 'neutral' : this._currentEmotion,
       this._performanceMode === 'legacy' ? 0 : this._currentEmotionIntensity,
@@ -990,6 +1174,7 @@ export class CharacterController {
     )
     for (const [parameterId, value] of Object.entries(privateParams)) {
       if (!this.adapter.hasParameter(parameterId)) continue
+      if (expressionOwned.has(parameterId)) continue
       this.mixer.submit({
         id: `private_emotion:${parameterId}`,
         parameterId,
@@ -1032,6 +1217,20 @@ export class CharacterController {
     this.mixer.setParams('breath', this.idleCtrl.getBreathParams())
 
     const vadFacs = facsFromVAD(vadSnapshot.current)
+    const facsFace = this.parameterResolver.values(logicalFaceFromFACS(vadFacs))
+    for (const [parameterId, value] of Object.entries(facsFace)) {
+      if (expressionOwned.has(parameterId)) continue
+      this.mixer.submit({
+        id: `facs:${parameterId}`,
+        parameterId,
+        source: 'facs_face',
+        channel: 'expression',
+        value,
+        mode: 'add',
+        priority: 72,
+        createdAt: performance.now(),
+      })
+    }
     const vadPosture = this.parameterResolver.values({
       'eye.y': vadFacs.gazeY ?? 0,
       'head.y': vadFacs.headY ?? 0,
@@ -1068,8 +1267,9 @@ export class CharacterController {
       }), 45)
     }
 
-    // 4d: Gaze tracking (priority 30) or idle head sway (priority 10)
-    if (this.headTrackingEnabled && !this.motionArbiter.isPlaying()) {
+    // 4d: Gaze tracking is arbitrated per channel. A body gesture must not
+    // freeze the head, and a head gesture must not stop the eyes following.
+    if (this.headTrackingEnabled) {
       this.idleTime = 0
       const eyeSmooth = 0.18
       this.mouseX += (this.targetMouseX - this.mouseX) * eyeSmooth
@@ -1093,15 +1293,42 @@ export class CharacterController {
         )
       }
 
-      this.mixer.setParams('gaze', this.parameterResolver.values({
+      const gazeValues: Record<string, number> = {
         'eye.x': this.mouseX * 0.85 + idleSnapshot.eyeX * idleMotionScale * idleLayerWeight,
         'eye.y': cfg.eyeBallYSign * this.mouseY * 0.7 + idleSnapshot.eyeY * idleMotionScale * idleLayerWeight,
-        'head.x': cfg.angleXSign * hx * 15 + idleSnapshot.headX * idleMotionScale * idleLayerWeight,
-        'head.y': cfg.angleYSign * hy * 10 + idleSnapshot.headY * idleMotionScale * idleLayerWeight,
-        'head.z': hx * 4 + idleSnapshot.headZ * idleMotionScale * idleLayerWeight,
-        'body.x': breathBX + idleSnapshot.bodyX * idleMotionScale * idleLayerWeight + hx * 4,
-        'body.y': breathBY + idleSnapshot.bodyY * idleMotionScale * idleLayerWeight + hy * 3,
-      }))
+      }
+      for (const [partId, opacity] of Object.entries(this.calibration.takeRawPartRestores())) {
+        this.mixer.submitPartOpacity({
+          id: `calibration_part_restore:${partId}`,
+          partId,
+          opacity,
+          priority: 95,
+        })
+      }
+      for (const [partId, opacity] of Object.entries(this.calibration.rawPartValues())) {
+        this.mixer.submitPartOpacity({
+          id: `calibration_part:${partId}`,
+          partId,
+          opacity,
+          priority: 95,
+        })
+      }
+      if (!this.motionArbiter.ownsChannel('gaze')) {
+        // Eyes are already present; this guard documents native/full ownership.
+      } else {
+        delete gazeValues['eye.x']
+        delete gazeValues['eye.y']
+      }
+      if (!this.motionArbiter.ownsChannel('head')) {
+        gazeValues['head.x'] = cfg.angleXSign * hx * 15 + idleSnapshot.headX * idleMotionScale * idleLayerWeight
+        gazeValues['head.y'] = cfg.angleYSign * hy * 10 + idleSnapshot.headY * idleMotionScale * idleLayerWeight
+        gazeValues['head.z'] = hx * 4 + idleSnapshot.headZ * idleMotionScale * idleLayerWeight
+      }
+      if (!this.motionArbiter.ownsChannel('body')) {
+        gazeValues['body.x'] = breathBX + idleSnapshot.bodyX * idleMotionScale * idleLayerWeight + hx * 4
+        gazeValues['body.y'] = breathBY + idleSnapshot.bodyY * idleMotionScale * idleLayerWeight + hy * 3
+      }
+      this.mixer.setParams('gaze', this.parameterResolver.values(gazeValues))
     } else {
       this.idleTime += dt
       this.mixer.setParams('idle_sway', this.parameterResolver.values({
@@ -1155,6 +1382,9 @@ export class CharacterController {
         source: `motion:${this.motionArbiter.currentMotion ?? 'unknown'}`,
         channel: 'motion',
         value,
+        weight: motionContribs.find(item =>
+          this.parameterResolver.resolve(item.logicalParameter) === parameterId
+        )?.weight,
         priority: contributionPriority,
         createdAt: performance.now(),
       })
@@ -1232,7 +1462,7 @@ export class CharacterController {
         .filter(([, target]) => !this.adapter!.hasParameter(target))
         .map(([logical, target]) => ({ logical, target }))
       const resolvedCount = bindings.length - missingBindings.length
-      eventBus.emit('character:performance_debug', {
+      const snapshot = {
         activity: this.currentActivity,
         previousActivity: this.previousActivity,
         transitionProgress: this.activityBlend,
@@ -1257,7 +1487,13 @@ export class CharacterController {
           bodyMotionGain: this._bodyMotionGain,
         },
         contestedParameters,
-      })
+        frame: this.frameTiming.snapshot(),
+        activeChannels: this.motionArbiter.getActiveChannels(),
+        resolvedParameters: mixerFrame.resolved,
+      }
+      ;(globalThis as unknown as { __SOULLINK_RUNTIME_SNAPSHOT__?: typeof snapshot })
+        .__SOULLINK_RUNTIME_SNAPSHOT__ = snapshot
+      eventBus.emit('character:performance_debug', snapshot)
     }
   }
 

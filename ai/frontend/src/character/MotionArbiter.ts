@@ -5,13 +5,15 @@ import type {
 } from './live2d/NativeMotionPlayer'
 
 export type MotionSource = 'ai' | 'system' | 'pet' | 'idle'
-export type MotionChannel = 'head' | 'body' | 'gaze' | 'expression' | 'mouth' | 'full'
+export type MotionChannel = 'head' | 'body' | 'gaze' | 'expression' | 'mouth' | 'tail' | 'full'
 
 export interface MotionKeyframe { time: number; parameter: string; value: number }
 export interface SequenceStep { time: number; type: 'attention' | 'expression' | 'motion' | 'behavior'; value: string }
 export interface MotionPreset {
   name: string
   duration: number
+  /** Logical motions enter from the model baseline instead of snapping. */
+  fadeInMs?: number
   recoveryMs?: number
   keyframes: MotionKeyframe[]
   steps?: SequenceStep[]
@@ -21,6 +23,7 @@ export interface LogicalParameterContribution {
   value: number
   source: string
   priority: number
+  weight?: number
 }
 export interface MotionRequest {
   name: string
@@ -249,6 +252,17 @@ export class MotionArbiter {
 
   clearQueue(): void { this.queue = [] }
   isPlaying(): boolean { return this.active.size > 0 }
+  ownsChannel(channel: MotionChannel): boolean {
+    return [...this.active.values()].some(active =>
+      active.request.channels.includes('full') || active.request.channels.includes(channel))
+  }
+  getActiveChannels(): MotionChannel[] {
+    const channels = new Set<MotionChannel>()
+    for (const active of this.active.values()) {
+      for (const channel of active.request.channels) channels.add(channel)
+    }
+    return [...channels]
+  }
   get currentMotion(): string | null {
     const active = this.primaryActive()
     if (!active) return null
@@ -286,15 +300,27 @@ export class MotionArbiter {
         preset.keyframes,
         Math.min(elapsed, active.duration),
       )
+      const fadeInMs = Math.max(0, Math.min(500, preset.fadeInMs ?? 180))
+      const fadeInWeight = fadeInMs === 0
+        ? 1
+        : smoothstep(elapsed / fadeInMs)
       const recoveryWeight = elapsed <= active.duration || recoveryMs === 0
         ? 1
         : 1 - smoothstep((elapsed - active.duration) / recoveryMs)
+      const motionWeight = Math.min(fadeInWeight, recoveryWeight)
       for (const [logicalParameter, value] of Object.entries(current)) {
+        // Breath is a centered physical input (0.5 is neutral). Scale its
+        // excursion around the neutral point so a low-intensity tail gesture
+        // does not collapse the parameter toward zero.
+        const scaledValue = logicalParameter === 'breath'
+          ? 0.5 + (value - 0.5) * active.request.intensity
+          : value * active.request.intensity
         contributions.push({
           logicalParameter,
-          value: value * active.request.intensity * recoveryWeight,
+          value: scaledValue,
           source: `motion:${preset.name}:${active.request.owner}`,
           priority: active.request.priority,
+          weight: motionWeight,
         })
       }
     }
@@ -365,6 +391,7 @@ function inferChannels(preset: MotionPreset): MotionChannel[] {
     else if (frame.parameter.startsWith('eye.')) channels.add('gaze')
     else if (frame.parameter.startsWith('mouth.')) channels.add('mouth')
     else if (frame.parameter.startsWith('blink.')) channels.add('expression')
+    else if (frame.parameter === 'breath' || frame.parameter.startsWith('tail.')) channels.add('tail')
     else channels.add('full')
   }
   return channels.size ? [...channels] : ['full']

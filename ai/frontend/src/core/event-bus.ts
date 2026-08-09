@@ -4,13 +4,48 @@ import type { MotionActionDefinition, MotionPlan } from '../character/MotionActi
 
 type Handler<T> = (event: T) => void
 
+export interface RuntimeCharacterIntent {
+  turnId: string
+  emotion: string
+  behavior: string
+  attention: string
+  energy: number
+  intensity: number
+  durationMs?: number
+  naturalVAD?: { valence: number; arousal: number; dominance: number }
+  contextTags?: string[]
+  motionPlan?: MotionPlan
+  /** Ordered semantic segments preserved from one LLM response. */
+  segments?: Array<Record<string, unknown>>
+}
+
 export interface EventMap {
   'character:emotion': { emotion: string; intensity: number }
   'character:intent': { emotion: string; behavior: string; intensity: number }
   'character:interaction': { type: 'touch' | 'drag' | 'inactivity' | 'time' | 'presence' | 'scene'; phase?: 'start' | 'move' | 'end'; region?: 'head' | 'body' | 'unknown'; value?: string; intensity?: number }
   'character:performance_tuning': { mode?: 'legacy' | 'enhanced' | 'calibration'; parameterGain?: number; bodyMotionGain?: number }
   'character:calibration_override': { logicalParameter?: string; value?: number; clear?: boolean }
+    'character:parameter_probe': { parameterId?: string; value?: number; clear?: boolean }
+    'character:part_probe': { partId?: string; opacity?: number; clear?: boolean }
+  'character:viewport_reset': void
   'character:native_catalog': { motions: string[]; expressions: string[] }
+  'character:model_capability': {
+      model: string
+      generation: number
+      supportedMotions: string[]
+      supportedExpressions: string[]
+      parameters: Array<{
+      id: string
+      displayName?: string
+      groupName?: string
+      minimum: number
+      maximum: number
+      defaultValue: number
+      value: number
+    }>
+    parts: Array<{ id: string; displayName?: string; opacity: number; parentIndex: number }>
+  }
+  'character:model_capability_request': void
   'character:native_preview': { type: 'motion' | 'expression'; name: string }
   'character:actions_update': { model: string; actions: MotionActionDefinition[] }
   'character:action_preview': { action: MotionActionDefinition }
@@ -34,6 +69,21 @@ export interface EventMap {
     profileCoverage: { bindingCount: number; resolvedCount: number; coverage: number; missingBindings: Array<{ logical: string; target: string }> }
     performanceTuning: { mode: 'legacy' | 'enhanced' | 'calibration'; parameterGain: number; bodyMotionGain: number }
     contestedParameters: Record<string, Array<{ source: string; value: number; priority: number }>>
+    frame: {
+      sampleCount: number
+      intervalMs: number
+      workMs: number
+      controllerMs: number
+      mixMs: number
+      modelMs: number
+      renderMs: number
+      averageIntervalMs: number
+      p95IntervalMs: number
+      maxIntervalMs: number
+      longFrameCount: number
+    }
+    activeChannels: string[]
+    resolvedParameters: Record<string, number>
   }
   'audio:play': { audio: string; format: string; turnId: string; sequence: number; volumeArray?: number[] }
   'audio:stop': { turnId?: string; reason?: string }
@@ -68,7 +118,7 @@ export interface EventMap {
     args: Record<string, unknown>
     risk: string
   }
-  'runtime:character.intent': { turnId: string; emotion: string; behavior: string; attention: string; energy: number; intensity: number; durationMs?: number; naturalVAD?: { valence: number; arousal: number; dominance: number }; contextTags?: string[]; motionPlan?: MotionPlan }
+  'runtime:character.intent': RuntimeCharacterIntent
   'runtime:telemetry.batch': { events: Array<Record<string, unknown>> }
   'runtime:turn.started': { turnId: string; inputMode: 'text' | 'audio' | 'initiative'; origin: 'user' | 'initiative' | 'tool' | 'system' }
   'runtime:turn.completed': { turnId: string; reason: string }
