@@ -86,11 +86,11 @@ test('override winner is the base and add-mode accumulates on top', () => {
   assert.equal(resolveOne(mixer, 'ParamMouth'), 30 + 5)
 })
 
-test('blink keeps its absolute override when eyes are closing', () => {
+test('blink multiplies the active expression so closure stays continuous', () => {
   const mixer = createMixer()
-  submit(mixer, { parameterId: 'ParamEyeLOpen', value: 0.2, priority: 40, source: 'blink' })
-  submit(mixer, { parameterId: 'ParamEyeLOpen', value: 30, priority: 75 })
-  assert.equal(resolveOne(mixer, 'ParamEyeLOpen'), 0.2)
+  submit(mixer, { parameterId: 'ParamEyeLOpen', value: 0.2, priority: 40, source: 'blink', mode: 'multiply' })
+  submit(mixer, { parameterId: 'ParamEyeLOpen', value: 0.8, priority: 75 })
+  assert.ok(Math.abs(resolveOne(mixer, 'ParamEyeLOpen') - 0.16) < 1e-9)
 })
 
 test('zero-weight override resolves to the baseline', () => {

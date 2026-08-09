@@ -15,6 +15,14 @@ export class VoiceWaitingMotionController {
     this.random = createSeededRandom(seed)
   }
 
+  reset(): void {
+    this.time = 0
+    this.activity = null
+    this.template = 'slow-sway'
+    this.release = 0
+    this.last = {}
+  }
+
   update(dt: number, activity: string, gain = 1): Record<string, number> {
     const delta = Math.max(0, dt)
     this.time += delta

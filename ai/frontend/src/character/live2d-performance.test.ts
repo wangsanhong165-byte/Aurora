@@ -2,8 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { AudioAnalyzer } from './AudioAnalyzer.ts'
-import { VADGestureController } from './performance/VADGestureController.ts'
-import { VADMicroMotionController } from './performance/VADMicroMotionController.ts'
 import { VoiceWaitingMotionController } from './performance/VoiceWaitingMotionController.ts'
 import { resolveMotionStyle } from './performance/MotionStyle.ts'
 import { ParameterMixer } from './ParameterMixer.ts'
@@ -12,6 +10,7 @@ import { LatestModelLoadCoordinator } from './live2d/ModelLoadCoordinator.ts'
 import { AttentionController } from './performance/AttentionController.ts'
 import { shouldStartAuthoredIdle } from './AvatarCapabilityProfile.ts'
 import { FrameTimingMonitor } from './FrameTimingMonitor.ts'
+import { AmbientPerformanceEngine } from './performance/AmbientPerformanceEngine.ts'
 
 test('lip-sync noise gate stays closed and calibrated output never exceeds model maximum', () => {
   const analyzer = new AudioAnalyzer()
@@ -47,36 +46,6 @@ test('lip-sync releases to a closed mouth after speech stops', () => {
   assert.ok(mouth < 0.02)
 })
 
-test('micro motion respects unavailable body channels', () => {
-  const controller = new VADMicroMotionController(17)
-  const sample = controller.update(
-    1 / 60,
-    { valence: 0.2, arousal: 0.4, dominance: 0.1 },
-    1,
-    { headControl: true, bodyControl: false, gazeControl: true },
-  )
-  assert.equal('body.x' in sample, false)
-  assert.equal('body.y' in sample, false)
-  assert.equal('head.x' in sample, true)
-})
-
-test('gesture controller avoids immediate gesture-family repetition', () => {
-  const controller = new VADGestureController(3)
-  const vad = { valence: 0.6, arousal: 0.9, dominance: 0.4 }
-  const seen: string[] = []
-
-  for (let index = 0; index < 1200 && seen.length < 3; index += 1) {
-    controller.update(1 / 30, vad, 8, 1)
-    const active = controller.getState().activeGesture
-    if (active && seen.at(-1) !== active) seen.push(active)
-  }
-
-  assert.ok(seen.length >= 2)
-  for (let index = 1; index < seen.length; index += 1) {
-    assert.notEqual(seen[index], seen[index - 1])
-  }
-})
-
 test('waiting motion releases smoothly instead of snapping to zero', () => {
   const controller = new VoiceWaitingMotionController(9)
   const thinking = controller.update(0.2, 'thinking', 1)
@@ -86,6 +55,70 @@ test('waiting motion releases smoothly instead of snapping to zero', () => {
   assert.ok(Math.abs(releasing['head.z'] ?? 0) > 0.001)
   for (let index = 0; index < 30; index += 1) controller.update(0.05, 'idle', 1)
   assert.deepEqual(controller.update(0.05, 'idle', 1), {})
+})
+
+test('ambient performance emits one coordinated pose and yields owned channels', () => {
+  const engine = new AmbientPerformanceEngine(17)
+  engine.configure({ preset: 'lively', seed: 17 }, {
+    expressiveness: 0.78, softness: 0.68, shyness: 0.42,
+  }, { headControl: true, bodyControl: true, gazeControl: true })
+  engine.setActivity('idle')
+
+  let frame = engine.update(1 / 60, {
+    vad: { valence: 0.35, arousal: 0.28, dominance: 0.12 },
+    audioLevel: 0,
+    enabled: true,
+    blockedChannels: new Set(),
+  })
+  for (let index = 0; index < 180; index += 1) {
+    frame = engine.update(1 / 60, {
+      vad: { valence: 0.35, arousal: 0.28, dominance: 0.12 },
+      audioLevel: 0,
+      enabled: true,
+      blockedChannels: new Set(),
+    })
+  }
+  assert.ok(Object.keys(frame.values).some(key => key.startsWith('head.')))
+  assert.ok(Object.keys(frame.values).some(key => key.startsWith('body.')))
+
+  const blocked = engine.update(1 / 60, {
+    vad: { valence: 0.35, arousal: 0.28, dominance: 0.12 },
+    audioLevel: 0,
+    enabled: true,
+    blockedChannels: new Set(['head', 'body', 'gaze']),
+  })
+  assert.equal(Object.keys(blocked.values).length, 0)
+})
+
+test('ambient activity transitions keep velocity bounded instead of restarting at zero', () => {
+  const engine = new AmbientPerformanceEngine(23)
+  engine.configure({ preset: 'natural', seed: 23 }, undefined, undefined)
+  engine.setActivity('speaking')
+  let previous = engine.update(1 / 60, {
+    vad: { valence: 0.2, arousal: 0.4, dominance: 0.1 },
+    audioLevel: 0.45,
+    enabled: true,
+    blockedChannels: new Set(),
+  })
+  for (let index = 0; index < 60; index += 1) {
+    previous = engine.update(1 / 60, {
+      vad: { valence: 0.2, arousal: 0.4, dominance: 0.1 },
+      audioLevel: 0.45,
+      enabled: true,
+      blockedChannels: new Set(),
+    })
+  }
+
+  engine.setActivity('idle')
+  const next = engine.update(1 / 60, {
+    vad: { valence: 0.2, arousal: 0.4, dominance: 0.1 },
+    audioLevel: 0,
+    enabled: true,
+    blockedChannels: new Set(),
+  })
+  for (const key of new Set([...Object.keys(previous.values), ...Object.keys(next.values)])) {
+    assert.ok(Math.abs((next.values[key] ?? 0) - (previous.values[key] ?? 0)) < 0.8)
+  }
 })
 
 test('unknown profile motion-style presets fall back to natural instead of crashing', () => {

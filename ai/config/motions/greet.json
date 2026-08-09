@@ -1,20 +1,33 @@
 {
   "name": "greet",
   "duration": 1800,
-  "recoveryMs": 220,
+  "recoveryMs": 360,
   "keyframes": [
     {"time": 0, "parameter": "head.y", "value": 0},
-    {"time": 260, "parameter": "head.y", "value": 3},
-    {"time": 760, "parameter": "head.y", "value": -1},
-    {"time": 1600, "parameter": "head.y", "value": 0},
+    {"time": 140, "parameter": "head.y", "value": 1.4},
+    {"time": 520, "parameter": "head.y", "value": -2.8},
+    {"time": 1180, "parameter": "head.y", "value": -1.6},
+    {"time": 1800, "parameter": "head.y", "value": 0},
+    {"time": 0, "parameter": "head.z", "value": 0},
+    {"time": 180, "parameter": "head.z", "value": 1.2},
+    {"time": 520, "parameter": "head.z", "value": -3.8},
+    {"time": 1260, "parameter": "head.z", "value": -2.1},
+    {"time": 1800, "parameter": "head.z", "value": 0},
+    {"time": 0, "parameter": "body.y", "value": 0},
+    {"time": 160, "parameter": "body.y", "value": -0.8},
+    {"time": 580, "parameter": "body.y", "value": 2.4},
+    {"time": 1360, "parameter": "body.y", "value": 1.1},
+    {"time": 1800, "parameter": "body.y", "value": 0},
     {"time": 0, "parameter": "body.x", "value": 0},
-    {"time": 420, "parameter": "body.x", "value": 2},
-    {"time": 1600, "parameter": "body.x", "value": 0}
+    {"time": 320, "parameter": "body.x", "value": -0.7},
+    {"time": 760, "parameter": "body.x", "value": 2.2},
+    {"time": 1420, "parameter": "body.x", "value": 1.0},
+    {"time": 1800, "parameter": "body.x", "value": 0}
   ],
   "steps": [
     {"time": 0, "type": "attention", "value": "user"},
     {"time": 120, "type": "expression", "value": "happy"},
-    {"time": 360, "type": "motion", "value": "wave"},
-    {"time": 1550, "type": "expression", "value": "neutral"}
+    {"time": 420, "type": "motion", "value": "wave"},
+    {"time": 1580, "type": "expression", "value": "neutral"}
   ]
 }

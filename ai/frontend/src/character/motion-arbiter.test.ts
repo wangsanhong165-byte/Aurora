@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { MotionArbiter, type MotionPreset } from './MotionArbiter.ts'
+import { MotionArbiter, sampleMotionKeyframes, type MotionPreset } from './MotionArbiter.ts'
 
 const presets: Record<string, MotionPreset> = {
   nod: {
@@ -43,6 +43,33 @@ test('logical motions fade in from the model baseline', () => {
   const contribution = arbiter.update(0)[0]
   assert.equal(contribution.value, 3.584)
   assert.equal(contribution.weight, 0.5)
+})
+
+test('motion curves carry non-zero velocity through same-direction keyframes', () => {
+  const frames = [
+    { time: 0, parameter: 'head.x', value: 0 },
+    { time: 1000, parameter: 'head.x', value: 10 },
+    { time: 2000, parameter: 'head.x', value: 20 },
+  ]
+  const before = sampleMotionKeyframes(frames, 990)['head.x']
+  const at = sampleMotionKeyframes(frames, 1000)['head.x']
+  const after = sampleMotionKeyframes(frames, 1010)['head.x']
+
+  assert.ok(at - before > 0.05, 'incoming velocity must not collapse at the middle keyframe')
+  assert.ok(after - at > 0.05, 'outgoing velocity must not restart from zero')
+  assert.ok(Math.abs((at - before) - (after - at)) < 0.02)
+})
+
+test('motion curves do not overshoot a reversing keyframe', () => {
+  const frames = [
+    { time: 0, parameter: 'head.x', value: 0 },
+    { time: 1000, parameter: 'head.x', value: 10 },
+    { time: 2000, parameter: 'head.x', value: 0 },
+  ]
+  for (let time = 0; time <= 2000; time += 10) {
+    const value = sampleMotionKeyframes(frames, time)['head.x']
+    assert.ok(value >= 0 && value <= 10)
+  }
 })
 
 test('motion requests coexist when their control channels do not overlap', () => {
@@ -140,18 +167,4 @@ test('active motion ownership is exposed per channel instead of suppressing all 
   assert.equal(arbiter.ownsChannel('head'), false)
   assert.equal(arbiter.ownsChannel('gaze'), false)
   assert.deepEqual(arbiter.getActiveChannels(), ['body'])
-})
-
-test('breath-driven tail motion owns only the tail channel', () => {
-  const arbiter = new MotionArbiter(() => 0)
-  arbiter.setPresets({
-    tail_sway: {
-      name: 'tail_sway', duration: 1000,
-      keyframes: [{ time: 0, parameter: 'breath', value: 0.5 }],
-    },
-  })
-  arbiter.request({ name: 'tail_sway', owner: 'idle:tail', source: 'idle', priority: 20 })
-  assert.equal(arbiter.ownsChannel('tail'), true)
-  assert.equal(arbiter.ownsChannel('head'), false)
-  assert.equal(arbiter.ownsChannel('gaze'), false)
 })

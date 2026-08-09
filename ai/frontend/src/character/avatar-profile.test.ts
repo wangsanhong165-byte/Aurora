@@ -8,7 +8,6 @@ import {
 } from './AvatarCapabilityProfile.ts'
 import { AvatarParameterResolver } from './AvatarParameterResolver.ts'
 import { logicalFaceFromFACS } from './performance/FACSState.ts'
-import { inspectIdleMotionChannels } from './live2d/IdleMotionInspection.ts'
 import { computeDrawableBounds } from './live2d/viewport.ts'
 
 function profile(
@@ -36,17 +35,6 @@ test('resolver clamps output to model binding range', () => {
     ParamAngleX: 8,
     ParamMouthOpenY: 0.7,
   })
-})
-
-test('idle inspection rejects effect-only motion without head body or breath channels', () => {
-  const report = inspectIdleMotionChannels({
-    Curves: [
-      { Target: 'Parameter', Id: 'Param38' },
-      { Target: 'Parameter', Id: 'Param39' },
-    ],
-  })
-  assert.equal(report.naturalChannelCount, 0)
-  assert.equal(report.valid, false)
 })
 
 test('resolver omits channels explicitly unsupported by the model', () => {
@@ -111,7 +99,7 @@ test('Design_genius_White does not advertise body rotation as an arm wave', () =
     agree: 'nod',
     excited: 'sway',
   })
-  assert.equal(profile.idleTailMotion?.enabled, true)
+  assert.equal(profile.motions.includes('tail_sway'), false)
 })
 
 test('Design_genius_White behavior config cannot reintroduce the ghosting arm pose', () => {
@@ -121,10 +109,17 @@ test('Design_genius_White behavior config cannot reintroduce the ghosting arm po
   )) as Record<string, {
     emotion_map: Record<string, string>
     behavior_map: Record<string, { motion?: string }>
+    accessories: Record<string, string>
   }>
   const config = configs.Design_genius_White
 
   assert.equal(Object.values(config.emotion_map).includes('zs11'), false)
+  assert.equal(Object.values(config.accessories).includes('14'), false)
+  assert.equal(Object.values(config.accessories).includes('144'), false)
+  const controllerSource = readFileSync(new URL('./controllers.ts', import.meta.url), 'utf8')
+  for (const unsafeExpression of ['14', '144', '中指', '中指2']) {
+    assert.ok(controllerSource.includes(`expression !== '${unsafeExpression}'`))
+  }
   assert.deepEqual({
     greet: config.behavior_map.greet.motion,
     wave: config.behavior_map.wave.motion,

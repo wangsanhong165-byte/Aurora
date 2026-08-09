@@ -203,7 +203,10 @@ def test_pose_groups_track_one_explicit_active_member():
 def test_required_motion_library_is_complete_and_returns_to_rest():
     import json
 
-    required = {"speak", "greet", "wave", "nod", "tilt", "thinking", "react", "return_idle"}
+    required = {
+        "speak", "greet", "wave", "nod", "tilt", "sway", "shrug",
+        "thinking", "react",
+    }
     paths = {path.stem: path for path in (ROOT / "config/motions").glob("*.json")}
     assert required <= paths.keys()
 
@@ -211,12 +214,28 @@ def test_required_motion_library_is_complete_and_returns_to_rest():
         preset = json.loads(paths[name].read_text(encoding="utf-8"))
         assert preset["duration"] > 0
         assert preset["keyframes"], f"{name} must have logical keyframes"
+        assert len({frame["parameter"] for frame in preset["keyframes"]}) >= 2, (
+            f"{name} must coordinate at least two body channels"
+        )
         last_by_parameter = {}
         for frame in preset["keyframes"]:
             last_by_parameter[frame["parameter"]] = frame["value"]
         assert all(value == 0 for value in last_by_parameter.values()), (
             f"{name} must return every animated parameter to rest"
         )
+
+
+def test_idle_transition_does_not_schedule_a_second_fixed_pose_recovery():
+    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(
+        encoding="utf-8"
+    )
+    profiles = (ROOT / "config/avatar_profiles").glob("*.json")
+
+    assert "return_idle" not in controllers
+    assert not (ROOT / "config/motions/return_idle.json").exists()
+    for path in profiles:
+        profile = json.loads(path.read_text(encoding="utf-8"))
+        assert "return_idle" not in profile.get("motions", [])
 
 
 def test_pet_mode_does_not_compete_with_continuous_idle_or_restart_interaction():
@@ -233,6 +252,23 @@ def test_blink_clock_and_breath_amplitude_use_natural_ranges():
     assert "BASE_BLINK_INTERVAL = 2.8" in controllers
     assert "breath * 8" not in controllers
     assert "this.mixer.setParams('breath', this.idleCtrl.getBreathParams())" in controllers
+
+
+def test_design_tail_uses_continuous_physics_without_periodic_motion_hijack():
+    profile = json.loads(
+        (ROOT / "config/avatar_profiles/Design_genius_White.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(
+        encoding="utf-8"
+    )
+
+    assert "idleTailMotion" not in profile
+    assert "tail_sway" not in profile["motions"]
+    assert not (ROOT / "config/motions/tail_sway.json").exists()
+    assert profile["breathMotionGain"] >= 2
+    assert "phase * 0.43" in controllers
 
 
 def test_special_eye_effect_is_not_reused_for_common_positive_emotions():
@@ -337,15 +373,15 @@ def test_idle_behavior_exposes_correlated_body_drift():
     idle = (
         ROOT / "frontend/src/character/IdleBehaviorController.ts"
     ).read_text(encoding="utf-8")
-    controllers = (
-        ROOT / "frontend/src/character/controllers.ts"
+    ambient = (
+        ROOT / "frontend/src/character/performance/AmbientPerformanceEngine.ts"
     ).read_text(encoding="utf-8")
 
     assert "BodySwayController" in idle
     assert "bodyX: number" in idle
     assert "bodyY: number" in idle
-    assert "gazeValues['body.x'] = breathBX + idleSnapshot.bodyX" in controllers
-    assert "gazeValues['body.y'] = breathBY + idleSnapshot.bodyY" in controllers
+    assert "'body.x': snapshot.bodyX * gain" in ambient
+    assert "'body.y': snapshot.bodyY * gain" in ambient
 
 
 def test_idle_action_scheduler_is_capability_aware_and_avoids_repetition():
@@ -405,11 +441,16 @@ def test_speech_performance_coexists_with_lip_sync_and_blink():
     controllers = (
         ROOT / "frontend/src/character/controllers.ts"
     ).read_text(encoding="utf-8")
+    ambient = (
+        ROOT / "frontend/src/character/performance/AmbientPerformanceEngine.ts"
+    ).read_text(encoding="utf-8")
 
-    assert "SpeechPerformanceController" in controllers
-    assert "speechPerformance.update" in controllers
+    assert "SpeechPerformanceController" in ambient
+    assert "this.speech.update" in ambient
+    assert "ambient_performance" in controllers
     assert "this.mixer.setParams('lip_sync'" in controllers
-    assert "this.mixer.setParams('blink'" in controllers
+    assert "source: 'blink'" in controllers
+    assert "mode: 'multiply'" in controllers
     assert "Math.sin(t * 2.1)" not in controllers
 
 
@@ -660,19 +701,19 @@ def test_last_mile_motion_style_fields_are_consumed_at_runtime():
     assert "bodyMotionGain" in resolver
 
 
-def test_vad_motion_layers_and_recovery_feed_the_shared_mixer():
-    micro = ROOT / "frontend/src/character/performance/VADMicroMotionController.ts"
-    gesture = ROOT / "frontend/src/character/performance/VADGestureController.ts"
-    assert micro.exists()
-    assert gesture.exists()
+def test_ambient_performance_unifies_vad_activity_and_recovery_in_one_layer():
+    ambient = ROOT / "frontend/src/character/performance/AmbientPerformanceEngine.ts"
+    assert ambient.exists()
     controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+    source = ambient.read_text(encoding="utf-8")
 
-    assert "VADMicroMotionController" in controllers
-    assert "VADGestureController" in controllers
-    assert "vad_micro" in controllers
-    assert "vad_gesture" in controllers
+    assert "AmbientPerformanceEngine" in controllers
+    assert "ambient_performance" in controllers
+    assert "VADMicroMotionController" not in controllers
+    assert "VADGestureController" not in controllers
     assert "mode: 'add'" in controllers
-    assert "cooldown" in gesture.read_text(encoding="utf-8")
+    assert "blockedChannels" in source
+    assert "approachPose" in source
 
 
 def test_private_emotion_and_voice_waiting_layers_are_profile_driven():
@@ -686,9 +727,10 @@ def test_private_emotion_and_voice_waiting_layers_are_profile_driven():
     assert private_overlay.exists()
     assert waiting.exists()
     assert "PrivateEmotionOverlay" in controllers
-    assert "VoiceWaitingMotionController" in controllers
+    assert "AmbientPerformanceEngine" in controllers
+    assert "VoiceWaitingMotionController" in waiting.read_text(encoding="utf-8")
     assert "private_emotion" in controllers
-    assert "voice_waiting" in controllers
+    assert "voice_waiting" not in controllers
     overlay = private_overlay.read_text(encoding="utf-8")
     assert "emotionIntensity" in overlay
     assert "active ? activation" in overlay
@@ -697,18 +739,17 @@ def test_private_emotion_and_voice_waiting_layers_are_profile_driven():
 
 def test_calibration_modes_and_runtime_controls_are_exposed():
     events = (ROOT / "frontend/src/core/event-bus.ts").read_text(encoding="utf-8")
-    panel = (ROOT / "frontend/src/ui/DebugPanel.tsx").read_text(encoding="utf-8")
+    settings = (ROOT / "frontend/src/ui/SettingsPanel.tsx").read_text(encoding="utf-8")
+    studio = (ROOT / "frontend/src/ui/Live2DActionStudio.tsx").read_text(encoding="utf-8")
     controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
 
     assert "'character:performance_tuning':" in events
     assert "legacy" in controllers
     assert "enhanced" in controllers
     assert "calibration" in controllers
-    assert "performance_tuning" in panel
-    assert "A/B" in panel
-    assert "character:native_catalog" in panel
-    assert "character:native_preview" in panel
-    assert "Native motions" in panel
+    assert "character:performance_tuning" in settings
+    assert "mode: 'calibration'" in settings
+    assert "character:action_preview" in studio
 
 
 def test_legacy_mode_restores_original_micro_amplitudes_without_scaling_actions():
@@ -775,11 +816,13 @@ def test_live2d_defers_idle_until_browser_audio_finishes():
     assert "if (activity === 'idle' && this.audioPlaybackActive)" in source
 
 
-def test_idle_and_speech_layers_use_crossfade_weights():
-    source = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
-    assert "const idleLayerWeight = 1 - this.speechWeight" in source
-    assert "idleSnapshot.headX * idleMotionScale * idleLayerWeight" in source
-    assert "this.idleCtrl.setBreathing(false)" not in source
+def test_idle_and_speech_share_one_smooth_activity_pose():
+    source = (
+        ROOT / "frontend/src/character/performance/AmbientPerformanceEngine.ts"
+    ).read_text(encoding="utf-8")
+    assert "if (this.activity === 'idle')" in source
+    assert "else if (this.activity === 'speaking')" in source
+    assert "this.current = approachPose(this.current, target, delta)" in source
 
 
 def test_pet_mode_tracks_delayed_idle_timer_and_ignores_duplicate_end():

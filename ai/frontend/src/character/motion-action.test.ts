@@ -3,12 +3,11 @@ import test from 'node:test'
 
 import {
   compileMotionAction,
-  compileMotionPlan,
-  isMotionPrimitiveSupported,
+  MOTION_PRIMITIVES,
   normalizeMotionAction,
-  unsupportedMotionPrimitives,
   validateMotionPlan,
 } from './MotionAction.ts'
+import { sampleMotionKeyframes } from './MotionArbiter.ts'
 
 test('motion plan rejects renderer parameters and unknown primitives', () => {
   const result = validateMotionPlan({
@@ -47,22 +46,24 @@ test('normalizes an authored action and compiles primitives to safe logical keyf
   assert.equal(preset.keyframes.every(frame => frame.time >= 0 && frame.time <= 1400), true)
 })
 
-test('compiles the model-specific arm and tail primitives through logical bindings', () => {
+test('overlapping action steps compose into one continuous parameter track', () => {
   const action = normalizeMotionAction({
     version: 1,
-    id: 'model_gesture_pair',
-    name: 'Model Gesture Pair',
-    durationMs: 1600,
+    id: 'double_lean',
+    name: 'Double lean',
+    durationMs: 1200,
     steps: [
-      { atMs: 0, durationMs: 800, primitive: 'arm_wave', intensity: 0.8 },
-      { atMs: 800, durationMs: 800, primitive: 'tail_sway', intensity: 0.7 },
+      { atMs: 0, durationMs: 1000, primitive: 'lean_forward', intensity: 0.5 },
+      { atMs: 0, durationMs: 1000, primitive: 'lean_forward', intensity: 0.5 },
     ],
   })
-
   const preset = compileMotionAction(action)
-  assert.ok(preset.keyframes.some(frame => frame.parameter === 'body.z'))
-  assert.ok(preset.keyframes.some(frame => frame.parameter === 'breath'))
-  assert.equal(preset.keyframes.every(frame => frame.time >= 0 && frame.time <= 1600), true)
+  const peak = sampleMotionKeyframes(preset.keyframes, 450)
+  const trackKeys = preset.keyframes.map(frame => `${frame.parameter}:${frame.time}`)
+
+  assert.equal(peak['body.y'], 6)
+  assert.equal(peak['head.y'], 3)
+  assert.equal(new Set(trackKeys).size, trackKeys.length)
 })
 
 test('motion plans are bounded in duration, step count, and intensity', () => {
@@ -80,20 +81,14 @@ test('motion plans are bounded in duration, step count, and intensity', () => {
   assert.match(result.errors.join(' '), /duration|steps|intensity/i)
 })
 
-test('model-authored appendage primitives require an explicit capability', () => {
-  assert.equal(isMotionPrimitiveSupported('nod', []), true)
-  assert.equal(isMotionPrimitiveSupported('arm_wave', ['tail_sway']), false)
-  assert.equal(isMotionPrimitiveSupported('tail_sway', ['tail_sway']), true)
-
-  const action = normalizeMotionAction({
+test('unrigged appendage gestures are not advertised as safe primitives', () => {
+  assert.equal(MOTION_PRIMITIVES.includes('arm_wave' as never), false)
+  assert.equal(MOTION_PRIMITIVES.includes('tail_sway' as never), false)
+  assert.throws(() => normalizeMotionAction({
     version: 1,
     id: 'old_fake_wave',
     name: 'Old fake wave',
     durationMs: 1000,
     steps: [{ atMs: 0, durationMs: 800, primitive: 'arm_wave', intensity: 0.8 }],
-  })
-  assert.deepEqual(unsupportedMotionPrimitives(action, ['tail_sway']), ['arm_wave'])
-
-  assert.equal(compileMotionPlan(action, 'llm_plan', 'AI 动作', ['tail_sway']), null)
-  assert.ok(compileMotionPlan(action, 'llm_plan', 'AI 动作', ['arm_wave']))
+  }), /primitive/i)
 })

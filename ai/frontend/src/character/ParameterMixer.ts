@@ -18,7 +18,7 @@
 //   gaze:                  30
 //   blink:                 40  (absolute override when eyes closing)
 //   breath:                20
-//   idle_sway:             10
+//   ambient performance:   24
 //
 // Channels:
 //   motion, expression, lip_sync, eye, head, body, blink, breath, accessory, pose
@@ -270,14 +270,6 @@ export class ParameterMixer {
   }
 
   private _blend(paramId: string, values: ParameterValue[]): number {
-    // Rule 1: Absolute blink override — when eyes are closing/closed, blink wins.
-    const blinkValues = values.filter(v => v.source === 'blink')
-    if (blinkValues.length > 0) {
-      if (blinkValues.some(v => v.value < 0.5)) {
-        return blinkValues[0].value
-      }
-    }
-
     // Exclusive arbitration for 'override' contributions: the highest-priority
     // override owns the parameter and fades from the model baseline by its own
     // weight. Lower-priority overrides never pre-load the value, so two

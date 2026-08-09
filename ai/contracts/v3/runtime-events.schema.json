@@ -595,9 +595,7 @@
                   "look_left",
                   "look_right",
                   "breathe",
-                  "shrug",
-                  "arm_wave",
-                  "tail_sway"
+                  "shrug"
                 ],
                 "title": "Primitive",
                 "type": "string"

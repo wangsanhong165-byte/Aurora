@@ -1,4 +1,5 @@
 import type { MotionKeyframe, MotionPreset } from './MotionArbiter'
+import { sampleMotionCurve } from './performance/MotionCurve.ts'
 
 export const MOTION_PRIMITIVES = [
   'nod',
@@ -11,38 +12,9 @@ export const MOTION_PRIMITIVES = [
   'look_right',
   'breathe',
   'shrug',
-  'arm_wave',
-  'tail_sway',
 ] as const
 
 export type MotionPrimitive = typeof MOTION_PRIMITIVES[number]
-
-/**
- * Most primitives are renderer-safe logical gestures. Model-authored appendages
- * are opt-in: advertising them without a matching rig creates convincing but
- * false LLM capabilities (for example, a body roll labelled as an arm wave).
- */
-export function isMotionPrimitiveSupported(
-  primitive: MotionPrimitive,
-  supportedMotions: readonly string[] | undefined,
-): boolean {
-  if (!supportedMotions) return true
-  if (primitive === 'arm_wave' || primitive === 'tail_sway') {
-    return supportedMotions.includes(primitive)
-  }
-  return true
-}
-
-export function unsupportedMotionPrimitives(
-  action: Pick<MotionActionDefinition, 'steps'>,
-  supportedMotions: readonly string[] | undefined,
-): MotionPrimitive[] {
-  return [...new Set(
-    action.steps
-      .map(step => step.primitive)
-      .filter(primitive => !isMotionPrimitiveSupported(primitive, supportedMotions)),
-  )]
-}
 
 export interface MotionActionStep {
   atMs: number
@@ -200,17 +172,38 @@ export function normalizeMotionActions(value: unknown): MotionActionDefinition[]
 }
 
 export function compileMotionAction(action: MotionActionDefinition): MotionPreset {
+  const tracks = action.steps.map(step => ({
+    start: step.atMs,
+    end: step.atMs + step.durationMs,
+    duration: step.durationMs,
+    intensity: step.intensity,
+    frames: primitiveFrames(step.primitive),
+  }))
+  const parameters = new Set(tracks.flatMap(track =>
+    track.frames.flatMap(frame => Object.keys(frame.values))))
+  const timeline = new Set<number>([0, action.durationMs])
+  for (const track of tracks) {
+    for (const frame of track.frames) {
+      timeline.add(Math.round(clamp(
+        track.start + track.duration * frame.progress,
+        0,
+        action.durationMs,
+      )))
+    }
+  }
   const keyframes: MotionKeyframe[] = []
-  for (const step of action.steps) {
-    for (const frame of primitiveFrames(step.primitive)) {
-      const time = Math.round(step.atMs + step.durationMs * frame.progress)
-      for (const [parameter, value] of Object.entries(frame.values)) {
-        keyframes.push({
-          time: clamp(time, 0, action.durationMs),
-          parameter,
-          value: value * step.intensity,
-        })
+  for (const time of [...timeline].sort((left, right) => left - right)) {
+    for (const parameter of parameters) {
+      let value = 0
+      for (const track of tracks) {
+        if (time < track.start || time > track.end) continue
+        const localProgress = clamp((time - track.start) / track.duration, 0, 1)
+        const frames = track.frames
+          .filter(frame => parameter in frame.values)
+          .map(frame => ({ time: frame.progress, value: frame.values[parameter] }))
+        if (frames.length) value += sampleMotionCurve(frames, localProgress) * track.intensity
       }
+      keyframes.push({ time, parameter, value })
     }
   }
   return {
@@ -225,7 +218,6 @@ export function compileMotionPlan(
   plan: unknown,
   id: string,
   name = 'AI 动作',
-  supportedMotions?: readonly string[],
 ): MotionPreset | null {
   const validation = validateMotionPlan(plan)
   if (!validation.ok || !validation.plan) return null
@@ -235,7 +227,6 @@ export function compileMotionPlan(
     name,
     ...validation.plan,
   }
-  if (unsupportedMotionPrimitives(action, supportedMotions).length) return null
   return compileMotionAction(action)
 }
 
@@ -271,22 +262,6 @@ function primitiveFrames(primitive: MotionPrimitive): PrimitiveFrame[] {
       return axisFrames('body.y', 3.5)
     case 'shrug':
       return combinedFrames({ 'body.y': 4.5, 'head.z': 3 })
-    case 'arm_wave':
-      return [
-        { progress: 0, values: { 'body.z': 0 } },
-        { progress: .24, values: { 'body.z': -6 } },
-        { progress: .52, values: { 'body.z': 7 } },
-        { progress: .78, values: { 'body.z': -5 } },
-        { progress: 1, values: { 'body.z': 0 } },
-      ]
-    case 'tail_sway':
-      return [
-        { progress: 0, values: { breath: 0.5 } },
-        { progress: .2, values: { breath: 0.92 } },
-        { progress: .48, values: { breath: 0.08 } },
-        { progress: .76, values: { breath: 0.86 } },
-        { progress: 1, values: { breath: 0.5 } },
-      ]
   }
 }
 

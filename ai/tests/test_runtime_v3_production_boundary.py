@@ -99,14 +99,9 @@ def test_frontend_connects_only_to_canonical_client_ws():
     client_source = (
         ROOT / "frontend" / "src" / "runtime" / "client.ts"
     ).read_text("utf-8")
-    debug_source = (
-        ROOT / "frontend" / "src" / "ui" / "DebugPanel.tsx"
-    ).read_text("utf-8")
-
     assert "runtimeWebSocketUrl(location)" in app_source
     assert "/client-ws" in client_source
     assert "/v2/ws" not in app_source
-    assert "/v2/ws" not in debug_source
 
 
 def test_data_migration_is_not_part_of_production_startup():

@@ -142,7 +142,7 @@ class MotionPlanStepPayload(PayloadModel):
     duration_ms: int = Field(alias="durationMs", ge=120, le=2500)
     primitive: Literal[
         "nod", "tilt_left", "tilt_right", "lean_forward", "lean_back",
-        "sway", "look_left", "look_right", "breathe", "shrug", "arm_wave", "tail_sway",
+        "sway", "look_left", "look_right", "breathe", "shrug",
     ]
     intensity: float = Field(ge=0, le=1)
 

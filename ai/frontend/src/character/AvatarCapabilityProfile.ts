@@ -46,14 +46,6 @@ export interface AvatarViewportConfig {
   scale?: number
 }
 
-export interface AvatarIdleTailMotion {
-  enabled?: boolean
-  initialDelayMs?: number
-  intervalMinMs?: number
-  intervalMaxMs?: number
-  intensity?: number
-}
-
 export interface AvatarPrivateEmotionBinding {
   target: string
   emotions?: string[]
@@ -94,8 +86,6 @@ export interface AvatarCapabilityProfile {
   idleMouthOpen?: number
   /** Model-specific gain for the logical breath input used by physics rigs. */
   breathMotionGain?: number
-  /** Optional low-frequency tail gesture for models with a verified tail rig. */
-  idleTailMotion?: AvatarIdleTailMotion
   /** Model-specific initial framing for assets whose Cubism canvas origin is off-center. */
   viewport?: AvatarViewportConfig
 }

@@ -87,15 +87,25 @@ function _initComponents(compMgr: ComponentManager, ctrl: CharacterController,
       // Set accessory parts on the controller so toggle works.
       // NOTE: setAccessoryParts always sets state=true; we fix it below.
       ctrl.setAccessoryParts(parts)
+      const availableParts = ctrl.getAccessoryParts()
+      for (const label of Object.keys(state)) {
+        if (!(label in availableParts)) delete state[label]
+      }
+      const registeredComponents = avatarComponents
+        ? Object.fromEntries(Object.entries(avatarComponents).filter(([key, cfg]) => {
+          const label = (cfg as Record<string, any>).display_name || key
+          return label in availableParts
+        }))
+        : {}
       // Override the all-true default_state with actual config values
       for (const [label, enabled] of Object.entries(state)) {
         ctrl.setAccessoryEnabled(label, enabled)
       }
 
       // Register components if there are any
-      if (avatarComponents && Object.keys(avatarComponents).length > 0) {
+      if (Object.keys(registeredComponents).length > 0) {
         compMgr.attach(ctrl.mixer)
-        compMgr.registerComponents(avatarComponents)
+        compMgr.registerComponents(registeredComponents)
       }
 
       // ── Persist component state on change ──
@@ -106,8 +116,8 @@ function _initComponents(compMgr: ComponentManager, ctrl: CharacterController,
       }
 
       ctrl.onAccessoryChange((label, enabled) => {
-        if (avatarComponents && Object.keys(avatarComponents).length > 0) {
-          const compKey = Object.entries(avatarComponents).find(
+        if (Object.keys(registeredComponents).length > 0) {
+          const compKey = Object.entries(registeredComponents).find(
             ([, cfg]) => (cfg as any).display_name === label
           )?.[0] || label
           compMgr.setEnabled(compKey, enabled)
@@ -132,9 +142,9 @@ function _initComponents(compMgr: ComponentManager, ctrl: CharacterController,
             }
           }
           // If ComponentManager has registered components, sync them too
-          if (avatarComponents && Object.keys(avatarComponents).length > 0) {
+          if (Object.keys(registeredComponents).length > 0) {
             for (const [label, enabled] of Object.entries(parsed)) {
-              const compKey = Object.entries(avatarComponents).find(
+              const compKey = Object.entries(registeredComponents).find(
                 ([, cfg]) => (cfg as any).display_name === label
               )?.[0]
               if (compKey && label in state) {
@@ -146,7 +156,7 @@ function _initComponents(compMgr: ComponentManager, ctrl: CharacterController,
       } catch (_) {}
 
       // Emit using the restored state, NOT ctrl.getAccessoryState() which always returns all-true.
-      eventBus.emit('accessory:loaded', { parts: { ...parts }, state: { ...state } })
+      eventBus.emit('accessory:loaded', { parts: { ...availableParts }, state: { ...state } })
       return  // ← CRITICAL: don't fall through to legacy fallback
     }
 

@@ -2,10 +2,10 @@ import type {
   AvatarPerformanceCapabilities,
   CharacterPerformancePersonality,
 } from './AvatarCapabilityProfile'
-import { BodySwayController } from './performance/BodySwayController'
-import { IdleActionScheduler, type IdleActionLabel } from './performance/IdleActionScheduler'
-import { deriveMotionSeed, resolveMotionStyle, type MotionStyleOptions } from './performance/MotionStyle'
-import type { VADVector } from './performance/VADState'
+import { BodySwayController } from './performance/BodySwayController.ts'
+import { IdleActionScheduler, type IdleActionLabel } from './performance/IdleActionScheduler.ts'
+import { deriveMotionSeed, resolveMotionStyle, type MotionStyleOptions } from './performance/MotionStyle.ts'
+import type { VADVector } from './performance/VADState.ts'
 
 export interface IdleBehaviorSnapshot {
   headX: number

@@ -1,1 +1,40 @@
-{"name":"thinking","duration":2200,"recoveryMs":300,"keyframes":[{"time":0,"parameter":"head.x","value":0},{"time":500,"parameter":"head.x","value":5},{"time":1700,"parameter":"head.x","value":4},{"time":2200,"parameter":"head.x","value":0},{"time":0,"parameter":"head.y","value":0},{"time":600,"parameter":"head.y","value":-3},{"time":1700,"parameter":"head.y","value":-2},{"time":2200,"parameter":"head.y","value":0},{"time":0,"parameter":"eye.x","value":0},{"time":700,"parameter":"eye.x","value":0.35},{"time":1800,"parameter":"eye.x","value":0.25},{"time":2200,"parameter":"eye.x","value":0}],"steps":[{"time":120,"type":"expression","value":"thinking"},{"time":1950,"type":"expression","value":"neutral"}]}
+{
+  "name": "thinking",
+  "duration": 2400,
+  "recoveryMs": 460,
+  "keyframes": [
+    {"time": 0, "parameter": "head.x", "value": 0},
+    {"time": 180, "parameter": "head.x", "value": -1.0},
+    {"time": 620, "parameter": "head.x", "value": 5.6},
+    {"time": 1560, "parameter": "head.x", "value": 4.8},
+    {"time": 2050, "parameter": "head.x", "value": 2.4},
+    {"time": 2400, "parameter": "head.x", "value": 0},
+    {"time": 0, "parameter": "head.y", "value": 0},
+    {"time": 250, "parameter": "head.y", "value": 0.8},
+    {"time": 720, "parameter": "head.y", "value": -3.4},
+    {"time": 1680, "parameter": "head.y", "value": -2.7},
+    {"time": 2400, "parameter": "head.y", "value": 0},
+    {"time": 0, "parameter": "head.z", "value": 0},
+    {"time": 520, "parameter": "head.z", "value": 2.8},
+    {"time": 1640, "parameter": "head.z", "value": 2.2},
+    {"time": 2400, "parameter": "head.z", "value": 0},
+    {"time": 0, "parameter": "eye.x", "value": 0},
+    {"time": 420, "parameter": "eye.x", "value": 0.18},
+    {"time": 760, "parameter": "eye.x", "value": 0.48},
+    {"time": 1700, "parameter": "eye.x", "value": 0.4},
+    {"time": 2140, "parameter": "eye.x", "value": 0.15},
+    {"time": 2400, "parameter": "eye.x", "value": 0},
+    {"time": 0, "parameter": "eye.y", "value": 0},
+    {"time": 700, "parameter": "eye.y", "value": 0.22},
+    {"time": 1720, "parameter": "eye.y", "value": 0.18},
+    {"time": 2400, "parameter": "eye.y", "value": 0},
+    {"time": 0, "parameter": "body.x", "value": 0},
+    {"time": 650, "parameter": "body.x", "value": 1.8},
+    {"time": 1680, "parameter": "body.x", "value": 1.4},
+    {"time": 2400, "parameter": "body.x", "value": 0}
+  ],
+  "steps": [
+    {"time": 120, "type": "expression", "value": "thinking"},
+    {"time": 2100, "type": "expression", "value": "neutral"}
+  ]
+}

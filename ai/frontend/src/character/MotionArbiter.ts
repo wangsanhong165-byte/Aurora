@@ -3,9 +3,10 @@ import type {
   NativeMotionContribution,
   NativeMotionPlayer,
 } from './live2d/NativeMotionPlayer'
+import { sampleMotionCurve } from './performance/MotionCurve.ts'
 
 export type MotionSource = 'ai' | 'system' | 'pet' | 'idle'
-export type MotionChannel = 'head' | 'body' | 'gaze' | 'expression' | 'mouth' | 'tail' | 'full'
+export type MotionChannel = 'head' | 'body' | 'gaze' | 'expression' | 'mouth' | 'full'
 
 export interface MotionKeyframe { time: number; parameter: string; value: number }
 export interface SequenceStep { time: number; type: 'attention' | 'expression' | 'motion' | 'behavior'; value: string }
@@ -75,21 +76,7 @@ export function sampleMotionKeyframes(
   }
   const sampled: Record<string, number> = {}
   for (const [parameter, unsorted] of grouped) {
-    const frames = [...unsorted].sort((a, b) => a.time - b.time)
-    if (elapsedMs <= frames[0].time) {
-      sampled[parameter] = frames[0].value
-      continue
-    }
-    const nextIndex = frames.findIndex(frame => frame.time >= elapsedMs)
-    if (nextIndex < 0) {
-      sampled[parameter] = frames[frames.length - 1].value
-      continue
-    }
-    const previous = frames[nextIndex - 1]
-    const next = frames[nextIndex]
-    const span = Math.max(1, next.time - previous.time)
-    const progress = smoothstep((elapsedMs - previous.time) / span)
-    sampled[parameter] = previous.value + (next.value - previous.value) * progress
+    sampled[parameter] = sampleMotionCurve(unsorted, elapsedMs)
   }
   return sampled
 }
@@ -291,7 +278,7 @@ export class MotionArbiter {
         continue
       }
       const elapsed = now - active.startedAt
-        const recoveryMs = Math.max(300, Math.min(600, preset.recoveryMs ?? 420))
+      const recoveryMs = Math.max(300, Math.min(600, preset.recoveryMs ?? 420))
       if (elapsed >= active.duration + recoveryMs) {
         this.cancelOwner(active.request.owner)
         continue
@@ -391,7 +378,6 @@ function inferChannels(preset: MotionPreset): MotionChannel[] {
     else if (frame.parameter.startsWith('eye.')) channels.add('gaze')
     else if (frame.parameter.startsWith('mouth.')) channels.add('mouth')
     else if (frame.parameter.startsWith('blink.')) channels.add('expression')
-    else if (frame.parameter === 'breath' || frame.parameter.startsWith('tail.')) channels.add('tail')
     else channels.add('full')
   }
   return channels.size ? [...channels] : ['full']

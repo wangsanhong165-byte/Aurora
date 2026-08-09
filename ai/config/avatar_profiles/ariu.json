@@ -6,7 +6,7 @@
     "scale": 0.76
   },
   "expressions": ["neutral", "angry", "love", "surprised"],
-  "motions": ["speak", "greet", "wave", "nod", "tilt", "thinking", "react", "return_idle"],
+  "motions": ["speak", "greet", "wave", "nod", "tilt", "thinking", "react"],
   "sequences": ["greet", "thinking", "react"],
   "parameters": {
     "eye": { "x": "ParamEyeBallX", "y": "ParamEyeBallY" },

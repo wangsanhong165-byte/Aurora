@@ -1,4 +1,4 @@
-import { createSeededRandom, type RandomSource } from './SeededRandom'
+import { createSeededRandom, type RandomSource } from './SeededRandom.ts'
 
 export interface BodySwaySample {
   headX: number
@@ -26,6 +26,7 @@ const defaultRanges: BodySwayRanges = {
 
 export class BodySwayController {
   private random: RandomSource
+  private readonly ranges: BodySwayRanges
   private from = neutralSample()
   private current = neutralSample()
   private target = neutralSample()
@@ -33,8 +34,9 @@ export class BodySwayController {
   private moveDuration = 2.2
   private holdUntil = 0
 
-  constructor(seed = 29, private readonly ranges = defaultRanges) {
+  constructor(seed = 29, ranges = defaultRanges) {
     this.random = createSeededRandom(seed)
+    this.ranges = ranges
   }
 
   reset(seed = 29): void {

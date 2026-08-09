@@ -1,7 +1,7 @@
 {
   "model": "hiyori_zh-Hans",
   "expressions": ["neutral", "happy", "sad", "angry", "surprised", "shy", "worried"],
-  "motions": ["speak", "greet", "wave", "nod", "tilt", "thinking", "react", "return_idle"],
+  "motions": ["speak", "greet", "wave", "nod", "tilt", "thinking", "react"],
   "sequences": ["greet", "thinking", "react"],
   "parameters": {
     "eye": { "x": "ParamEyeBallX", "y": "ParamEyeBallY" },

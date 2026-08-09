@@ -13,14 +13,12 @@
     "speak",
     "greet",
     "wave",
-    "tail_sway",
     "nod",
     "tilt",
     "sway",
     "shrug",
     "thinking",
-    "react",
-    "return_idle"
+    "react"
   ],
   "sequences": [
     "greet",
@@ -107,19 +105,12 @@
   "performanceMode": "enhanced",
   "parameterGain": 1.05,
   "bodyMotionGain": 1.12,
-  "breathMotionGain": 1.9,
+  "breathMotionGain": 2.35,
   "semanticMotionMap": {
     "greet": "tilt",
     "wave": "sway",
     "agree": "nod",
     "excited": "sway"
-  },
-  "idleTailMotion": {
-    "enabled": true,
-    "initialDelayMs": 4200,
-    "intervalMinMs": 8200,
-    "intervalMaxMs": 13600,
-    "intensity": 0.72
   },
   "viewport": {
     "scale": 0.86

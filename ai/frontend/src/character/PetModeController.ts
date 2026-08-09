@@ -105,7 +105,7 @@ export class PetModeController {
     this._idleTimer = setTimeout(() => {
       if (this._state === 'IDLE') {
         eventBus.emit('character:interaction', { type: 'inactivity', intensity: 0.22 })
-        // Continuous autonomous performance is owned by IdleBehaviorController.
+    // Continuous autonomous performance is owned by AmbientPerformanceEngine.
         this._scheduleIdle()
       }
     }, delay)

@@ -2,7 +2,8 @@ import type {
   AvatarPerformanceCapabilities,
   CharacterPerformancePersonality,
 } from '../AvatarCapabilityProfile'
-import { createSeededRandom, type RandomSource } from './SeededRandom'
+import { createSeededRandom, type RandomSource } from './SeededRandom.ts'
+import { sampleMotionCurve } from './MotionCurve.ts'
 import type { VADVector } from './VADState'
 
 export type IdleActionLabel =
@@ -62,6 +63,9 @@ const labels: IdleActionLabel[] = [
 
 export class IdleActionScheduler {
   private random: RandomSource
+  private readonly spontaneity: number
+  private readonly gain: number
+  private readonly recentWindow: number
   private active: ActiveAction | null = null
   private nextActionAt = 8
   private recentActions: IdleActionLabel[] = []
@@ -70,11 +74,14 @@ export class IdleActionScheduler {
 
   constructor(
     seed: number,
-    private readonly spontaneity = 1,
-    private readonly gain = 1,
-    private readonly recentWindow = 3,
+    spontaneity = 1,
+    gain = 1,
+    recentWindow = 3,
   ) {
     this.random = createSeededRandom(seed)
+    this.spontaneity = spontaneity
+    this.gain = gain
+    this.recentWindow = recentWindow
   }
 
   update(timeSeconds: number, context: IdleActionContext): IdleActionPose {
@@ -192,14 +199,12 @@ function frame(progress: number, pose: Partial<IdleActionPose>): PoseKeyframe {
 }
 
 function evaluateKeyframes(frames: PoseKeyframe[], progress: number): IdleActionPose {
-  const nextIndex = frames.findIndex(item => item.progress >= progress)
-  if (nextIndex <= 0) return mergePose(frames[0]?.pose)
-  const previous = frames[nextIndex - 1]
-  const next = frames[nextIndex]
-  const local = smoothstep((progress - previous.progress) / (next.progress - previous.progress))
   const result = neutralPose()
   for (const key of poseKeys) {
-    result[key] = lerp(previous.pose[key] ?? 0, next.pose[key] ?? 0, local)
+    result[key] = sampleMotionCurve(
+      frames.map(frame => ({ time: frame.progress, value: frame.pose[key] ?? 0 })),
+      progress,
+    )
   }
   return result
 }
@@ -255,18 +260,8 @@ const poseKeys: Array<keyof IdleActionPose> = [
 function neutralPose(): IdleActionPose {
   return { headX: 0, headY: 0, headZ: 0, bodyX: 0, bodyY: 0, eyeX: 0, eyeY: 0, eyeClose: 0 }
 }
-function mergePose(pose: Partial<IdleActionPose> | undefined): IdleActionPose {
-  return { ...neutralPose(), ...pose }
-}
 function isDirectional(label: IdleActionLabel): boolean {
   return ['head-tilt', 'side-look', 'weight-shift', 'gentle-lean'].includes(label)
-}
-function smoothstep(value: number): number {
-  const t = clamp(value, 0, 1)
-  return t * t * (3 - 2 * t)
-}
-function lerp(from: number, to: number, amount: number): number {
-  return from + (to - from) * amount
 }
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))

@@ -3,10 +3,8 @@ import { eventBus } from '../core/event-bus'
 import { theme } from '../core/theme'
 import {
   MOTION_PRIMITIVES,
-  isMotionPrimitiveSupported,
   normalizeMotionAction,
   normalizeMotionActions,
-  unsupportedMotionPrimitives,
   type Live2DActionsByModel,
   type MotionActionDefinition,
   type MotionActionStep,
@@ -52,7 +50,6 @@ export function Live2DActionStudio({
   const [open, setOpen] = useState(false)
   const [selectedId, setSelectedId] = useState('')
   const [draft, setDraft] = useState<MotionActionDefinition>(() => createAction())
-  const [supportedMotions, setSupportedMotions] = useState<string[] | undefined>(undefined)
   const [message, setMessage] = useState('动作按当前模型独立保存；大模型只能调用同一套安全原语。')
   const importRef = useRef<HTMLInputElement>(null)
 
@@ -62,22 +59,6 @@ export function Live2DActionStudio({
     setDraft(first ?? createAction(actions.length + 1))
     setMessage('动作按当前模型独立保存；大模型只能调用同一套安全原语。')
   }, [model])
-
-  useEffect(() => {
-    setSupportedMotions(undefined)
-    const dispose = eventBus.on('character:model_capability', capability => {
-      if (capability.model === model) setSupportedMotions(capability.supportedMotions)
-    })
-    eventBus.emit('character:model_capability_request', undefined)
-    return dispose
-  }, [model])
-
-  const assertModelSupport = (action: MotionActionDefinition) => {
-    const unsupported = unsupportedMotionPrimitives(action, supportedMotions)
-    if (unsupported.length) {
-      throw new Error(`当前模型未声明动作能力：${unsupported.join(', ')}`)
-    }
-  }
 
   const persist = (next: MotionActionDefinition[]) => {
     onChange({ ...actionsByModel, [model]: normalizeMotionActions(next) })
@@ -103,7 +84,6 @@ export function Live2DActionStudio({
   const save = () => {
     try {
       const normalized = normalizeMotionAction(draft)
-      assertModelSupport(normalized)
       const next = actions.filter(action => action.id !== selectedId && action.id !== normalized.id)
       next.push(normalized)
       persist(next)
@@ -118,7 +98,6 @@ export function Live2DActionStudio({
   const preview = () => {
     try {
       const normalized = normalizeMotionAction(draft)
-      assertModelSupport(normalized)
       eventBus.emit('character:action_preview', { action: normalized })
       setMessage(`正在试演“${normalized.name}”。`)
     } catch (error) {
@@ -257,10 +236,7 @@ export function Live2DActionStudio({
                   value={step.primitive}
                   onChange={event => updateStep(index, { primitive: event.target.value as MotionPrimitive })}
                 >
-                  {!isMotionPrimitiveSupported(step.primitive, supportedMotions) && (
-                    <option value={step.primitive}>{PRIMITIVE_LABELS[step.primitive] ?? step.primitive}（当前模型不支持）</option>
-                  )}
-                  {MOTION_PRIMITIVES.filter(primitive => isMotionPrimitiveSupported(primitive, supportedMotions)).map(primitive => (
+                  {MOTION_PRIMITIVES.map(primitive => (
                     <option key={primitive} value={primitive}>{PRIMITIVE_LABELS[primitive] ?? primitive}</option>
                   ))}
                 </select>

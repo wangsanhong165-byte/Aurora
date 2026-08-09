@@ -16,7 +16,7 @@ test('Design_genius_White semantics use honest executable gestures', () => {
   const profile: AvatarCapabilityProfile = {
     model: 'Design_genius_White',
     expressions: [],
-    motions: ['tilt', 'nod', 'sway', 'tail_sway'],
+    motions: ['tilt', 'nod', 'sway'],
     sequences: ['greet'],
     parameters: {},
     bindings: {},
