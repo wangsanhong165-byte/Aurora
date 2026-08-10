@@ -6,6 +6,12 @@ from typing import Any, Generator, Iterator
 
 import requests
 
+# ASR/TTS are loopback services. Lifecycle-launched processes may inherit a
+# desktop HTTP proxy, so routing 127.0.0.1 traffic through it turns healthy
+# local services into spurious 502s. Disable proxy lookup for these adapters.
+_LOCAL_SESSION = requests.Session()
+_LOCAL_SESSION.trust_env = False
+
 
 class HTTPASRAdapter:
     """ASR adapter backed by the local ASR HTTP service."""
@@ -17,7 +23,7 @@ class HTTPASRAdapter:
         self.timeout = timeout
 
     def transcribe(self, audio_path: str, language: str | None = None) -> dict[str, Any]:
-        response = requests.post(
+        response = _LOCAL_SESSION.post(
             f"{self.base_url}/v1/asr/transcribe",
             json={"audio_path": audio_path, "language": language},
             timeout=self.timeout,
@@ -67,7 +73,7 @@ class HTTPTTSAdapter:
             )
         if "ref_audio_path" not in payload and options.get("ref_audio"):
             payload["ref_audio_path"] = options["ref_audio"]
-        response = requests.post(
+        response = _LOCAL_SESSION.post(
             f"{self.base_url}/v1/tts/synthesize",
             json=payload,
             timeout=self.timeout,

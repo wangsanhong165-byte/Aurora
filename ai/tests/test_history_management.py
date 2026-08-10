@@ -75,6 +75,36 @@ def test_history_index_recovers_existing_history_files(tmp_path):
     assert "hist_invalid" not in entries
     persisted = json.loads((histories_dir / "index.json").read_text(encoding="utf-8"))
     assert "hist_orphan" in persisted
+    assert persisted["hist_known"]["character_id"] == "monika"
+    assert persisted["hist_orphan"]["character_id"] == "monika"
+
+
+def test_history_index_is_character_scoped_and_role_cleanup_is_exact(tmp_path):
+    class _SwitchableRuntime(_Runtime):
+        def __init__(self):
+            self.character_id = "monika"
+
+        def get_character_info(self):
+            return {"card": {"id": self.character_id}}
+
+    runtime = _SwitchableRuntime()
+    manager = RuntimeManager(base_dir=tmp_path, runtime=runtime)
+    monika_uid = manager.create_history()["history_uid"]
+    manager.record_turn_metadata(monika_uid, "monika title")
+
+    runtime.character_id = "alice"
+    manager.reinit_per_character()
+    assert manager.get_history_list() == []
+    with pytest.raises(KeyError):
+        manager.load_history(monika_uid)
+
+    alice_uid = manager.create_history()["history_uid"]
+    manager.record_turn_metadata(alice_uid, "alice title")
+    assert [entry["uid"] for entry in manager.get_history_list()] == [alice_uid]
+
+    assert manager._delete_character_histories("monika") == 1
+    assert alice_uid in manager._history_index
+    assert monika_uid not in manager._history_index
 
 
 def test_history_index_write_failure_preserves_previous_index(tmp_path, monkeypatch):

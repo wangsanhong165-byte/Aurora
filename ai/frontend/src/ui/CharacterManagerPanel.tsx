@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { FolderOpen, RefreshCw, Upload } from 'lucide-react'
+import { FolderOpen, RefreshCw, Trash2, Upload } from 'lucide-react'
 
 import {
   buildCharacterPayload,
@@ -16,7 +16,7 @@ import {
 
 type Props = {
   requestCommand: (action: string, params?: Record<string, unknown>) => Promise<Record<string, unknown>>
-  onActivate: (character: CharacterDescriptor) => Promise<void>
+  onActivate: (character: CharacterDescriptor, runtimeAlreadySwitched?: boolean) => Promise<void>
 }
 
 type Tab = 'characters' | 'voices' | 'models'
@@ -117,6 +117,47 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '角色切换失败')
       throw error
+    }
+  }
+
+  const removeCharacter = async (character: CharacterDescriptor) => {
+    if (characters.length <= 1) {
+      setMessage('至少需要保留一个角色')
+      return
+    }
+    if (!window.confirm(`删除角色“${character.name}”？角色提示词、对话记忆和状态会一并删除；共享模型与声线会保留。`)) {
+      return
+    }
+    setBusy(true)
+    setMessage(`正在删除 ${character.name}…`)
+    try {
+      const response = await requestRef.current('delete_character', { character_id: character.id })
+      const nextActive = String(response.active_character_id || '')
+      setCharacters(current => current.filter(item => item.id !== character.id))
+      if (nextActive) setActiveId(nextActive)
+      let syncWarning = ''
+      if (character.id === activeId && nextActive) {
+        const fallback = characters.find(item => item.id === nextActive)
+        if (fallback) {
+          try {
+            // The backend has already switched atomically. Re-applying the
+            // active role here synchronizes the renderer's model/settings.
+            await onActivate(fallback, true)
+          } catch (error) {
+            syncWarning = error instanceof Error ? error.message : String(error)
+          }
+        }
+      }
+      await refresh()
+      setMessage(
+        syncWarning
+          ? `角色 ${character.name} 已删除，但界面同步失败：${syncWarning}`
+          : `角色 ${character.name} 已删除，共享模型与声线已保留`,
+      )
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '角色删除失败')
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -225,17 +266,27 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
             {loading && <p className="muted">正在读取磁盘角色目录…</p>}
             {!loading && characters.length === 0 && <p className="muted">尚未发现可用角色。</p>}
             {characters.map(character => (
-              <button
-                key={character.id}
-                className={`character-library-card ${character.id === activeId ? 'is-active' : ''}`}
-                onClick={() => { void activate(character).catch(() => {}) }}
-              >
-                <span><strong>{character.name}</strong><small>{character.id}</small></span>
-                <span className="character-library-meta">
-                  {character.replyLanguage.toUpperCase()} · {character.live2dModel} · {character.voiceConfigured ? '声线就绪' : '声线缺失'}
-                </span>
-                <em>{character.id === activeId ? '使用中' : '切换'}</em>
-              </button>
+              <div className="character-library-row" key={character.id}>
+                <button
+                  className={`character-library-card ${character.id === activeId ? 'is-active' : ''}`}
+                  onClick={() => { void activate(character).catch(() => {}) }}
+                >
+                  <span><strong>{character.name}</strong><small>{character.id}</small></span>
+                  <span className="character-library-meta">
+                    {character.replyLanguage.toUpperCase()} · {character.live2dModel} · {character.voiceConfigured ? '声线就绪' : '声线缺失'}
+                  </span>
+                  <em>{character.id === activeId ? '使用中' : '切换'}</em>
+                </button>
+                <button
+                  className="character-delete-button"
+                  disabled={busy || characters.length <= 1}
+                  onClick={() => { void removeCharacter(character) }}
+                  title="删除角色（保留共享模型与声线）"
+                  aria-label={`删除角色 ${character.name}`}
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
             ))}
           </div>
 

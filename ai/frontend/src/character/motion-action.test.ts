@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   compileMotionAction,
+  compileMotionPlanForModel,
   MOTION_PRIMITIVES,
   normalizeMotionAction,
   validateMotionPlan,
@@ -91,4 +92,16 @@ test('unrigged appendage gestures are not advertised as safe primitives', () => 
     durationMs: 1000,
     steps: [{ atMs: 0, durationMs: 800, primitive: 'arm_wave', intensity: 0.8 }],
   }), /primitive/i)
+})
+
+test('Design Genius compiler adds restrained torso load without writing physics outputs', () => {
+  const preset = compileMotionPlanForModel({
+    durationMs: 900,
+    steps: [{ atMs: 0, durationMs: 700, primitive: 'nod', intensity: 0.7 }],
+  }, 'ai_turn', 'Design_genius_White')
+
+  assert.ok(preset)
+  assert.ok(preset!.keyframes.some(frame => frame.parameter === 'body.y'))
+  assert.equal(preset!.keyframes.some(frame => frame.parameter.startsWith('Param')), false)
+  assert.equal(preset!.keyframes.some(frame => frame.parameter.includes('tail')), false)
 })

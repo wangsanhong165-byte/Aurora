@@ -1,0 +1,143 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import { PerformanceDirector } from './performance/PerformanceDirector.ts'
+import type { MotionPlan } from './MotionAction.ts'
+
+const base = {
+  turnId: 'turn-1',
+  emotion: 'happy',
+  behavior: 'speak',
+  intensity: 0.55,
+  attention: 'user' as const,
+  energy: 0.55,
+}
+
+test('speech segments are anchored to actual playback duration', () => {
+  let now = 1_000
+  const director = new PerformanceDirector(() => now)
+  director.stage(base, [
+    { text: '短句。', emotion: 'happy', behavior: 'speak' },
+    { text: '这是明显更长的第二句话，用来验证按文本权重分配真实音频时间。', emotion: 'playful', behavior: 'speak' },
+  ])
+
+  assert.deepEqual(director.update(), [], 'intent should wait briefly for real audio timing')
+  director.onAudioStart('turn-1', 4_000)
+  assert.equal(director.update()[0]?.emotion, 'happy')
+
+  now += 700
+  assert.deepEqual(director.update(), [])
+  now += 500
+  assert.equal(director.update()[0]?.emotion, 'playful')
+})
+
+test('a newer turn cancels all pending cues from the superseded turn', () => {
+  let now = 0
+  const director = new PerformanceDirector(() => now)
+  director.stage(base, [
+    { text: 'first', emotion: 'happy', behavior: 'speak' },
+    { text: 'second', emotion: 'surprised', behavior: 'speak' },
+  ])
+  director.onAudioStart('turn-1', 2_000)
+  assert.equal(director.update().length, 1)
+
+  director.stage({ ...base, turnId: 'turn-2', emotion: 'calm' }, [
+    { text: 'replacement', emotion: 'calm', behavior: 'speak' },
+  ])
+  director.onAudioStart('turn-2', 800)
+  assert.equal(director.update()[0]?.turnId, 'turn-2')
+
+  now = 3_000
+  assert.equal(director.update().some(cue => cue.turnId === 'turn-1'), false)
+})
+
+test('repeated LLM gestures are suppressed inside the Soullink-style repeat window', () => {
+  let now = 0
+  const director = new PerformanceDirector(() => now, { repeatWindowMs: 6_000 })
+  const motionPlan: MotionPlan = {
+    durationMs: 800,
+    steps: [{ atMs: 0, durationMs: 600, primitive: 'nod', intensity: 0.6 }],
+  }
+
+  director.stage({ ...base, motionPlan })
+  now = 300
+  const first = director.update()[0]
+  assert.ok(first.motionPlan)
+
+  now = 1_000
+  director.stage({ ...base, turnId: 'turn-2', motionPlan })
+  now = 1_300
+  const repeated = director.update()[0]
+  assert.equal(repeated.motionPlan, undefined)
+
+  now = 7_100
+  director.stage({ ...base, turnId: 'turn-3', motionPlan })
+  now = 7_400
+  assert.ok(director.update()[0].motionPlan)
+})
+
+test('audio end drops future speech cues and stale audio cannot revive them', () => {
+  let now = 0
+  const director = new PerformanceDirector(() => now)
+  director.stage(base, [
+    { text: 'one', emotion: 'happy', behavior: 'speak' },
+    { text: 'two', emotion: 'sad', behavior: 'speak' },
+  ])
+  director.onAudioStart('turn-1', 3_000)
+  assert.equal(director.update().length, 1)
+
+  director.onAudioEnd('turn-1')
+  now = 4_000
+  assert.deepEqual(director.update(), [])
+  director.onAudioStart('turn-old', 1_000)
+  assert.deepEqual(director.update(), [])
+})
+
+test('fast audio decode is retained when playback starts before intent delivery', () => {
+  let now = 500
+  const director = new PerformanceDirector(() => now)
+  director.onAudioStart('turn-1', 2_400)
+  now = 520
+  director.stage(base, [
+    { text: 'first', emotion: 'happy', behavior: 'speak' },
+    { text: 'second sentence', emotion: 'surprised', behavior: 'speak' },
+  ])
+
+  assert.equal(director.update()[0]?.emotion, 'happy')
+})
+
+test('late audio timing does not replay a fallback cue that already fired', () => {
+  let now = 0
+  const director = new PerformanceDirector(() => now, { audioWaitMs: 240 })
+  director.stage(base, [
+    { text: 'first', emotion: 'happy', behavior: 'speak' },
+    { text: 'second', emotion: 'surprised', behavior: 'speak' },
+  ])
+
+  now = 260
+  assert.equal(director.update()[0]?.emotion, 'happy')
+
+  now = 400
+  director.onAudioStart('turn-1', 2_000)
+  assert.deepEqual(director.update(), [], 'the first semantic beat must not fire twice')
+
+  now = 1_400
+  assert.equal(director.update()[0]?.emotion, 'surprised')
+})
+
+test('emotionally marked speech gets one subtle local gesture when the LLM omits motion', () => {
+  let now = 0
+  const director = new PerformanceDirector(() => now)
+  director.stage(base)
+  now = 300
+  const expressive = director.update()[0]
+
+  assert.ok(expressive.motionPlan)
+  assert.equal(expressive.motionPlan!.steps.length, 1)
+  assert.ok(expressive.motionPlan!.steps[0].intensity <= 0.55)
+
+  now = 1_000
+  director.stage({ ...base, turnId: 'turn-neutral', emotion: 'neutral' })
+  now = 1_300
+  assert.equal(director.update()[0].motionPlan, undefined)
+})

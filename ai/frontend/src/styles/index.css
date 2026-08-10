@@ -40,7 +40,11 @@
 .character-manager h2, .character-manager h3 { margin: 0; }
 .character-manager-header p, .character-import-note, .character-manager .muted { margin: 6px 0 0; color: var(--text-secondary); font-size: 12px; line-height: 1.55; }
 .character-card-list { display: grid; gap: 8px; margin: 14px 0; }
+.character-library-row { display: grid; grid-template-columns: minmax(0, 1fr) 34px; gap: 7px; align-items: stretch; }
 .character-library-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; width: 100%; padding: 12px; color: inherit; text-align: left; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 10px; cursor: pointer; }
+.character-delete-button { display: grid; place-items: center; border: 1px solid var(--border-color); border-radius: 9px; background: var(--bg-secondary); color: var(--text-secondary); cursor: pointer; }
+.character-delete-button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--danger) 55%, var(--border-color)); color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--bg-secondary)); }
+.character-delete-button:disabled { cursor: not-allowed; opacity: 0.35; }
 .character-library-card:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-color)); }
 .character-library-card.is-active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 9%, var(--bg-secondary)); }
 .character-library-card.is-static { cursor: default; }

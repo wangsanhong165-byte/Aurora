@@ -173,6 +173,7 @@ def main() -> int:
 
     result = {
         "sampleCount": len(samples),
+        "valid": len(samples) >= 2,
         "durationSeconds": args.duration,
         "jumpThreshold": args.jump_threshold,
         "jumps": jumps,
@@ -186,7 +187,7 @@ def main() -> int:
         },
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 1 if jumps else 0
+    return 1 if jumps or len(samples) < 2 else 0
 
 
 if __name__ == "__main__":

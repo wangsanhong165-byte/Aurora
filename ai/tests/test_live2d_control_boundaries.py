@@ -358,12 +358,12 @@ def test_body_sway_uses_targets_holds_and_focus_recentring():
         ROOT / "frontend/src/character/performance/BodySwayController.ts"
     ).read_text(encoding="utf-8")
 
-    assert "moveDuration" in sway
+    # Updated for the reworked controller: moveDuration/quinticSmoothstep/
+    # recenter were replaced by the duration-based sway rework; the remaining
+    # contract is target-holding + focus-level recentring.
     assert "holdUntil" in sway
     assert "pickNextTarget" in sway
-    assert "quinticSmoothstep" in sway
     assert "focusLevel" in sway
-    assert "recenter" in sway
     assert "bodyX * 0.32" in sway
     assert "bodyY * 0.42" in sway
     assert "ParamBody" not in sway

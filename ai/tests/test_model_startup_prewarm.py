@@ -41,7 +41,7 @@ def test_manifest_declares_memory_safe_gpu_service_order():
     assert manifest["tts"]["depends_on"] == ["gsvi"]
     assert "warmup" in manifest["tts"]
     assert manifest["asr"]["depends_on"] == ["tts"]
-    assert manifest["bridge"]["depends_on"] == ["llm", "memory", "tts", "asr"]
+    assert manifest["bridge"]["depends_on"] == ["llm"]
     assert manifest["gsvi"]["readiness"] is True
     assert manifest["gsvi"]["command"]["executable"] == "{python}"
     assert manifest["gsvi"]["env"]["PATH"].startswith("{python_dir};")
@@ -51,7 +51,10 @@ def test_manifest_declares_memory_safe_gpu_service_order():
             ROOT / "config/services.json",
         ).for_profile("electron")
     ]
-    assert ordered.index("gsvi") < ordered.index("tts") < ordered.index("asr") < ordered.index("bridge")
+    # Voice chain keeps its ordering, and bridge (text) follows llm without
+    # waiting on voice services, so a voice failure cannot abort text chat.
+    assert ordered.index("gsvi") < ordered.index("tts") < ordered.index("asr")
+    assert ordered.index("llm") < ordered.index("bridge")
 
 
 def test_bridge_timeout_covers_character_runtime_initialization():

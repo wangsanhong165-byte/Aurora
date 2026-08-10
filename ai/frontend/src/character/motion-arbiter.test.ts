@@ -155,6 +155,25 @@ test('LLM motion preempts the lower-priority speaking background', () => {
   )
 })
 
+test('semantic motion can start after the previous thinking state releases its channels', () => {
+  const arbiter = new MotionArbiter(() => 0)
+  arbiter.setPresets(presets)
+  assert.equal(arbiter.request({
+    name: 'nod', owner: 'state:turn-1', source: 'system', priority: 55,
+    channels: ['head', 'gaze'], turnId: 'turn-1',
+  }), true)
+  assert.equal(arbiter.request({
+    name: 'sway', owner: 'intent-plan:turn-1', source: 'ai', priority: 52,
+    channels: ['full'], turnId: 'turn-1',
+  }), false)
+
+  assert.equal(arbiter.releaseState('turn-1'), true)
+  assert.equal(arbiter.request({
+    name: 'sway', owner: 'intent-plan:turn-1', source: 'ai', priority: 52,
+    channels: ['full'], turnId: 'turn-1',
+  }), true)
+})
+
 test('active motion ownership is exposed per channel instead of suppressing all tracking', () => {
   const arbiter = new MotionArbiter(() => 0)
   arbiter.setPresets(presets)

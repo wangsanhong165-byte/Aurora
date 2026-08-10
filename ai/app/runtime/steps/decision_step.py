@@ -70,6 +70,7 @@ class DecisionStep(Step):
         from app.runtime.context_budget import ContextBudget
         context_budget = ContextBudget()
         messages, budget_report = context_budget.fit_messages(messages)
+        ctx.prompt_sources = [str(message.get("_source_id", "")) for message in messages]
         ctx.context_budget = budget_report
 
         user_text = ctx.user_text or ctx.event.payload.get("text", "")
@@ -86,9 +87,32 @@ class DecisionStep(Step):
                 logger.warning("Failed to list tools — tool calling disabled")
 
         # Delegate tool loop to ToolCoordinator
+        def _sync_prompt_sources(msgs) -> None:
+            resolved: list[str] = []
+            for message in msgs:
+                role = str(message.get("role", ""))
+                known = str(message.get("_source_id", ""))
+                if known:
+                    resolved.append(known)
+                elif role == "tool":
+                    resolved.append("tool_result")
+                elif role == "assistant":
+                    resolved.append("assistant_tool_call")
+                elif role == "user":
+                    resolved.append("user_input")
+                elif role == "system":
+                    resolved.append("repair_instruction")
+                else:
+                    resolved.append(role or "unknown")
+            ctx.prompt_sources = resolved
+
         def _llm_gen(msgs, tools=None):
-            ctx.prompt_messages = deepcopy(msgs)
-            return self.llm.generate(msgs, tools=tools)
+            _sync_prompt_sources(msgs)
+            clean_messages = deepcopy(msgs)
+            for message in clean_messages:
+                message.pop("_source_id", None)
+            ctx.prompt_messages = deepcopy(clean_messages)
+            return self.llm.generate(clean_messages, tools=tools)
 
         messages, response, accumulated_usage, final_reply = await self.tool_coordinator.execute_loop(
             messages, ctx, tool_schemas, context_budget, _llm_gen
@@ -106,14 +130,21 @@ class DecisionStep(Step):
             })
             messages.append({
                 "role": "system",
+                "_source_id": "repair_instruction",
                 "content": (
                     "Your previous response was invalid structured output. "
                     "Repair it now. Return only the required valid JSON object; "
                     "preserve the intended meaning and do not call tools."
                 ),
             })
-            ctx.prompt_messages = deepcopy(messages)
-            repair = await self.llm.generate(messages, tools=None, temperature=0)
+            _sync_prompt_sources(messages)
+            clean_messages = deepcopy(messages)
+            for message in clean_messages:
+                message.pop("_source_id", None)
+            ctx.prompt_messages = deepcopy(clean_messages)
+            repair = await self.llm.generate(
+                clean_messages, tools=None, temperature=0
+            )
             accumulated_usage.add(repair.usage)
             response = repair
             safe = ResponseValidator().validate(

@@ -21,6 +21,14 @@ from app.config_manager.service_config import service_config
 from app.modules.tts.base import BaseTTS
 from app.modules.tts.factory import TTSFactory
 
+
+# GSVI is a loopback service. Lifecycle-launched processes may inherit a
+# desktop HTTP proxy, so using requests' default environment lookup can route
+# 127.0.0.1 traffic through that proxy and turn a healthy local service into a
+# spurious 502. Keep this transport local without changing global proxy state.
+_local_session = requests.Session()
+_local_session.trust_env = False
+
 # ---- Language mapping for v2Pro API ----
 _TEXT_LANG_MAP: dict[str, str] = {
     "zh": "zh", "cn": "zh", "chinese": "zh",
@@ -65,7 +73,7 @@ def _set_model_weights(base: str, gpt_path: str, sovits_path: str) -> None:
 
     if gpt_path and gpt_path != _last_gpt_weights:
         try:
-            r = requests.get(f"{base}/set_gpt_weights", params={"weights_path": gpt_path}, timeout=10)
+            r = _local_session.get(f"{base}/set_gpt_weights", params={"weights_path": gpt_path}, timeout=10)
             if r.status_code == 200:
                 _last_gpt_weights = gpt_path
                 print(f"[GSVI-v2pro] set_gpt_weights OK: {gpt_path}")
@@ -76,7 +84,7 @@ def _set_model_weights(base: str, gpt_path: str, sovits_path: str) -> None:
 
     if sovits_path and sovits_path != _last_sovits_weights:
         try:
-            r = requests.get(f"{base}/set_sovits_weights", params={"weights_path": sovits_path}, timeout=10)
+            r = _local_session.get(f"{base}/set_sovits_weights", params={"weights_path": sovits_path}, timeout=10)
             if r.status_code == 200:
                 _last_sovits_weights = sovits_path
                 print(f"[GSVI-v2pro] set_sovits_weights OK: {sovits_path}")
@@ -176,7 +184,7 @@ class GSVIV2TTS(BaseTTS):
         print(f'[GSVI-v2pro] text="{text_preview}"')
 
         try:
-            r = requests.post(full_url, json=payload, timeout=self._timeout)
+            r = _local_session.post(full_url, json=payload, timeout=self._timeout)
         except Exception as exc:
             print(f"[GSVI-v2pro] request error: {exc}")
             raise

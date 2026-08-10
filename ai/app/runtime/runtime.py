@@ -9,11 +9,13 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import logging
 import time
 import uuid
 from copy import deepcopy
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from app.core.initiative_queue import initiative_queue
@@ -48,6 +50,7 @@ class CharacterRuntime:
         self.initiative_checker = None  # InitiativeChecker, set during _setup_pipeline
         self.screen_watcher = None      # ScreenWatcher, set during _setup_pipeline
         self._character_registry = None
+        self._conversations_by_character: dict[str, Any] = {}
         self._initiative_cooldown: float = 120.0
         self._last_initiative_time: float = 0.0
         self._initiative_queue = InitiativeQueue()
@@ -81,8 +84,15 @@ class CharacterRuntime:
 
         character = self._load_character()
         from app.domain.character_self import CharacterSelf
+        # Restore persisted dynamic state BEFORE constructing CharacterSelf so
+        # the initial snapshot (and first-turn diff) reflects real state.
+        memory_provider = self.providers.get("memory")
+        if memory_provider is not None and hasattr(memory_provider, "restore_character"):
+            memory_provider.restore_character(character)
         self.character_self = CharacterSelf(character)
         self.conversation = Conversation()
+        self._conversations_by_character[character.id] = self.conversation
+        core_state_store.set("character", character)
 
         for step in self._build_pipeline_steps(self.providers, character):
             if step is not None:
@@ -105,9 +115,6 @@ class CharacterRuntime:
 
         # ── Background services ─────────────────────────────────────
         self._init_memory_ticker()
-        memory_provider = self.providers.get("memory")
-        if memory_provider is not None and hasattr(memory_provider, "restore_character"):
-            memory_provider.restore_character(character)
         self._init_initiative_system()
         self._init_screen_watcher()
 
@@ -160,26 +167,47 @@ class CharacterRuntime:
         Returns dict with keys: character_id, name, error (if failed).
         Bridge uses this instead of directly accessing CharacterRegistry.
         """
-        from app.character.registry import CharacterRegistry
         from app.domain.character import Character
 
         try:
-            reg = CharacterRegistry()
-            reg.activate(character_id)
-            self._character_registry = reg
-            card = reg.active
+            if not self._runtime_idle:
+                return {"character_id": character_id, "error": "runtime is processing a turn"}
+            reg = self._character_registry
+            if reg is None:
+                from app.character.registry import CharacterRegistry
+                reg = CharacterRegistry()
+                self._character_registry = reg
+            else:
+                reg.refresh()
+            card = reg.get(character_id)
             new_character = Character(card)
-            from app.domain.character_self import CharacterSelf
-            self.character_self = CharacterSelf(new_character)
             memory_provider = self.providers.get("memory")
             if memory_provider is not None and hasattr(memory_provider, "restore_character"):
                 memory_provider.restore_character(new_character)
+            from app.domain.character_self import CharacterSelf
+            new_character_self = CharacterSelf(new_character)
+            from app.domain.conversation import Conversation
+            new_conversation = self._conversations_by_character.get(character_id)
+            if new_conversation is None:
+                new_conversation = Conversation()
+
+            # Commit only after every fallible load/restore step has succeeded.
+            reg.activate(character_id)
+            self.character_self = new_character_self
+            self.conversation = new_conversation
+            self._conversations_by_character[character_id] = new_conversation
             if hasattr(self, "_character_step"):
                 self._character_step.set_character(new_character)
-            name = card.get("name", {}).get("zh", card.get("id", "AI"))
-            # Notify memory compiler of character switch
-            from app.memory import on_character_switch
-            on_character_switch(None, character_id)
+            core_state_store.set("character", new_character)
+            self._last_prompt_snapshot = None
+            name_map = card.get("name", {})
+            name = (
+                name_map.get("zh") or name_map.get("en") or card.get("id", "AI")
+                if isinstance(name_map, dict)
+                else str(name_map or card.get("id", "AI"))
+            )
+            if memory_provider is not None and hasattr(memory_provider, "activate_character"):
+                memory_provider.activate_character(character_id)
             return {"character_id": character_id, "name": name}
         except Exception as exc:
             return {"character_id": character_id, "error": str(exc)}
@@ -193,7 +221,12 @@ class CharacterRuntime:
             return {"character_id": "default", "name": "Assistant", "card": {}}
         cid = self._character_registry.active_id or ""
         card = self._character_registry.active or {}
-        name = card.get("name", {}).get("zh", card.get("id", "AI"))
+        name_map = card.get("name", {})
+        name = (
+            name_map.get("zh") or name_map.get("en") or card.get("id", "AI")
+            if isinstance(name_map, dict)
+            else str(name_map or card.get("id", "AI"))
+        )
         return {"character_id": cid, "name": name, "card": card}
 
     def _load_character(self) -> Character:
@@ -238,19 +271,51 @@ class CharacterRuntime:
         """
         from app.services.initiative_checker import InitiativeChecker
 
+        proactive, idle_cfg = self._load_proactive_settings()
         idle_sec = float(os.environ.get("INITIATIVE_IDLE_SEC", "300"))
+        if idle_cfg is not None:
+            idle_sec = idle_cfg
         check_sec = float(os.environ.get("INITIATIVE_CHECK_SEC", "15"))
 
         self.initiative_checker = InitiativeChecker(
-            interval=check_sec, idle_threshold=idle_sec,
+            interval=check_sec,
+            idle_threshold=idle_sec,
+            character_getter=lambda: getattr(
+                getattr(self, "_character_step", None), "character", None
+            ),
         )
         self.initiative_checker.on_initiative = self._on_initiative
-        self.initiative_checker.start()
+        # Gate startup on the persisted Proactive switch: if the user disabled
+        # it, the checker stays stopped until the frontend re-enables it
+        # (set_proactive(false) -> stop; true -> start).
+        if proactive:
+            self.initiative_checker.start()
         # Also start the initiative buffer expiry thread
         from app.core.initiative_buffer import initiative_buffer
         initiative_buffer.start_expiry()
         # Start the asyncio drain loop
         self._initiative_task = self._start_initiative_drain()
+
+    def _load_proactive_settings(self, path: Path | None = None) -> tuple[bool, float | None]:
+        """Read the persisted Proactive switch + idle seconds.
+
+        Returns (proactive, idle_seconds_or_None). Defaults keep the current
+        behavior (proactive enabled, idle from env) when settings.json is
+        missing or malformed.
+        """
+        proactive = True
+        idle: float | None = None
+        try:
+            path = path or (Path(__file__).resolve().parents[2] / "data" / "settings.json")
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                proactive = bool(data.get("proactive", True))
+                raw_idle = data.get("proactiveIdleTime")
+                if isinstance(raw_idle, (int, float)) and raw_idle >= 10:
+                    idle = float(raw_idle)
+        except (OSError, json.JSONDecodeError):
+            pass
+        return proactive, idle
 
     def register_proactive_handler(
         self, handler: Callable[[CharacterTurn], Awaitable[None]]
@@ -326,10 +391,14 @@ class CharacterRuntime:
         # Step 1: compute initiative candidates from live state
         idle = time.time() - self.initiative_checker._last_interaction
         ctx = core_state_store.snapshot()
+        char = getattr(getattr(self, "_character_step", None), "character", None)
+        if char is None:
+            char = ctx.get("character") or core_state_store.get("character")
         candidates = compute_candidates(
             idle, mood_tracker.mood,
             activity=ctx.get("activity", ""),
             events=events,
+            character_mood=str(getattr(getattr(char, "mood", None), "current", "")),
         )
 
         # Step 2: decide whether to speak
@@ -341,9 +410,6 @@ class CharacterRuntime:
         # Enrich the proactive topic with durable memory when one is valuable.
         memory_provider = self.providers.get("memory")
         store = getattr(memory_provider, "_store", None)
-        char = getattr(getattr(self, "_character_step", None), "character", None)
-        if char is None:
-            char = ctx.get("character") or core_state_store.get("character")
         char_id = getattr(char, "id", "") if char is not None else ""
         memory_topic = None
         if store is not None:
@@ -602,6 +668,7 @@ class CharacterRuntime:
                 "created_at": turn.created_at,
                 "character_id": str(getattr(turn.character, "id", "")),
                 "messages": deepcopy(turn.prompt_messages),
+                "source_ids": list(turn.prompt_sources),
                 "context_budget": deepcopy(turn.context_budget),
             }
 
@@ -617,9 +684,11 @@ class CharacterRuntime:
                 turn.context_budget,
             )
         if memory_provider is not None and not turn.error and hasattr(memory_provider, "notify_turn"):
-            memory_provider.notify_turn()
+            memory_provider.notify_turn(getattr(character, "id", ""))
 
         if not turn.error:
+            if turn.input_origin == "user":
+                mood_tracker.update(turn.user_text, turn.reply_text)
             self.character_self.sync_from_character()
             self.character_self.record_interaction(
                 turn.user_text or turn.event.payload.get("display_text", ""),

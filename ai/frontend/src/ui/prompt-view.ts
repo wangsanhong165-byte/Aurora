@@ -116,8 +116,12 @@ export function describePromptMessage(message: PromptMessageLike): PromptMessage
     character_state: { kind: 'state', title: '角色状态', badge: '状态', defaultOpen: false },
     output_protocol: { kind: 'protocol', title: '输出协议', badge: '协议', defaultOpen: false },
     user_input: { kind: 'user', title: '本轮输入', badge: '输入', defaultOpen: true },
+    user_history: { kind: 'user', title: '历史输入', badge: '历史', defaultOpen: false },
     assistant_history: { kind: 'assistant', title: '历史回复', badge: '回复', defaultOpen: false },
+    assistant_tool_call: { kind: 'assistant', title: '工具调用请求', badge: '工具', defaultOpen: false },
     tool_result: { kind: 'tool', title: '工具结果', badge: '工具', defaultOpen: false },
+    tool_budget_instruction: { kind: 'protocol', title: '工具轮次限制', badge: '协议', defaultOpen: false },
+    repair_instruction: { kind: 'protocol', title: '格式修复指令', badge: '协议', defaultOpen: false },
   }
   const sourceDescriptor = message.source_id ? sourceDescriptors[message.source_id] : undefined
   if (sourceDescriptor) {

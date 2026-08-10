@@ -5,4 +5,4 @@ characters:
 - id: alice
   name: Alice
   path: characters/alice/character.json
-default: monika
+default: alice

@@ -50,7 +50,7 @@ class MemoryInterface(ABC):
         ...
 
     @abstractmethod
-    def notify_turn(self) -> None:
+    def notify_turn(self, character_id: str = "") -> None:
         """Signal that a conversation turn has been processed.
 
         Called by CharacterRuntime after each successful turn.
@@ -90,5 +90,5 @@ class MockMemory(MemoryInterface):
     def shutdown(self) -> None:
         pass
 
-    def notify_turn(self) -> None:
+    def notify_turn(self, character_id: str = "") -> None:
         pass

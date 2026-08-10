@@ -428,6 +428,18 @@
           "CharacterIntentSegmentPayload": {
             "additionalProperties": false,
             "properties": {
+              "text": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Text"
+              },
               "emotion": {
                 "anyOf": [
                   {

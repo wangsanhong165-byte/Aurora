@@ -17,6 +17,16 @@ class _Response:
         return self._body
 
 
+class _FakeOpener:
+    """Mimics urllib.request.build_opener(...).open() used by HealthProbe."""
+
+    def __init__(self, response):
+        self._response = response
+
+    def open(self, *_args, **_kwargs):
+        return self._response
+
+
 def _service(*, readiness: bool = False) -> Service:
     return Service(
         name="voice",
@@ -30,8 +40,8 @@ def _service(*, readiness: bool = False) -> Service:
 
 def test_configured_health_endpoint_must_return_200(monkeypatch):
     monkeypatch.setattr(
-        "app.lifecycle.health.request.urlopen",
-        lambda *_args, **_kwargs: _Response(404),
+        "app.lifecycle.health.request.build_opener",
+        lambda *_args, **_kwargs: _FakeOpener(_Response(404)),
     )
 
     assert HealthProbe().ready(_service()) is False
@@ -39,8 +49,8 @@ def test_configured_health_endpoint_must_return_200(monkeypatch):
 
 def test_readiness_endpoint_must_confirm_model_is_ready(monkeypatch):
     monkeypatch.setattr(
-        "app.lifecycle.health.request.urlopen",
-        lambda *_args, **_kwargs: _Response(200, b'{"ready": false}'),
+        "app.lifecycle.health.request.build_opener",
+        lambda *_args, **_kwargs: _FakeOpener(_Response(200, b'{"ready": false}')),
     )
 
     assert HealthProbe().ready(_service(readiness=True)) is False

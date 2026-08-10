@@ -80,7 +80,7 @@ class CharacterIntent:
             or isinstance(duration, bool)
             or not 300 <= duration <= 8000
             or not isinstance(steps, list)
-            or not 1 <= len(steps) <= 16
+            or not 1 <= len(steps) <= 3
         ):
             return None
 

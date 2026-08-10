@@ -107,6 +107,49 @@ class CharacterCatalog:
         with _IMPORT_LOCK:
             return self._create_locked(raw_spec)
 
+    def delete(self, character_id: str) -> dict[str, Any]:
+        """Delete one character definition while preserving shared assets.
+
+        Live2D models and voice packs are system-level resources and may be
+        referenced by other characters, so this operation only removes the
+        character card directory and its index entry.
+        """
+        with _IMPORT_LOCK:
+            character_id = str(character_id or "").strip().lower()
+            if not self._ID.fullmatch(character_id):
+                raise ValueError("invalid character id")
+            installed = self._list_locked()
+            ids = [str(item.get("id", "")) for item in installed]
+            if character_id not in ids:
+                raise KeyError(f"character not found: {character_id}")
+            if len(ids) <= 1:
+                raise ValueError("cannot delete the last character")
+
+            character_dir = self._characters_dir / character_id
+            previous_index = (
+                self._index_path.read_bytes() if self._index_path.exists() else None
+            )
+            staging_root = self._base / "data" / "delete-staging"
+            staging_root.mkdir(parents=True, exist_ok=True)
+            staged_dir = Path(tempfile.mkdtemp(
+                prefix=f".{character_id}-", dir=staging_root
+            )) / "character"
+            fallback_id = next(item for item in ids if item != character_id)
+            try:
+                character_dir.replace(staged_dir)
+                self._remove_from_index(character_id, fallback_id)
+                shutil.rmtree(staged_dir.parent)
+            except Exception:
+                if staged_dir.exists() and not character_dir.exists():
+                    staged_dir.replace(character_dir)
+                if previous_index is None:
+                    self._index_path.unlink(missing_ok=True)
+                else:
+                    self._index_path.write_bytes(previous_index)
+                shutil.rmtree(staged_dir.parent, ignore_errors=True)
+                raise
+            return {"id": character_id, "fallback_character_id": fallback_id}
+
     def _create_locked(self, raw_spec: dict[str, Any]) -> dict[str, Any]:
         if self._is_reference_spec(raw_spec):
             return self._create_reference(raw_spec)
@@ -642,6 +685,26 @@ class CharacterCatalog:
         if index.get("default") == character_id:
             return
         index["default"] = character_id
+        self._atomic_text(
+            self._index_path,
+            yaml.safe_dump(index, allow_unicode=True, sort_keys=False),
+        )
+
+    def _remove_from_index(self, character_id: str, fallback_id: str) -> None:
+        index: dict[str, Any] = {}
+        if self._index_path.exists():
+            loaded = yaml.safe_load(self._index_path.read_text("utf-8"))
+            if isinstance(loaded, dict):
+                index = loaded
+        characters = index.get("characters", [])
+        if not isinstance(characters, list):
+            characters = []
+        index["characters"] = [
+            item for item in characters
+            if not isinstance(item, dict) or item.get("id") != character_id
+        ]
+        if index.get("default") == character_id:
+            index["default"] = fallback_id
         self._atomic_text(
             self._index_path,
             yaml.safe_dump(index, allow_unicode=True, sort_keys=False),

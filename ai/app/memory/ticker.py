@@ -11,31 +11,52 @@ All operations run as fire-and-forget background tasks.
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
+import functools
+import logging
+import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Callable
 
 from app.memory.store import memory_store
 from app.memory.extractor import run_extraction_pipeline
+from app.memory.reviewer import review_turn
 from app.memory.compiler import (
     compile_today_and_assemble,
     compile_and_assemble,
     set_llm_adapter,
+    write_conversation_summary,
+    clear_conversation_summary,
 )
 
 _TURNS_PER_SUMMARY = 10
+_REVIEW_INTERVAL = 3
+_REVIEW_MIN_INTERVAL_SEC = 20
 _DAILY_CHECK_SECONDS = 3600  # check every hour for date change
+logger = logging.getLogger("memory.ticker")
 
 
 class MemoryTicker:
     """Turn-based memory scheduler (fire-and-forget background tasks)."""
 
-    def __init__(self, llm_adapter: Any = None):
+    def __init__(
+        self,
+        llm_adapter: Any = None,
+        character_ids_getter: Callable[[], list[str]] | None = None,
+        store: Any = None,
+    ):
         self._llm_adapter = llm_adapter
-        self._turn_count = 0
+        self._turn_counts: dict[str, int] = {}
         self._last_date = datetime.now(timezone.utc).date()
-        self._last_extraction_time = 0.0  # throttle: min seconds between extractions
+        self._last_extraction_time: dict[str, float] = {}
+        self._last_review_time: dict[str, float] = {}
+        self._character_ids_getter = character_ids_getter or (lambda: [])
+        self._store = store or memory_store
+        self._background_running = False  # one worker; distinct triggers are queued
+        self._background_pending: OrderedDict[tuple, Callable] = OrderedDict()
+        self._background_worker: Optional[threading.Thread] = None
         self._stopped = False
         self._timer: Optional[threading.Thread] = None
         self._lock = threading.Lock()
@@ -46,29 +67,43 @@ class MemoryTicker:
 
     # ── public API ────────────────────────────────────────────────
 
-    def notify_turn(self):
+    def notify_turn(self, character_id: str = ""):
         """Called after each completed turn."""
         if self._stopped:
             return
         if not self._llm_adapter:
             return
 
+        char_id = str(character_id or self._get_char_id()).strip()
+        if not char_id:
+            return
         with self._lock:
-            self._turn_count += 1
-            count = self._turn_count
+            count = self._turn_counts.get(char_id, 0) + 1
+            self._turn_counts[char_id] = count
 
         # Check date change
         self._check_date_change()
 
+        # Every few turns: fine-grained self-review of the latest turn.
+        # Skip the turns the full extraction covers (re-extracted there).
+        if count % _REVIEW_INTERVAL == 0 and count % _TURNS_PER_SUMMARY != 0:
+            self._run_background(self._bound("_on_review", self._on_review, char_id))
+
         # Every N turns: run extraction + compile_today
         if count % _TURNS_PER_SUMMARY == 0:
-            self._run_background(self._on_turn_threshold)
+            self._run_background(
+                self._bound("_on_turn_threshold", self._on_turn_threshold, char_id)
+            )
 
-    def notify_session_end(self):
-        """Called when a session ends (e.g., user goes idle)."""
-        if self._stopped or not self._llm_adapter:
+    def regenerate(self, character_id: str) -> None:
+        """Regenerate one character's compiled files without blocking switch."""
+        char_id = str(character_id or "").strip()
+        if not char_id:
             return
-        self._run_background(self._on_session_end)
+        from app.memory.compiler import regenerate_for_character
+        self._run_background(
+            self._bound("regenerate_for_character", regenerate_for_character, char_id)
+        )
 
     def start(self):
         """Start the daily check timer."""
@@ -78,37 +113,122 @@ class MemoryTicker:
     def stop(self, wait: bool = False):
         """Stop the ticker."""
         self._stopped = True
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        with self._lock:
+            self._background_pending.clear()
+            worker = self._background_worker
+        if wait and worker is not None and worker is not threading.current_thread():
+            worker.join(timeout=5)
 
     # ── background tasks ──────────────────────────────────────────
 
     def _run_background(self, fn: Callable):
-        """Run a task in a background thread (fire-and-forget)."""
-        t = threading.Thread(target=fn, daemon=True)
+        """Run a task in a background thread (fire-and-forget).
+
+        Only one background LLM task runs at a time. Duplicate triggers for
+        the same operation and character are coalesced, while distinct work is
+        queued instead of being silently lost during another LLM call.
+        """
+        key = self._background_key(fn)
+        with self._lock:
+            if self._stopped:
+                return
+            if self._background_running:
+                self._background_pending[key] = fn
+                return
+            self._background_running = True
+
+        def _guarded():
+            current: Callable | None = fn
+            while current is not None:
+                try:
+                    current()
+                except Exception:
+                    logger.exception(
+                        "Background memory task failed: %s",
+                        getattr(current, "__name__", type(current).__name__),
+                    )
+                with self._lock:
+                    if self._stopped:
+                        self._background_pending.clear()
+                    if self._background_pending:
+                        _, current = self._background_pending.popitem(last=False)
+                    else:
+                        current = None
+                        self._background_running = False
+                        self._background_worker = None
+
+        t = threading.Thread(target=_guarded, daemon=True)
+        with self._lock:
+            self._background_worker = t
         t.start()
 
-    def _on_turn_threshold(self):
-        """Every N turns: extract facts + compile today."""
+    @staticmethod
+    def _background_key(fn: Callable) -> tuple:
+        args = getattr(fn, "args", ())
+        return (
+            getattr(fn, "__name__", type(fn).__name__),
+            tuple(repr(arg) for arg in args),
+        )
+
+    @staticmethod
+    def _bound(name: str, fn: Callable, *args) -> Callable:
+        task = functools.partial(fn, *args)
+        task.__name__ = name
+        return task
+
+    def _on_review(self, character_id: str = ""):
+        """Fine-grained post-turn self-review of the latest turn."""
         now = time.time()
-        if now - self._last_extraction_time < 30:
-            return
-        self._last_extraction_time = now
-
-        char_name = self._get_char_name()
-        stats = run_extraction_pipeline(
-            self._llm_adapter, character_name=char_name,
-            character_id=self._get_char_id(),
+        char_id = str(character_id or self._get_char_id()).strip()
+        with self._lock:
+            last = self._last_review_time.get(char_id, 0.0)
+            if now - last < _REVIEW_MIN_INTERVAL_SEC:
+                return
+            self._last_review_time[char_id] = now
+        review_turn(
+            self._llm_adapter,
+            character_id=char_id,
+            character_name=self._get_char_name(char_id),
+            store=self._store,
         )
-        if stats.get("facts_stored", 0) > 0 or stats.get("summary"):
-            compile_today_and_assemble()
 
-    def _on_session_end(self):
-        """Session ended: final extraction + compile today."""
-        char_name = self._get_char_name()
+    def _on_turn_threshold(self, character_id: str = ""):
+        """Every N turns: decay memories + extract facts + persist summary."""
+        now = time.time()
+        char_id = str(character_id or self._get_char_id()).strip()
+        with self._lock:
+            last = self._last_extraction_time.get(char_id, 0.0)
+            if now - last < 30:
+                return
+            self._last_extraction_time[char_id] = now
+
+        # Capture the character ONCE up front: a switch during the LLM call
+        # must not write one character's summary into another's file.
+        char_name = self._get_char_name(char_id)
+
+        # A1 decay runs here (background thread), not on the voice-loop path.
+        self._store.decay_memories(character_id=char_id)
+
         stats = run_extraction_pipeline(
-            self._llm_adapter, character_name=char_name,
-            character_id=self._get_char_id(),
+            self._llm_adapter, character_name=char_name, character_id=char_id,
+            store=self._store,
         )
-        compile_today_and_assemble()
+        summary = stats.get("summary", "")
+        summary_changed = not stats.get("summary_unchanged", False)
+        if summary:
+            if summary_changed:
+                write_conversation_summary(
+                    char_id,
+                    summary,
+                    through_log_id=int(stats.get("through_log_id", 0) or 0),
+                )
+        else:
+            clear_conversation_summary(char_id)
+        if stats.get("facts_stored", 0) > 0 or (summary and summary_changed):
+            compile_today_and_assemble(char_id)
 
     # ── daily job ─────────────────────────────────────────────────
 
@@ -121,7 +241,16 @@ class MemoryTicker:
 
     def _on_daily(self):
         """Daily batch: compile week + longterm + facts + assemble."""
-        compile_and_assemble()
+        retention_days = max(30, int(os.environ.get("MEMORY_LOG_RETENTION_DAYS", "180")))
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
+        for character_id in dict.fromkeys(self._character_ids_getter()):
+            if character_id:
+                self._store.decay_memories(character_id=character_id)
+                compile_and_assemble(character_id)
+                self._store.prune_character_history(character_id, cutoff)
+                self._store.delete_memories_before(
+                    cutoff, character_id=character_id
+                )
 
     def _daily_check(self):
         """Periodic timer to catch date changes during idle periods."""
@@ -136,11 +265,11 @@ class MemoryTicker:
 
     # ── recovery ──────────────────────────────────────────────────
 
-    def _get_char_name(self) -> str:
+    def _get_char_name(self, character_id: str = "") -> str:
         """Get active character display name for prompt generation."""
         try:
             from app.memory.compiler import get_active_char_id, _char_name_from_id
-            cid = get_active_char_id()
+            cid = character_id or get_active_char_id()
             return _char_name_from_id(cid)
         except Exception:
             return ""
@@ -153,13 +282,20 @@ class MemoryTicker:
         except Exception:
             return ""
 
-    def recover(self):
+    def recover(self, character_ids: list[str] | None = None):
         """Startup recovery: estimate unprocessed turns."""
         if not self._llm_adapter:
             return
-        turns = memory_store.recent_turns(_TURNS_PER_SUMMARY)
-        if len(turns) >= _TURNS_PER_SUMMARY // 2:
-            with self._lock:
-                self._turn_count = len(turns)
-            self._run_background(self._on_turn_threshold)
+        ids = character_ids or list(self._character_ids_getter())
+        for character_id in dict.fromkeys(ids):
+            turns = self._store.recent_turns(
+                _TURNS_PER_SUMMARY, character_id=character_id
+            )
+            completed_turns = len(turns) // 2
+            if completed_turns >= _TURNS_PER_SUMMARY // 2:
+                with self._lock:
+                    self._turn_counts[character_id] = completed_turns
+                self._run_background(self._bound(
+                    "_on_turn_threshold", self._on_turn_threshold, character_id
+                ))
 

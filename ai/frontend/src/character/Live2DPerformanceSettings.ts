@@ -1,7 +1,7 @@
 export type Live2DPerformanceMode = 'legacy' | 'enhanced' | 'calibration'
 
 /** Keep high-DPI canvases inside a predictable frame-time budget. */
-export const LIVE2D_RENDER_DPR_CAP = 1.25
+export const LIVE2D_RENDER_DPR_CAP = 2.0
 
 export function resolveLive2DRenderDpr(
   devicePixelRatio: unknown,

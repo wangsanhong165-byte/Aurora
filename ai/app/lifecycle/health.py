@@ -16,7 +16,9 @@ class HealthProbe:
             except OSError:
                 return False
         try:
-            with request.urlopen(
+            # Loopback probes must not be routed through a desktop HTTP proxy.
+            _opener = request.build_opener(request.ProxyHandler({}))
+            with _opener.open(
                 f"http://{service.host}:{service.port}{service.health}", timeout=2
             ) as response:
                 if response.status != 200:
@@ -24,7 +26,12 @@ class HealthProbe:
                 if service.readiness:
                     import json
                     payload = json.loads(response.read() or b"{}")
-                    return payload.get("ready", True) is not False
+                    if "ready" in payload:
+                        return payload.get("ready", True) is not False
+                    # GSVI /ready returns {"status": "ready"|"degraded", ...}
+                    # with no "ready" key; honor it so a not-yet-loaded model
+                    # is NOT reported as ready.
+                    return payload.get("status", "ready") != "degraded"
                 return True
         except Exception:
             return False

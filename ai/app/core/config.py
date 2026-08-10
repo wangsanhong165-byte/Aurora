@@ -7,7 +7,6 @@ from app.config_manager.service_config import service_config
 BASE_DIR = Path(__file__).resolve().parents[2]
 MODELS_DIR = BASE_DIR / "models"
 DEFAULT_AUDIO_PATH = BASE_DIR / "data" / "recordings" / "last_recording.wav"
-DEFAULT_MEMORY_PATH = BASE_DIR / "data" / "memory" / "memory.jsonl"
 DEFAULT_MODEL_DIR = MODELS_DIR / "asr" / "Qwen3-ASR-1.7B"
 DEFAULT_ENV_PATH = BASE_DIR / "config" / ".env"
 
@@ -15,7 +14,7 @@ RECORDER_URL = os.environ.get("RECORDER_URL", "http://127.0.0.1:8010")
 ASR_URL = os.environ.get("ASR_URL", service_config.url("asr"))
 LLM_URL = os.environ.get("LLM_URL", service_config.url("llm"))
 TTS_URL = os.environ.get("TTS_URL", service_config.url("tts"))
-MEMORY_URL = os.environ.get("MEMORY_URL", service_config.url("memory"))
+# MEMORY_URL removed: memory is embedded via SQLiteMemory, no standalone service.
 
 # ---- GSVI v2Pro (nvidia50) ----
 GSVI_DIR = MODELS_DIR / "tts" / "GPT-SoVITS-v2pro-20250604-nvidia50"

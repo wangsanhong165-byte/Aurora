@@ -52,7 +52,10 @@ export interface CompanionWorkspaceProps {
   onDeleteHistory: (uid: string) => void
   onCreateHistory: () => void
   onSettingChange: (key: string, value: unknown) => void
-  onCharacterActivate: (character: CharacterDescriptor) => Promise<void>
+  onCharacterActivate: (
+    character: CharacterDescriptor,
+    runtimeAlreadySwitched?: boolean,
+  ) => Promise<void>
   onAccessoryToggle: (label: string) => void
 }
 
@@ -88,9 +91,6 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
           onClose={() => {}}
           settings={props.settings}
           onSettingChange={props.onSettingChange}
-          accessoryParts={props.accessoryParts}
-          accessoryState={props.accessoryState}
-          onAccessoryToggle={props.onAccessoryToggle}
         />
       )
     }
@@ -100,6 +100,9 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
           <Live2DWorkbench
             settings={props.settings}
             onSettingChange={props.onSettingChange}
+            accessoryParts={props.accessoryParts}
+            accessoryState={props.accessoryState}
+            onAccessoryToggle={props.onAccessoryToggle}
           />
         </DrawerPanel>
       )

@@ -178,6 +178,10 @@ test('prompt messages receive semantic labels instead of repeated system labels'
     describePromptMessage({ role: 'system', source_id: 'language', content: '完全替换后的文本' }).title,
     '语言规则',
   )
+  assert.equal(
+    describePromptMessage({ role: 'user', source_id: 'user_history', content: 'Earlier question' }).title,
+    '历史输入',
+  )
 })
 
 test('prompt summaries collapse whitespace and truncate long content', () => {

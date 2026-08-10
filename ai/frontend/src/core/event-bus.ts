@@ -63,6 +63,8 @@ export interface EventMap {
     }
     expression: { name: string; intensity: number }
     motion: Record<string, unknown>
+    director: Record<string, unknown>
+    tracking: Record<string, unknown>
     idle: Record<string, number | string | null>
     lipSync: Record<string, number | boolean>
     pose: Array<{ activeId: string; members: string[] }>
@@ -88,7 +90,7 @@ export interface EventMap {
   'audio:play': { audio: string; format: string; turnId: string; sequence: number; volumeArray?: number[] }
   'audio:stop': { turnId?: string; reason?: string }
   'audio:volume': { volume: number }
-  'audio:start': { turnId: string; sequence: number }
+  'audio:start': { turnId: string; sequence: number; durationMs: number }
   'audio:end': { turnId: string }
   'audio:diagnostic.request': { requestId: string }
   'audio:diagnostic.result': {

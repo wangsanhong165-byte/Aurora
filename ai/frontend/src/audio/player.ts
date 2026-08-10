@@ -11,6 +11,8 @@ export interface AudioPlaybackItem {
   format: string
   turnId: string
   sequence: number
+  /** Duration of the decoded buffer; populated before onStart fires. */
+  durationMs?: number
 }
 
 /** Pure ownership/order module used by AudioPlayer and its tests. */
@@ -172,6 +174,7 @@ export class AudioPlayer {
 
       this.currentSource = source
       this.currentItem = item
+      item.durationMs = audioBuffer.duration * 1000
       this.analyserNode = analyser
 
       source.onended = () => {

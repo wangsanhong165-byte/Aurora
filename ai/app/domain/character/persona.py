@@ -32,24 +32,6 @@ class Persona:
         return self._card.get("color", "#888888")
 
     @property
-    def emotion_words(self) -> list[str]:
-        return self._card.get("rules", {}).get(
-            "emotion_words",
-            ["neutral"],
-        )
-
-    def portrait_for(self, emotion: str) -> str | None:
-        sprites = self._card.get("sprites", self._card.get("portraits", {}))
-        match = sprites.get(emotion, sprites.get("neutral", {}))
-        if isinstance(match, dict):
-            return match.get("path")
-        return match
-
-    def tts_ref_for(self, emotion: str) -> str | None:
-        refs = self._card.get("tts", {}).get("ref_audio", {})
-        return refs.get(emotion) or refs.get("neutral")
-
-    @property
     def raw_card(self) -> dict:
         """Access the validated raw card for provider adapters."""
         return self._card

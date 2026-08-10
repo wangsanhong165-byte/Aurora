@@ -148,6 +148,13 @@ class PromptConfigStore:
     def definitions(self) -> list[dict[str, Any]]:
         return deepcopy(list(PROMPT_SOURCE_DEFINITIONS))
 
+    def delete(self, character_id: str) -> bool:
+        """Remove a character's persisted prompt-source policy."""
+        path = self._path_for(character_id)
+        existed = path.exists()
+        path.unlink(missing_ok=True)
+        return existed
+
     def _normalize_entry(self, source_id: str, entry: Any) -> dict[str, str]:
         if not isinstance(entry, dict):
             raise ValueError(f"prompt source {source_id} must be an object")

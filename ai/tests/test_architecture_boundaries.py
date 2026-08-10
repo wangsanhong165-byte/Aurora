@@ -77,7 +77,6 @@ DOMAIN_DIRS = [
     "app/domain",
     "app/domain/character",
     "app/domain/conversation",
-    "app/domain/memory",
     "app/domain/scheduler",
     "app/runtime/character_intent.py",
 ]

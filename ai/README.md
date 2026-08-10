@@ -39,7 +39,6 @@ Monika Voice Companion 是一个运行在 Windows 上的本地 AI 语音陪伴�
 | ASR | :19201 | Qwen3-ASR 语音识别 |
 | LLM | :19202 | OpenAI-compatible LLM API |
 | TTS | :19203 | TTS 统一入口 |
-| Memory | :19204 | SQLite+FTS5 记忆服务 |
 | GSVI | :19205 | GPT-SoVITS v2Pro |
 | Bridge | :19206 | Web 服务 + WebSocket API |
 
@@ -83,7 +82,7 @@ soulctl.cmd web
 # 启动器会打印本次实际使用的地址
 ```
 
-启动后自动拉起 ASR/LLM/TTS/Memory/GSVI 五个服务，进入持续监听。
+启动后自动拉起 ASR/LLM/TTS/GSVI 服务（记忆由 Runtime 内嵌 SQLiteMemory 提供，无独立服务），进入持续监听。
 
 ---
 

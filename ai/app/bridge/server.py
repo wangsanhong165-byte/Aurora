@@ -488,6 +488,24 @@ async def save_settings(data: dict):
     return {"status": "ok"}
 
 
+# ── Root .env configuration (settings UI) ──────────────────────────────
+
+
+@app.get("/api/config/env")
+async def get_env_config():
+    """Return root .env configuration (LLM/ASR/TTS/GSVI) for the settings UI."""
+    from app.config_manager.env_store import read_env_values
+    return {"config": read_env_values()}
+
+
+@app.post("/api/config/env")
+async def save_env_config(data: dict):
+    """Persist root .env configuration written from the settings UI."""
+    from app.config_manager.env_store import write_env_values
+    config = write_env_values(data.get("config", {}))
+    return {"status": "ok", "config": config}
+
+
 # ── Canonical Runtime V3 WebSocket ─────────────────────────────────────
 
 @app.websocket("/client-ws")

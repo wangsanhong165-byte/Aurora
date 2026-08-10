@@ -75,8 +75,14 @@ class RuntimeManager:
             else:
                 self._history_index = {}
 
+            active_character = self.get_character_id()
+            claimed_legacy = False
+            for info in self._history_index.values():
+                if isinstance(info, dict) and not info.get("character_id"):
+                    info["character_id"] = active_character
+                    claimed_legacy = True
             recovered = self._reconcile_history_index()
-            if not index_path.exists() or recovered:
+            if not index_path.exists() or recovered or claimed_legacy:
                 try:
                     self._save_index()
                 except OSError:
@@ -154,6 +160,7 @@ class RuntimeManager:
             self._history_index[uid] = {
                 "timestamp": latest_timestamp,
                 "latest_message": latest_message or None,
+                "character_id": self.get_character_id(),
             }
             changed = True
             logger.warning("Recovered history index entry from %s", path.name)
@@ -213,6 +220,9 @@ class RuntimeManager:
         path = self._histories_dir / f"{uid}.json"
         if not path.exists():
             return []
+        info = self._history_index.get(uid, {})
+        if str(info.get("character_id", "")) != self.get_character_id():
+            return []
         try:
             return json.loads(path.read_text("utf-8"))
         except Exception:
@@ -228,6 +238,8 @@ class RuntimeManager:
         with self._history_lock:
             result = []
             for uid, info in self._history_index.items():
+                if str(info.get("character_id", "")) != self.get_character_id():
+                    continue
                 result.append({
                     "uid": uid,
                     "latest_message": info.get("latest_message"),
@@ -238,6 +250,9 @@ class RuntimeManager:
 
     def load_history(self, history_uid: str) -> dict:
         """Load a history by UID and restore conversation state. Returns messages."""
+        info = self._history_index.get(history_uid)
+        if info is not None and str(info.get("character_id", "")) != self.get_character_id():
+            raise KeyError(f"history not found for active character: {history_uid}")
         self._current_history_uid = history_uid
         messages = self._load_messages(history_uid)
 
@@ -263,7 +278,11 @@ class RuntimeManager:
         now = datetime.now(timezone.utc).isoformat()
         with self._history_lock:
             self._current_history_uid = uid
-            self._history_index[uid] = {"timestamp": now, "latest_message": None}
+            self._history_index[uid] = {
+                "timestamp": now,
+                "latest_message": None,
+                "character_id": self.get_character_id(),
+            }
             self._save_index()
 
         # Clear runtime conversation
@@ -278,9 +297,12 @@ class RuntimeManager:
 
     def delete_history(self, history_uid: str) -> dict:
         """Delete a history by UID. Returns success status."""
+        info = self._history_index.get(history_uid)
+        if info is not None and str(info.get("character_id", "")) != self.get_character_id():
+            raise KeyError(f"history not found for active character: {history_uid}")
         path = self._histories_dir / f"{history_uid}.json"
         file_contents: bytes | None = None
-        if path.exists():
+        if info is not None and path.exists():
             file_contents = path.read_bytes()
             path.unlink()
 
@@ -322,8 +344,42 @@ class RuntimeManager:
             self._history_index[history_uid] = {
                 "timestamp": ts,
                 "latest_message": preview,
+                "character_id": self.get_character_id(),
             }
             self._save_index()
+
+    def _delete_character_histories(self, character_id: str) -> int:
+        """Delete legacy JSON/index history metadata owned by one character."""
+        with self._history_lock:
+            owned = [
+                uid for uid, info in self._history_index.items()
+                if isinstance(info, dict)
+                and str(info.get("character_id", "")) == character_id
+            ]
+            previous_entries = {
+                uid: deepcopy(self._history_index[uid]) for uid in owned
+            }
+            file_contents = {
+                uid: path.read_bytes()
+                for uid in owned
+                if (path := self._histories_dir / f"{uid}.json").is_file()
+            }
+            try:
+                for uid in owned:
+                    (self._histories_dir / f"{uid}.json").unlink(missing_ok=True)
+                    self._history_index.pop(uid, None)
+                if owned:
+                    self._save_index()
+            except Exception:
+                self._history_index.update(previous_entries)
+                for uid, content in file_contents.items():
+                    path = self._histories_dir / f"{uid}.json"
+                    if not path.exists():
+                        path.write_bytes(content)
+                raise
+            if self._current_history_uid in owned:
+                self._current_history_uid = ""
+        return len(owned)
 
     # ── Pinned memories ─────────────────────────────────────────────
 
@@ -413,7 +469,9 @@ class RuntimeManager:
         budget = snapshot.get("context_budget", {})
         if not isinstance(budget, dict):
             budget = {}
-        decorated_messages = self._decorate_prompt_messages(requested_id, messages)
+        decorated_messages = self._decorate_prompt_messages(
+            requested_id, messages, snapshot.get("source_ids", [])
+        )
         return {
             "available": bool(decorated_messages),
             "character_id": requested_id,
@@ -429,6 +487,7 @@ class RuntimeManager:
         self,
         character_id: str,
         messages: list[Any],
+        source_ids: list[Any] | None = None,
     ) -> list[dict[str, Any]]:
         rules = self._prompt_configs.get(character_id)
         replacements = {
@@ -437,13 +496,19 @@ class RuntimeManager:
             if entry.get("mode") == "replace" and entry.get("content")
         }
         decorated: list[dict[str, Any]] = []
-        for raw_message in messages:
+        explicit_sources = list(source_ids or [])
+        for index, raw_message in enumerate(messages):
             if not isinstance(raw_message, dict):
                 continue
             message = deepcopy(raw_message)
             role = str(message.get("role", ""))
             content = str(message.get("content", ""))
-            if role == "system":
+            explicit_source = (
+                str(explicit_sources[index]) if index < len(explicit_sources) else ""
+            )
+            if explicit_source:
+                message["source_id"] = explicit_source
+            elif role == "system":
                 message["source_id"] = (
                     replacements.get(content)
                     or self._source_id_from_content(content)
@@ -476,11 +541,18 @@ class RuntimeManager:
             if entry.get("mode") == "replace" and entry.get("content")
         }
         previews: dict[str, str] = {}
-        for message in messages:
+        source_ids = snapshot.get("source_ids", [])
+        if not isinstance(source_ids, list):
+            source_ids = []
+        for index, message in enumerate(messages):
             if not isinstance(message, dict) or message.get("role") != "system":
                 continue
             content = str(message.get("content", ""))
-            source_id = replacements.get(content) or self._source_id_from_content(content)
+            source_id = (
+                (str(source_ids[index]) if index < len(source_ids) else "")
+                or replacements.get(content)
+                or self._source_id_from_content(content)
+            )
             if source_id and source_id not in previews:
                 previews[source_id] = content
         return previews
@@ -514,18 +586,18 @@ class RuntimeManager:
 
         turn = CharacterTurn(input=TurnInput(text="__prompt_preview__"))
         turn.character = character
-        messages = DefaultPlanner(
+        plan = DefaultPlanner(
             prompt_store=_EmptyOverrideStore(),
             prompt_config_store=_DefaultOnlyConfigStore(),
-        ).plan(turn).messages
+        ).plan(turn)
 
         defaults: dict[str, str] = {}
         static_sources = {"language", "persona", "output_protocol"}
-        for message in messages:
+        for index, message in enumerate(plan.messages):
             if not isinstance(message, dict) or message.get("role") != "system":
                 continue
             content = str(message.get("content", ""))
-            source_id = self._source_id_from_content(content)
+            source_id = str(plan.sources[index]) if index < len(plan.sources) else ""
             if source_id in static_sources and source_id not in defaults:
                 defaults[source_id] = content
         return defaults
@@ -763,8 +835,55 @@ class RuntimeManager:
 
     def create_character(self, specification: dict[str, Any]) -> dict[str, Any]:
         character = self._character_catalog.create(specification)
+        registry = getattr(self._runtime, "_character_registry", None)
+        if registry is not None and hasattr(registry, "refresh"):
+            registry.refresh()
         logger.info("[CharacterCatalog] Imported complete pack: %s", character["id"])
         return {"character": character}
+
+    def delete_character(self, character_id: str) -> dict[str, Any]:
+        """Delete one role and all role-owned prompt/memory state.
+
+        Shared Live2D models and voices are intentionally retained.
+        """
+        target = str(character_id or "").strip().lower()
+        characters = self._character_catalog.list()
+        ids = [str(item.get("id", "")) for item in characters]
+        if target not in ids:
+            raise KeyError(f"character not found: {target}")
+        if len(ids) <= 1:
+            raise ValueError("cannot delete the last character")
+
+        fallback = next(item for item in ids if item != target)
+        if self.get_character_id() == target:
+            switched = self.switch_character(fallback)
+            if "error" in switched:
+                raise RuntimeError(str(switched["error"]))
+
+        deleted = self._character_catalog.delete(target)
+        self._prompt_configs.delete(target)
+        self._prompt_overrides.delete(target)
+        store = self._memory_store()
+        database_rows = store.delete_character_data(target) if store is not None else {}
+        deleted_histories = self._delete_character_histories(target)
+        from app.memory.compiler import delete_character_compiled_data
+        delete_character_compiled_data(target)
+
+        registry = getattr(self._runtime, "_character_registry", None)
+        if registry is not None and hasattr(registry, "refresh"):
+            registry.refresh()
+        conversations = getattr(self._runtime, "_conversations_by_character", None)
+        if isinstance(conversations, dict):
+            conversations.pop(target, None)
+        logger.info("[CharacterCatalog] Deleted character: %s", target)
+        return {
+            "deleted_character_id": target,
+            "active_character_id": self.get_character_id(),
+            "fallback_character_id": deleted["fallback_character_id"],
+            "database_rows": database_rows,
+            "deleted_histories": deleted_histories,
+            "shared_assets_preserved": True,
+        }
 
     def get_voice_catalog(self) -> dict[str, Any]:
         return {"voices": self._voices.list()}

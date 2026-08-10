@@ -54,6 +54,14 @@ class ManagementHandler:
                 return await asyncio.to_thread(self._manager.create_character, params)
             except (ValueError, OSError) as exc:
                 raise ManagementFailure("character_import_invalid", str(exc)) from exc
+        if action == "delete_character":
+            try:
+                return await asyncio.to_thread(
+                    self._manager.delete_character,
+                    str(params.get("character_id", "")),
+                )
+            except (KeyError, ValueError, RuntimeError, OSError) as exc:
+                raise ManagementFailure("character_delete_failed", str(exc)) from exc
         if action == "get_voice_catalog":
             return await asyncio.to_thread(self._manager.get_voice_catalog)
         if action == "add_voice":

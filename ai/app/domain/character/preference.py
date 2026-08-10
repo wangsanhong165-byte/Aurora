@@ -51,6 +51,22 @@ class PreferenceTracker:
                 last_updated=now,
             )
 
+    def set_explicit(self, topic: str, valence: float) -> None:
+        """Record an explicit user statement as authoritative.
+
+        Explicit "I like/dislike X" statements replace the previous valence;
+        only weaker inferred observations should use ``update`` smoothing.
+        """
+        normalized = max(-1.0, min(1.0, float(valence)))
+        existing = self._preferences.get(topic)
+        confidence = max(0.85, existing.confidence if existing else 0.0)
+        self._preferences[topic] = Preference(
+            topic=topic,
+            valence=normalized,
+            confidence=confidence,
+            last_updated=time.time(),
+        )
+
     def get(self, topic: str) -> Preference | None:
         return self._preferences.get(topic)
 

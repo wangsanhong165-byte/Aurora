@@ -53,12 +53,22 @@ def score_memory(query: str, item: dict[str, Any], now: float | None = None) -> 
 
     importance = max(0.0, min(1.0, float(item.get("importance", 0.5) or 0.5)))
     confidence = max(0.0, min(1.0, float(item.get("confidence", 0.6) or 0.6)))
+    access_count = max(0, int(item.get("access_count", 0) or 0))
+    familiarity = min(1.0, math.log1p(access_count) / math.log(11))
     created = float(item.get("updated_ts", item.get("created_ts", 0.0)) or 0.0)
     age_days = max(0.0, ((now or time.time()) - created) / 86400) if created else 30.0
     recency = math.exp(-age_days / 180.0)
-    score = lexical * 0.68 + importance * 0.14 + confidence * 0.12 + recency * 0.06
+    score = (
+        lexical * 0.66
+        + importance * 0.13
+        + confidence * 0.11
+        + recency * 0.06
+        + familiarity * 0.04
+    )
     if importance >= 0.75:
         reasons.append("important")
     if recency >= 0.8:
         reasons.append("recent")
+    if familiarity >= 0.4:
+        reasons.append("frequently_used")
     return score, reasons

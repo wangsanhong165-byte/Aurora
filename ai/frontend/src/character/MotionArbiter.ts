@@ -229,6 +229,11 @@ export class MotionArbiter {
     return true
   }
 
+  releaseState(turnId: string): boolean {
+    if (!turnId) return false
+    return this.cancelOwner(`state:${turnId}`)
+  }
+
   cancelTurn(turnId: string): number {
     const owners = [...this.active.values()]
       .filter(active => active.request.turnId === turnId)

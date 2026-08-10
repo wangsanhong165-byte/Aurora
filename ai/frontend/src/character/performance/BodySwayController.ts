@@ -27,11 +27,10 @@ const defaultRanges: BodySwayRanges = {
 export class BodySwayController {
   private random: RandomSource
   private readonly ranges: BodySwayRanges
-  private from = neutralSample()
   private current = neutralSample()
   private target = neutralSample()
-  private moveStartedAt = 0
-  private moveDuration = 2.2
+  private velocity = neutralSample()
+  private lastTime = 0
   private holdUntil = 0
 
   constructor(seed = 29, ranges = defaultRanges) {
@@ -41,45 +40,37 @@ export class BodySwayController {
 
   reset(seed = 29): void {
     this.random = createSeededRandom(seed)
-    this.from = neutralSample()
     this.current = neutralSample()
     this.target = neutralSample()
-    this.moveStartedAt = 0
-    this.moveDuration = 2.2
+    this.velocity = neutralSample()
+    this.lastTime = 0
     this.holdUntil = 0
   }
 
   update(timeSeconds: number, focusLevel: number, gain = 1): BodySwaySample {
     const focus = clamp(focusLevel, 0, 1)
     const weight = clamp(gain, 0, 2)
+    const dt = clamp(this.lastTime > 0 ? timeSeconds - this.lastTime : 1 / 60, 0, 0.05)
+    this.lastTime = timeSeconds
     if (focus > 0.5) {
-      this.recenter(0.06 + focus * 0.08)
-      return scaleSample(this.current, (1 - focus * 0.76) * weight)
+      this.target = neutralSample()
+    } else if (timeSeconds >= this.holdUntil) {
+      this.pickNextTarget(timeSeconds)
     }
-    if (timeSeconds >= this.holdUntil) this.pickNextTarget(timeSeconds)
 
-    const progress = clamp(
-      (timeSeconds - this.moveStartedAt) / Math.max(0.001, this.moveDuration),
-      0,
-      1,
-    )
-    const eased = quinticSmoothstep(progress)
+    const baseFrequency = focus > 0.5 ? 0.72 : 0.34
     for (const key of sampleKeys) {
-      this.current[key] = lerp(this.from[key], this.target[key], eased)
+      const frequency = key.startsWith('head') ? baseFrequency * 1.18 : baseFrequency
+      stepSpring(this.current, this.velocity, this.target, key, dt, frequency, 0.82)
     }
     return scaleSample(this.current, weight)
   }
 
-  private recenter(amount: number): void {
-    for (const key of sampleKeys) {
-      this.current[key] = lerp(this.current[key], 0, amount)
-      this.from[key] = this.current[key]
-      this.target[key] = 0
-    }
+  getKinematics(): { value: BodySwaySample; velocity: BodySwaySample } {
+    return { value: { ...this.current }, velocity: { ...this.velocity } }
   }
 
   private pickNextTarget(timeSeconds: number): void {
-    this.from = { ...this.current }
     const bodyX = this.pickValue('bodyX')
     const bodyY = this.pickValue('bodyY')
     this.target = {
@@ -89,9 +80,7 @@ export class BodySwayController {
       headY: clamp(this.pickValue('headY') + bodyY * 0.42, ...this.ranges.headY),
       headZ: clamp(this.pickValue('headZ') - bodyX * 0.24, ...this.ranges.headZ),
     }
-    this.moveStartedAt = timeSeconds
-    this.moveDuration = 1.45 + this.random() * 2.35
-    this.holdUntil = timeSeconds + this.moveDuration + 0.55 + this.random() * 1.85
+    this.holdUntil = timeSeconds + 2.4 + this.random() * 3.8
   }
 
   private pickValue(key: keyof BodySwayRanges): number {
@@ -121,13 +110,20 @@ function scaleSample(sample: BodySwaySample, weight: number): BodySwaySample {
   }
 }
 
-function quinticSmoothstep(value: number): number {
-  const t = clamp(value, 0, 1)
-  return t * t * t * (t * (t * 6 - 15) + 10)
-}
-
-function lerp(from: number, to: number, amount: number): number {
-  return from + (to - from) * amount
+function stepSpring(
+  value: BodySwaySample,
+  velocity: BodySwaySample,
+  target: BodySwaySample,
+  key: keyof BodySwaySample,
+  dt: number,
+  frequencyHz: number,
+  dampingRatio: number,
+): void {
+  const omega = Math.PI * 2 * frequencyHz
+  const acceleration = (target[key] - value[key]) * omega * omega
+    - 2 * dampingRatio * omega * velocity[key]
+  velocity[key] += acceleration * dt
+  value[key] += velocity[key] * dt
 }
 
 function clamp(value: number, min: number, max: number): number {

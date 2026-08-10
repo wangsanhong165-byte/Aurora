@@ -59,20 +59,6 @@ class VoiceEvent(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class MemoryRecentRequest(BaseModel):
-    limit: int = Field(default=8, ge=0)
-
-
-class MemoryAppendRequest(BaseModel):
-    event: VoiceEvent
-    reply: dict[str, Any]
-
-
-class MemoryResponse(BaseModel):
-    ok: bool
-    items: list[dict[str, Any]] = Field(default_factory=list)
-
-
 class LLMRequest(BaseModel):
     event: VoiceEvent
     recent_memory: list[dict[str, Any]] = Field(default_factory=list)

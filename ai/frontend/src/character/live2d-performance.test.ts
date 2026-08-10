@@ -11,6 +11,7 @@ import { AttentionController } from './performance/AttentionController.ts'
 import { shouldStartAuthoredIdle } from './AvatarCapabilityProfile.ts'
 import { FrameTimingMonitor } from './FrameTimingMonitor.ts'
 import { AmbientPerformanceEngine } from './performance/AmbientPerformanceEngine.ts'
+import { BodySwayController } from './performance/BodySwayController.ts'
 
 test('lip-sync noise gate stays closed and calibrated output never exceeds model maximum', () => {
   const analyzer = new AudioAnalyzer()
@@ -243,4 +244,29 @@ test('frame timing monitor keeps a bounded rolling window and reports long frame
   assert.equal(snapshot.intervalMs, 45)
   assert.equal(snapshot.maxIntervalMs, 45)
   assert.equal(snapshot.longFrameCount, 1)
+})
+
+test('autonomous torso sway carries velocity and recenters through inertia', () => {
+  const sway = new BodySwayController(29)
+  let sample = sway.update(0, 0, 1)
+  let peakBody = 0
+  for (let frame = 1; frame <= 720; frame += 1) {
+    sample = sway.update(frame / 60, 0, 1)
+    peakBody = Math.max(peakBody, Math.abs(sample.bodyX), Math.abs(sample.bodyY))
+  }
+  const moving = sway.getKinematics()
+
+  assert.ok(peakBody > 0.3, 'idle torso should visibly leave neutral over time')
+  assert.ok(Object.values(moving.velocity).some(value => Math.abs(value) > 0.005))
+
+  const beforeFocus = { ...sample }
+  const firstFocused = sway.update(721 / 60, 1, 1)
+  assert.ok(
+    Math.abs(firstFocused.bodyX) > Math.abs(beforeFocus.bodyX) * 0.35,
+    'focus should not snap an already moving torso to zero',
+  )
+  for (let frame = 722; frame <= 900; frame += 1) sway.update(frame / 60, 1, 1)
+  const centered = sway.update(901 / 60, 1, 1)
+  assert.ok(Math.abs(centered.bodyX) < 0.12)
+  assert.ok(Math.abs(centered.bodyY) < 0.12)
 })

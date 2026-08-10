@@ -14,6 +14,8 @@ from app.character.registry import CharacterRegistry
 from app.character.voices import VoiceRegistry
 from app.runtime.management import RuntimeManager
 from app.transport.management import ManagementHandler
+from app.memory.store import MemoryStore
+from app.memory import compiler as compiler_mod
 
 
 def _write_complete_asset_sources(tmp_path: Path) -> dict[str, str]:
@@ -427,9 +429,123 @@ def test_persist_default_updates_index_yaml(tmp_path):
         (tmp_path / "config" / "characters" / "index.yaml").read_text("utf-8")
     )
     assert index["default"] == "alice"
+
+
+def test_delete_character_removes_only_role_definition_and_updates_default(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    for character_id in ("monika", "alice"):
+        catalog.create({
+            "id": character_id,
+            "name": character_id.title(),
+            "persona": "persona",
+            "reply_language": "zh",
+            "model_id": "testmodel",
+            "voice_id": "testvoice",
+        })
+
+    deleted = catalog.delete("monika")
+
+    assert deleted["fallback_character_id"] == "alice"
+    assert not (tmp_path / "config" / "characters" / "monika").exists()
+    assert (tmp_path / "models" / "live2d-models" / "testmodel").exists()
+    assert (tmp_path / "config" / "voices" / "testvoice" / "voice.json").exists()
+    index = yaml.safe_load(
+        (tmp_path / "config" / "characters" / "index.yaml").read_text("utf-8")
+    )
+    assert index["default"] == "alice"
+    assert [item["id"] for item in index["characters"]] == ["alice"]
+
+
+def test_delete_character_rejects_last_role(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "monika", "name": "Monika", "persona": "persona",
+        "reply_language": "zh", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+
+    with pytest.raises(ValueError, match="last character"):
+        catalog.delete("monika")
     # Idempotent.
     catalog.persist_default("alice")
     index = yaml.safe_load(
         (tmp_path / "config" / "characters" / "index.yaml").read_text("utf-8")
     )
     assert index["default"] == "alice"
+
+
+def test_management_delete_character_switches_active_and_cleans_owned_state(
+    tmp_path, monkeypatch,
+):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    for character_id in ("monika", "alice"):
+        catalog.create({
+            "id": character_id,
+            "name": character_id.title(),
+            "persona": "persona",
+            "reply_language": "zh",
+            "model_id": "testmodel",
+            "voice_id": "testvoice",
+        })
+
+    store = MemoryStore(base_dir=tmp_path)
+
+    class _MemoryProvider:
+        _store = store
+
+    class _RoleRuntime:
+        def __init__(self):
+            self.active_id = "monika"
+            self.providers = {"memory": _MemoryProvider()}
+            self._character_registry = CharacterRegistry(tmp_path)
+            self._conversations_by_character = {"monika": object(), "alice": object()}
+
+        def get_character_info(self):
+            card = self._character_registry.get(self.active_id)
+            return {"card": card, "name": card["name"]["zh"]}
+
+        def switch_character(self, character_id):
+            self._character_registry.refresh()
+            self._character_registry.activate(character_id)
+            self.active_id = character_id
+            return {"character_id": character_id}
+
+    runtime = _RoleRuntime()
+    manager = RuntimeManager(base_dir=tmp_path, runtime=runtime)
+    manager.set_prompt_config(
+        "monika", {"persona": {"mode": "replace", "content": "custom"}},
+        "addition",
+    )
+    store.upsert_memory(
+        memory_type="fact", subject="user", predicate="name",
+        content="monika memory", character_id="monika",
+        stable_key="fact:user:name",
+    )
+    history_uid = manager.create_history()["history_uid"]
+    manager.record_turn_metadata(history_uid, "monika history")
+    monkeypatch.setattr(compiler_mod, "_get_base", lambda: tmp_path)
+    compiled = tmp_path / "data" / "memory" / "compiled" / "monika"
+    compiled.mkdir(parents=True)
+    (compiled / "memory.md").write_text("compiled", encoding="utf-8")
+
+    handler = ManagementHandler()
+    handler._manager = manager
+    event = asyncio.run(handler.handle(
+        "delete_character", {"character_id": "monika"}, "delete-1"
+    ))[0]
+
+    assert event.payload.data["active_character_id"] == "alice"
+    assert event.payload.data["shared_assets_preserved"] is True
+    assert not (tmp_path / "config" / "characters" / "monika").exists()
+    assert (tmp_path / "models" / "live2d-models" / "testmodel").exists()
+    assert not (tmp_path / "data" / "prompts" / "monika.json").exists()
+    assert not (tmp_path / "data" / "prompts" / "monika.md").exists()
+    assert not compiled.exists()
+    assert store.list_memories(character_id="monika") == []
+    assert history_uid not in manager._history_index
+    assert "monika" not in runtime._conversations_by_character

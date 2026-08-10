@@ -230,6 +230,40 @@ export function compileMotionPlan(
   return compileMotionAction(action)
 }
 
+/** Compile semantic gestures through a restrained model-specific recipe. */
+export function compileMotionPlanForModel(
+  plan: unknown,
+  id: string,
+  modelName: string,
+  name = 'AI 动作',
+): MotionPreset | null {
+  const preset = compileMotionPlan(plan, id, name)
+  if (!preset || modelName.toLowerCase() !== 'design_genius_white') return preset
+
+  const frames = preset.keyframes.map(frame => ({ ...frame }))
+  const occupied = new Set(frames.map(frame => `${frame.time}:${frame.parameter}`))
+  const couplings: Record<string, { parameter: string; scale: number }> = {
+    'head.x': { parameter: 'body.x', scale: -0.1 },
+    'head.y': { parameter: 'body.y', scale: -0.16 },
+    'head.z': { parameter: 'body.z', scale: -0.18 },
+  }
+  for (const frame of preset.keyframes) {
+    const coupling = couplings[frame.parameter]
+    if (!coupling) continue
+    const key = `${frame.time}:${coupling.parameter}`
+    if (occupied.has(key)) continue
+    occupied.add(key)
+    frames.push({
+      time: frame.time,
+      parameter: coupling.parameter,
+      value: frame.value * coupling.scale,
+    })
+  }
+  frames.sort((left, right) => left.time - right.time
+    || left.parameter.localeCompare(right.parameter))
+  return { ...preset, keyframes: frames }
+}
+
 function primitiveFrames(primitive: MotionPrimitive): PrimitiveFrame[] {
   switch (primitive) {
     case 'nod':

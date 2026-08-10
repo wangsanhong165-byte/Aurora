@@ -193,7 +193,14 @@ function ensureSupervisor (python) {
     detached: true,
     windowsHide: true,
     stdio: ['ignore', output, output],
-    env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' },
+    env: {
+      ...process.env,
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
+      // Loopback services must not be routed through a desktop HTTP proxy.
+      NO_PROXY: '127.0.0.1,localhost',
+      no_proxy: '127.0.0.1,localhost',
+    },
   })
   child.unref()
   waitForControl(python)
@@ -260,6 +267,9 @@ async function main (argv = process.argv.slice(2)) {
         MAIN_PYTHON: python,
         SOULLINK_HOT: hot ? '1' : '0',
         SOULLINK_PROFILE: hot ? 'full' : 'electron',
+        // Loopback services must not be routed through a desktop HTTP proxy.
+        NO_PROXY: '127.0.0.1,localhost',
+        no_proxy: '127.0.0.1,localhost',
       },
       windowsHide: false,
     })

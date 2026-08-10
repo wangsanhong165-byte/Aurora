@@ -232,7 +232,9 @@ class LifecycleOrchestrator:
         target = str(warmup.get("url", "")).format(host=service.host, port=service.port)
         payload = str(warmup.get("body", "{}")).encode()
         req = request.Request(target, data=payload, headers={"Content-Type": "application/json"})
-        with request.urlopen(req, timeout=int(warmup.get("timeout", service.timeout))) as response:
+        # Loopback warmup must not be routed through a desktop HTTP proxy.
+        _opener = request.build_opener(request.ProxyHandler({}))
+        with _opener.open(req, timeout=int(warmup.get("timeout", service.timeout))) as response:
             if response.status != 200:
                 raise LifecycleError(f"{service.name}: warmup failed")
 

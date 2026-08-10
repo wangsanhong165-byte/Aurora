@@ -21,7 +21,9 @@ class CharacterRegistry:
 
     # ---- scan -----------------------------------------------------------
     def _scan(self) -> None:
+        self._characters.clear()
         if not self._chars_dir.exists():
+            self._active_id = ""
             return
         for char_dir in sorted(self._chars_dir.iterdir()):
             if not char_dir.is_dir():
@@ -45,6 +47,20 @@ class CharacterRegistry:
                 self._active_id = default
         if not self._active_id and self._characters:
             self._active_id = next(iter(self._characters))
+
+    def refresh(self) -> None:
+        """Rescan character cards without replacing this registry instance.
+
+        Runtime services keep callbacks and references to the registry, so a
+        refresh must preserve the object identity.  The current character is
+        retained when it still exists; otherwise the index/default selection
+        performed by ``_scan`` becomes active.
+        """
+        previous = self._active_id
+        self._active_id = ""
+        self._scan()
+        if previous in self._characters:
+            self._active_id = previous
 
     # ---- validate -------------------------------------------------------
     @staticmethod
@@ -98,24 +114,6 @@ class CharacterRegistry:
     @property
     def active_id(self) -> str:
         return self._active_id
-
-    @property
-    def emotion_words(self) -> list[str]:
-        return self.active.get("rules", {}).get(
-            "emotion_words",
-            ["neutral"],
-        )
-
-    def portrait_for(self, emotion: str) -> str | None:
-        sprites = self.active.get("sprites", self.active.get("portraits", {}))
-        match = sprites.get(emotion, sprites.get("neutral", {}))
-        if isinstance(match, dict):
-            return match.get("path")
-        return match
-
-    def tts_ref_for(self, emotion: str) -> str | None:
-        refs = self.active.get("tts", {}).get("ref_audio", {})
-        return refs.get(emotion) or refs.get("neutral")
 
     def __repr__(self) -> str:
         return f"CharacterRegistry(active={self._active_id!r}, chars={list(self._characters)!r})"

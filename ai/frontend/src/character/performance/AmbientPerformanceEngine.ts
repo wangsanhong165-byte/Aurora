@@ -103,9 +103,15 @@ export class AmbientPerformanceEngine {
       else if (this.activity === 'listening' || this.activity === 'thinking') target = waiting
     }
     if (input.enabled && this.enhanced) target = addLogical(target, vadPosture(input.vad, gain))
-    if (input.enabled && input.tracking) target = addLogical(target, input.tracking)
     target = filterChannels(target, input.blockedChannels)
     this.current = approachPose(this.current, target, delta)
+    // Tracking already owns a hierarchical response model (eyes -> head ->
+    // torso). Filtering it again here recreates the slow, smooth stiffness
+    // this engine is intended to avoid.
+    const tracking = input.enabled && input.tracking
+      ? filterChannels(input.tracking, input.blockedChannels)
+      : {}
+    const resolvedPose = addLogical(this.current, tracking)
 
     const eyeCloseTarget = idleAllowed && !input.blockedChannels.has('gaze')
       ? idle.eyeClose * gain
@@ -115,7 +121,7 @@ export class AmbientPerformanceEngine {
 
     const facs = facsFromVAD(input.vad)
     return {
-      values: filterChannels(this.current, input.blockedChannels),
+      values: filterChannels(resolvedPose, input.blockedChannels),
       faceValues: this.enhanced ? logicalFaceFromFACS(facs) : {},
       eyeClose: this.eyeClose,
       idle,

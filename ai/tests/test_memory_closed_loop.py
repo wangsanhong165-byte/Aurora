@@ -74,7 +74,8 @@ def test_character_state_round_trip(tmp_path):
 def test_existing_facts_are_included_in_hybrid_recall(tmp_path):
     store = MemoryStore(base_dir=tmp_path)
     assert store.add_fact("用户最近因为修复程序错误而烦躁", ["编程", "情绪"])
-    store.backfill_legacy_facts()
+    store.claim_legacy_scope("monika")
+    store.backfill_legacy_facts(character_id="monika")
 
     results = store.search_memories("修bug很烦", character_id="monika", limit=5)
 
@@ -160,3 +161,18 @@ def test_legacy_backfill_does_not_restore_edited_or_forgotten_memory(tmp_path):
     assert store.forget_memory(memory_id)
     store.backfill_legacy_facts()
     assert store.list_memories() == []
+
+
+def test_hybrid_fact_memory_renders_content_not_empty():
+    """Regression: fact-typed hybrid memories must render their content, not
+    an empty '[Fact]' marker (retrieve now sends data.content, not data.fact)."""
+    compiled, parts = ContextAssembler().assemble_memories([
+        {
+            "type": "fact",
+            "data": {"content": "用户喜欢喝咖啡", "score": 0.9, "reasons": ["important"]},
+            "source": "hybrid",
+        }
+    ])
+    assert compiled == ""
+    assert any("[Fact]" in p and "用户喜欢喝咖啡" in p for p in parts)
+    assert all(p.strip() != "[Fact]" for p in parts)

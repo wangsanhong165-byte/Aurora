@@ -8,8 +8,9 @@ import {
 } from './Live2DPerformanceSettings.ts'
 
 test('caps high-DPI Live2D rendering without upscaling invalid values', () => {
-  assert.equal(resolveLive2DRenderDpr(1.5), 1.25)
-  assert.equal(resolveLive2DRenderDpr(2), 1.25)
+  assert.equal(resolveLive2DRenderDpr(1.5), 1.5)
+  assert.equal(resolveLive2DRenderDpr(2), 2)
+  assert.equal(resolveLive2DRenderDpr(2.5), 2)
   assert.equal(resolveLive2DRenderDpr(1), 1)
   assert.equal(resolveLive2DRenderDpr('invalid'), 1)
   assert.equal(resolveLive2DRenderDpr(0.5), 0.75)

@@ -57,7 +57,7 @@ class TransportEmitter:
     def _intent_segments(turn: CharacterTurn) -> list[dict]:
         """Project LLM segments to safe semantic fields for the avatar timeline."""
         allowed = {
-            "emotion", "behavior", "attention", "energy", "intensity",
+            "text", "emotion", "behavior", "attention", "energy", "intensity",
             "durationMs", "naturalVAD", "contextTags", "motionPlan",
         }
         result: list[dict] = []

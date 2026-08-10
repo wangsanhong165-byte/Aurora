@@ -154,7 +154,6 @@ fallback is unavailable, it asks the OS for a currently bindable dynamic port:
 | ASR | 19201 |
 | LLM | 19202 |
 | TTS | 19203 |
-| Memory | 19204 |
 | GSVI | 19205 |
 | Bridge | 19206 |
 | Vite frontend | 5173 |

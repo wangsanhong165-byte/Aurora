@@ -17,7 +17,11 @@ Plan B design:
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import os
+import re
+import shutil
 from pathlib import Path
 from typing import Any, Optional
 
@@ -32,7 +36,7 @@ from app.memory.prompts import (
 _BASE_DIR: Optional[Path] = None
 _llm_adapter_global: Any = None
 _current_char_id: str = ""
-_on_switch_callbacks: list = []
+logger = logging.getLogger("memory.compiler")
 
 
 def _get_base() -> Path:
@@ -56,6 +60,58 @@ def get_compiled_memory(char_id: str = "") -> str:
     if path.exists():
         return path.read_text("utf-8").strip()
     return ""
+
+
+def write_conversation_summary(
+    char_id: str, summary: str, *, through_log_id: int = 0
+) -> None:
+    """Atomically persist a rolling conversation summary per character.
+
+    temp + os.replace so the voice-loop reader (retrieve) never observes a
+    partially-written file.
+    """
+    path = _char_dir(char_id) / "conversation_summary.md"
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(summary, "utf-8")
+    os.replace(tmp, path)
+    metadata_path = _char_dir(char_id) / "conversation_summary.json"
+    metadata_tmp = metadata_path.with_name(metadata_path.name + ".tmp")
+    metadata_tmp.write_text(
+        json.dumps({"through_log_id": int(through_log_id)}, ensure_ascii=False),
+        "utf-8",
+    )
+    os.replace(metadata_tmp, metadata_path)
+
+
+def get_conversation_summary(char_id: str = "") -> str:
+    """Read the rolling conversation summary for a character."""
+    cid = char_id or _current_char_id or "default"
+    path = _char_dir(cid) / "conversation_summary.md"
+    if path.exists():
+        return path.read_text("utf-8").strip()
+    return ""
+
+
+def get_conversation_summary_record(char_id: str = "") -> dict[str, Any]:
+    cid = char_id or _current_char_id or "default"
+    content = get_conversation_summary(cid)
+    through_log_id = 0
+    try:
+        metadata = json.loads(
+            (_char_dir(cid) / "conversation_summary.json").read_text("utf-8")
+        )
+        through_log_id = int(metadata.get("through_log_id", 0))
+    except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError, OSError):
+        pass
+    return {"content": content, "through_log_id": through_log_id}
+
+
+def clear_conversation_summary(char_id: str = "") -> None:
+    """Remove a stale rolling summary so it is no longer injected."""
+    cid = char_id or _current_char_id or "default"
+    path = _char_dir(cid) / "conversation_summary.md"
+    path.unlink(missing_ok=True)
+    (_char_dir(cid) / "conversation_summary.json").unlink(missing_ok=True)
 
 
 # ── helpers ──────────────────────────────────────────────────────────
@@ -91,10 +147,48 @@ def _read_section(char_id: str, name: str) -> str:
     return ""
 
 
+def get_prompt_compiled_memory(char_id: str = "") -> str:
+    """Return durable context only, excluding recent today/week material.
+
+    Recent exact turns are supplied by Conversation and the middle window by
+    conversation_summary, so prompt injection only needs facts + long-term
+    state here.
+    """
+    cid = char_id or _current_char_id or "default"
+    parts = []
+    facts = _read_section(cid, "facts")
+    longterm = _read_section(cid, "longterm")
+    if facts:
+        parts.append("## Important facts\n\n" + facts)
+    if longterm:
+        parts.append("## Long-term context\n\n" + longterm)
+    if parts:
+        return "\n\n".join(parts)
+    # Compatibility for compiler output created before per-section files.
+    return get_compiled_memory(cid)
+
+
+def _clear_section(char_id: str, name: str) -> None:
+    directory = _char_dir(char_id)
+    for suffix in (".md", ".fp"):
+        (directory / f"{name}{suffix}").unlink(missing_ok=True)
+
+
+def delete_character_compiled_data(char_id: str) -> bool:
+    """Delete only the selected character's generated memory files."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", str(char_id or "")):
+        raise ValueError("invalid character id")
+    path = _get_base() / "data" / "memory" / "compiled" / char_id
+    if not path.exists():
+        return False
+    shutil.rmtree(path)
+    return True
+
+
 def _char_name_from_id(char_id: str) -> str:
     """Read character display name from its character.json."""
     try:
-        path = _get_base() / "characters" / char_id / "character.json"
+        path = _get_base() / "config" / "characters" / char_id / "character.json"
         if path.exists():
             import json
             card = json.loads(path.read_text("utf-8"))
@@ -140,13 +234,27 @@ def today_digest(char_id: str = "") -> str:
     cid = char_id or _current_char_id or "default"
     char_name = _char_name_from_id(cid)
 
-    today_start = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()[:10]
-    turns = memory_store.recent_turns(50)
+    import datetime as _dt
+    turns = memory_store.recent_turns(50, character_id=cid)
     if not turns:
+        _clear_section(cid, "today")
         return ""
 
-    today_turns = [t for t in turns if str(t.get("created_at", "")).startswith(today_start)]
+    # created_at is stored in UTC; compare against the LOCAL day boundary so a
+    # UTC+8 user's morning turns still count as "today".
+    local_midnight_ts = _dt.datetime.now().replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).timestamp()
+    today_turns = []
+    for t in turns:
+        try:
+            ts = _dt.datetime.fromisoformat(str(t.get("created_at", ""))).timestamp()
+        except (ValueError, TypeError):
+            ts = 0.0
+        if ts >= local_midnight_ts:
+            today_turns.append(t)
     if not today_turns:
+        _clear_section(cid, "today")
         return ""
 
     lines = []
@@ -173,8 +281,9 @@ def week_digest(char_id: str = "") -> str:
     char_name = _char_name_from_id(cid)
     existing_week = _read_section(cid, "week")
 
-    turns = memory_store.recent_turns(200)
+    turns = memory_store.recent_turns(200, character_id=cid)
     if not turns:
+        _clear_section(cid, "week")
         return ""
 
     parts = []
@@ -190,13 +299,14 @@ def week_digest(char_id: str = "") -> str:
     if lines:
         parts.append("[最近对话]\n" + "\n".join(lines))
     text = "\n\n".join(parts)
+    cache_source = "\n".join(lines)
 
-    if _check_cache(cid, "week", text):
+    if _check_cache(cid, "week", cache_source):
         return _read_section(cid, "week")
 
     result = _call_llm(system_compile_week(char_name), text, timeout=20)
     if result:
-        _write_cache(cid, "week", text, result)
+        _write_cache(cid, "week", cache_source, result)
     return result or ""
 
 
@@ -214,13 +324,14 @@ def longterm_digest(char_id: str = "", week_summary: str = "") -> str:
         return ""
 
     text = "\n\n".join(parts)
+    cache_source = week_summary.strip()
 
-    if _check_cache(cid, "longterm", text):
+    if _check_cache(cid, "longterm", cache_source):
         return _read_section(cid, "longterm")
 
     result = _call_llm(system_compile_longterm(), text, timeout=20)
     if result:
-        _write_cache(cid, "longterm", text, result)
+        _write_cache(cid, "longterm", cache_source, result)
     return result or ""
 
 
@@ -228,11 +339,14 @@ def facts_digest(char_id: str = "") -> str:
     """Compile all stored facts into a stable user profile summary."""
     cid = char_id or _current_char_id or "default"
 
-    facts = memory_store.get_all_facts(character_id=cid)
+    facts = memory_store.list_memories(
+        character_id=cid, memory_type="fact", active_only=True, limit=30
+    )
     if not facts:
+        _clear_section(cid, "facts")
         return ""
 
-    lines = [f"- {f['fact']}" for f in facts[:30]]
+    lines = [f"- {f['content']}" for f in facts[:30]]
     text = "\n".join(lines)
 
     if _check_cache(cid, "facts", text):
@@ -267,13 +381,10 @@ def compile_and_assemble(char_id: str = ""):
     """Run all four compilations then assemble. Call once per day."""
     cid = char_id or _current_char_id or "default"
 
-    existing_longterm = _read_section(cid, "longterm")
-    existing_week = _read_section(cid, "week")
-
     new_week = week_digest(cid)
-    new_longterm = longterm_digest(cid, new_week)
-    new_facts = facts_digest(cid)
-    today = today_digest(cid)
+    longterm_digest(cid, new_week)
+    facts_digest(cid)
+    today_digest(cid)
 
     assemble(cid)
 
@@ -282,8 +393,9 @@ def compile_today_and_assemble(char_id: str = ""):
     """Compile today's digest then assemble. Call after rolling summary."""
     cid = char_id or _current_char_id or "default"
     today = today_digest(cid)
-    if today:
-        assemble(cid)
+    # today_digest may have removed a stale section; always rewrite memory.md
+    # so the assembled compatibility file reflects that deletion immediately.
+    assemble(cid)
     return today
 
 
@@ -295,25 +407,9 @@ def regenerate_for_character(char_id: str):
     Called when switching personas. Does NOT re-extract facts (they're shared).
     Re-compiles today/week/longterm/facts from the shared fact store.
     """
-    char_name = _char_name_from_id(char_id)
-    print(f"[compiler] Regenerating memory for character: {char_name} ({char_id})")
-
-    # Compile facts section from shared facts
-    facts = memory_store.get_all_facts(character_id=char_id)
-    if facts:
-        text = "\n".join(f"- {f['fact']}" for f in facts[:30])
-        result = _call_llm(system_compile_facts(), text, timeout=20)
-        if result:
-            _write_cache(char_id, "facts", text, result)
-
-    # Compile today from shared log
+    logger.info("Regenerating compiled memory for character %s", char_id)
+    facts_digest(char_id)
     today = today_digest(char_id)
-
-    # Assemble
     assemble(char_id)
-    print(f"[compiler] Memory regenerated for {char_name}")
+    logger.info("Compiled memory regenerated for character %s", char_id)
     return True
-
-
-def register_switch_callback(callback):
-    _on_switch_callbacks.append(callback)

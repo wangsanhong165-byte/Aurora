@@ -79,9 +79,21 @@ class ToolCoordinator:
 
             # Append assistant message with tool_calls
             if response.messages:
-                messages = response.messages
+                carried: list[dict] = []
+                for index, response_message in enumerate(response.messages):
+                    message = dict(response_message)
+                    if index < len(messages) and messages[index].get("_source_id"):
+                        message["_source_id"] = messages[index]["_source_id"]
+                    elif message.get("role") == "assistant":
+                        message["_source_id"] = "assistant_tool_call"
+                    carried.append(message)
+                messages = carried
             else:
-                assistant_msg = {"role": "assistant", "content": response.reply}
+                assistant_msg = {
+                    "role": "assistant",
+                    "content": response.reply,
+                    "_source_id": "assistant_tool_call",
+                }
                 tc_formatted = []
                 for i, tc in enumerate(response.tool_calls):
                     tc_formatted.append({
@@ -116,6 +128,7 @@ class ToolCoordinator:
         if not final_reply and response.tool_calls:
             messages.append({
                 "role": "system",
+                "_source_id": "tool_budget_instruction",
                 "content": (
                     "The tool-call budget is exhausted. Do not call more tools. "
                     "Use the available tool results to produce the final structured response now."
@@ -188,6 +201,7 @@ class ToolCoordinator:
         tc_id = real_tool_call_ids[idx] if idx < len(real_tool_call_ids) else f"call_{tool_round}_{idx}"
         messages.append({
             "role": "tool",
+            "_source_id": "tool_result",
             "tool_call_id": tc_id,
             "content": tc_content,
         })

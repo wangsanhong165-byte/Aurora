@@ -2,27 +2,27 @@
   "version": 1,
   "sources": {
     "language": {
-      "mode": "disabled",
+      "mode": "default",
       "content": ""
     },
     "persona": {
-      "mode": "disabled",
+      "mode": "default",
       "content": ""
     },
     "memory_summary": {
-      "mode": "disabled",
+      "mode": "default",
       "content": ""
     },
     "relevant_memory": {
-      "mode": "disabled",
+      "mode": "default",
       "content": ""
     },
     "emotion": {
-      "mode": "disabled",
+      "mode": "default",
       "content": ""
     },
     "character_state": {
-      "mode": "disabled",
+      "mode": "default",
       "content": ""
     },
     "output_protocol": {

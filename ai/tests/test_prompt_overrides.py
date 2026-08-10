@@ -66,7 +66,8 @@ class _RecordingPlanner:
             "messages": [
                 {"role": "system", "content": "系统规则"},
                 {"role": "user", "content": turn.user_text},
-            ]
+            ],
+            "sources": ["persona", "user_input"],
         })()
 
 
@@ -256,6 +257,8 @@ def test_decision_step_records_messages_sent_to_llm():
     asyncio.run(DecisionStep(llm, planner=_RecordingPlanner()).run(turn))
 
     assert turn.prompt_messages == llm.calls[-1]
+    assert turn.prompt_sources == ["persona", "user_input"]
+    assert all("_source_id" not in message for message in llm.calls[-1])
     assert turn.prompt_messages[0]["content"] == "系统规则"
 
 
@@ -329,3 +332,25 @@ def test_prompt_view_keeps_source_identity_after_content_replacement(tmp_path):
 
     assert view["messages"][0]["source_id"] == "language"
     assert view["messages"][1]["source_id"] == "user_input"
+
+
+def test_prompt_view_uses_recorded_identity_for_history_messages(tmp_path):
+    manager = RuntimeManager(base_dir=tmp_path, runtime=_Runtime())
+    manager._runtime._last_prompt_snapshot = {
+        "turn_id": "turn-history",
+        "created_at": 123.0,
+        "character_id": "monika",
+        "messages": [
+            {"role": "user", "content": "old user turn"},
+            {"role": "assistant", "content": "old reply"},
+            {"role": "user", "content": "current input"},
+        ],
+        "source_ids": ["user_history", "assistant_history", "user_input"],
+        "context_budget": {},
+    }
+
+    view = manager.get_prompt_view("monika")
+
+    assert [message["source_id"] for message in view["messages"]] == [
+        "user_history", "assistant_history", "user_input",
+    ]

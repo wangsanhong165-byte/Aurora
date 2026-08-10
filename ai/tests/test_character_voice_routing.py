@@ -67,7 +67,7 @@ def test_http_tts_adapter_forwards_character_specific_gsvi_options(monkeypatch):
         captured.update({"url": url, "json": json, "timeout": timeout})
         return Response()
 
-    monkeypatch.setattr("app.models.http_adapters.requests.post", fake_post)
+    monkeypatch.setattr("app.models.http_adapters._LOCAL_SESSION.post", fake_post)
     adapter = HTTPTTSAdapter("http://tts.local", timeout=9)
 
     result = adapter.synthesize(
@@ -146,7 +146,7 @@ def test_reply_language_does_not_follow_voice_reference_language(tmp_path: Path)
     )
 
     assert "native language is Chinese" in system_text
-    assert "Write ALL text in Chinese" in system_text
+    assert "Write ALL output text in Chinese ONLY" in system_text
     assert "native language is Japanese" not in system_text
 
 
@@ -167,4 +167,4 @@ def test_cantonese_reply_language_is_not_silently_changed_to_english(tmp_path: P
         message["content"] for message in messages if message["role"] == "system"
     )
     assert "native language is Cantonese Chinese" in system_text
-    assert "Write ALL text in Cantonese Chinese" in system_text
+    assert "Write ALL output text in Cantonese Chinese ONLY" in system_text

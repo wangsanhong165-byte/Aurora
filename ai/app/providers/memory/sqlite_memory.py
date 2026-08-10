@@ -7,6 +7,7 @@ Manages its own background ticker lifecycle — Runtime only calls start()/shutd
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Any
@@ -19,8 +20,8 @@ logger = logging.getLogger("sqlite-memory")
 class SQLiteMemory(MemoryInterface):
     """MemoryInterface backed by SQLite (MemoryStore) + ticker + compiler.
 
-    Stores conversation turns to the logs table and retrieves both
-    facts and log entries. Also exposes compiled memory.md context.
+    Stores conversation turns to the logs table and retrieves structured
+    memories plus non-overlapping compiled/rolling context.
     Falls back to in-memory list if SQLite init fails.
 
     Lifecycle:
@@ -28,17 +29,19 @@ class SQLiteMemory(MemoryInterface):
         shutdown() — stops the ticker and memory store
     """
 
-    def __init__(self):
-        self._store: Any = None
+    def __init__(self, store: Any = None):
+        self._store: Any = store
         self._ticker: Any = None
         self._fallback: list[dict] = []
         self._character_registry: Any = None
-        try:
-            from app.memory.store import MemoryStore
-            self._store = MemoryStore()
-        except Exception as exc:
-            logger.warning("SQLiteMemory init failed, using in-memory fallback: %s", exc)
-            self._store = None
+        self._llm_adapter: Any = None
+        if store is None:
+            try:
+                from app.memory.store import MemoryStore
+                self._store = MemoryStore()
+            except Exception as exc:
+                logger.warning("SQLiteMemory init failed, using in-memory fallback: %s", exc)
+                self._store = None
 
     def start(self, character_registry: Any = None, llm_provider: Any = None) -> None:
         """Initialize MemoryStore + MemoryTicker + character compiler context.
@@ -50,55 +53,74 @@ class SQLiteMemory(MemoryInterface):
                           for the background ticker thread).
         """
         self._character_registry = character_registry
-        from app.memory.store import memory_store
         from app.memory import (
             set_compiler_llm,
             set_active_char,
-            on_character_switch as memory_on_switch,
         )
 
         # Ensure memory store is initialized
-        memory_store.start()
-        if self._store is not None:
-            self._store.backfill_legacy_facts()
+        if self._store is not None and hasattr(self._store, "start"):
+            self._store.start()
 
         # Get sync LLM adapter for the ticker
         llm_adapter = self._get_ticker_adapter(llm_provider)
+        self._llm_adapter = llm_adapter
         if llm_adapter is not None:
             set_compiler_llm(llm_adapter)
 
         # Create and start the ticker
         from app.memory.ticker import MemoryTicker
-        self._ticker = MemoryTicker(llm_adapter)
+        self._ticker = MemoryTicker(
+            llm_adapter,
+            character_ids_getter=(
+                character_registry.list_ids
+                if character_registry is not None
+                and hasattr(character_registry, "list_ids")
+                else None
+            ),
+            store=self._store,
+        )
         self._ticker.start()
 
         # Set initial character in compiler
         if character_registry is not None:
             cid = getattr(character_registry, "active_id", None)
+            all_ids = character_registry.list_ids()
+            if self._store is not None:
+                # Claim the empty-scope legacy pool once for the active
+                # character, but backfill legacy facts for EVERY character -
+                # otherwise non-active characters' facts stay permanently
+                # invisible now that retrieve no longer reads the facts table.
+                for char_id in all_ids:
+                    if char_id:
+                        self._store.backfill_legacy_facts(character_id=char_id)
+                if cid:
+                    self._store.claim_legacy_scope(cid)
             if cid:
                 set_active_char(cid)
-                if llm_adapter is not None:
-                    from app.memory.compiler import regenerate_for_character
-                    regenerate_for_character(cid)
-
-            # Register character switch callback
-            if hasattr(character_registry, "on_activate"):
-                character_registry.on_activate(
-                    lambda old_id, new_id: memory_on_switch(old_id, new_id)
-                )
+                self.activate_character(cid)
+            self._ticker.recover(all_ids)
 
     def shutdown(self) -> None:
         """Stop ticker and memory store gracefully."""
         if self._ticker is not None:
             self._ticker.stop(wait=False)
             self._ticker = None
-        from app.memory.store import memory_store
-        memory_store.stop(wait=False)
+        if self._store is not None and hasattr(self._store, "stop"):
+            self._store.stop(wait=False)
 
-    def notify_turn(self) -> None:
+    def notify_turn(self, character_id: str = "") -> None:
         """Forward turn notification to the ticker (if running)."""
         if self._ticker is not None:
-            self._ticker.notify_turn()
+            self._ticker.notify_turn(character_id)
+
+    def activate_character(self, character_id: str) -> None:
+        """Update compiler context and regenerate off the caller thread."""
+        from app.memory.compiler import set_active_char
+
+        set_active_char(character_id)
+        if self._ticker is not None:
+            self._ticker.regenerate(character_id)
 
     @staticmethod
     def _get_ticker_adapter(llm_provider: Any) -> Any:
@@ -157,7 +179,10 @@ class SQLiteMemory(MemoryInterface):
                     if character is not None and user_text:
                         from app.runtime.character_learning import learn_from_turn
                         data["learned_memories"] = learn_from_turn(
-                            character, user_text, self._store
+                            character,
+                            user_text,
+                            self._store,
+                            character_self=data.get("character_self"),
                         )
                     elif character is not None:
                         self._store.save_character_state(
@@ -188,43 +213,46 @@ class SQLiteMemory(MemoryInterface):
                     },
                     "source": "hybrid",
                 })
-            structured_contents = {
-                str(memory.get("content", "")).strip() for memory in structured
-            }
+            # Raw logs are intentionally not injected here: the exact recent
+            # tail already comes from Conversation, and older history is
+            # represented by the rolling summary.  This prevents the same turn
+            # entering the prompt as verbatim + search hit + summary.
 
-            # 1. Facts from SQLite
-            facts = self._store.search_facts(
-                query=query, k=limit // 2, character_id=character_id
-            )
-            for f in facts:
-                if str(f.get("fact", "")).strip() in structured_contents:
-                    continue
-                results.append({
-                    "type": "fact",
-                    "data": {"fact": f.get("fact", ""), "tags": f.get("tags", [])},
-                    "source": "sqlite",
-                })
-
-            # 2. Log entries from SQLite
-            logs = self._store.search_logs(
-                query, limit=limit, character_id=character_id
-            )
-            for l in logs:
-                results.append({
-                    "type": "log",
-                    "data": {"content": l.get("content", ""), "role": l.get("role", "")},
-                    "source": "sqlite",
-                })
-
-            # 3. Compiled memory context (if available)
-            from app.memory.compiler import get_compiled_memory
-            compiled = get_compiled_memory(character_id)
+            # Compiled memory context (if available).
+            # Cap at 4000: memory.md is a 4-section file (facts/today/week/
+            # longterm); the old 1500-char cap cut off the 长期情况 section
+            # before it ever reached the LLM.
+            from app.memory.compiler import get_prompt_compiled_memory
+            compiled = get_prompt_compiled_memory(character_id)
             if compiled:
                 results.append({
                     "type": "compiled",
-                    "data": {"content": compiled[:1500]},
+                    "data": {"content": compiled[:4000]},
                     "source": "compiler",
                 })
+
+            # Rolling conversation summary (per-character, appended LAST so
+            #    the results[0] type contract is unchanged).
+            from app.memory.compiler import get_conversation_summary
+            summary = get_conversation_summary(character_id)
+            if summary:
+                results.append({
+                    "type": "conversation_summary",
+                    "data": {"content": summary[:800]},
+                    "source": "rolling_summary",
+                })
+            else:
+                # Rolling summary not generated yet (fresh session / right
+                # after restart): fall back to a bounded raw-log recall so
+                # recent context is not lost before the first extraction cycle.
+                for l in self._store.search_logs(
+                    query, limit=5, character_id=character_id
+                ):
+                    results.append({
+                        "type": "log",
+                        "data": {"content": l.get("content", ""), "role": l.get("role", "")},
+                        "source": "sqlite",
+                    })
         else:
             # Fallback: return recent entries from in-memory list
             for entry in self._fallback[-limit:]:
@@ -244,7 +272,9 @@ class SQLiteMemory(MemoryInterface):
 
     async def consolidate(self) -> None:
         if self._store is not None:
-            self._store.rebuild_index()
+            # FTS rebuild is a blocking write; keep it off the voice-loop
+            # event loop thread (same pattern as forget's extract-before-delete).
+            await asyncio.to_thread(self._store.rebuild_index)
 
     async def summarize(self, since: str) -> str:
         from app.memory.compiler import get_compiled_memory
@@ -260,8 +290,37 @@ class SQLiteMemory(MemoryInterface):
             return 0
         try:
             total = 0
+            # Run the salvage LLM call off the event loop so the voice loop
+            # never blocks on a 20s extraction timeout.
+            await asyncio.to_thread(self._extract_before_delete, before)
             total += self._store.delete_logs_before(before)
             total += self._store.delete_facts_before(before)
             return total
         except Exception:
             return 0
+
+    def _extract_before_delete(self, before: str) -> None:
+        """Extract durable facts from logs about to be deleted (extract-before-destroy).
+
+        Runs only when an LLM adapter is available; never touches the logs table
+        itself, so the extractor's own activity cannot re-enter recent_turns.
+        Salvaged facts are attributed to each log row's OWN character, never to
+        the currently active one, so cross-character forgets stay correct.
+        """
+        if not self._llm_adapter or self._store is None:
+            return
+        try:
+            from app.memory.extractor import extract_from_turns
+            turns = self._store.logs_before(before, limit=40)
+            if not turns:
+                return
+            by_char: dict[str, list] = {}
+            for t in turns:
+                cid = str(t.get("character_id", "")) or ""
+                by_char.setdefault(cid, []).append(t)
+            for cid, group in by_char.items():
+                extract_from_turns(
+                    group, self._llm_adapter, character_id=cid, store=self._store
+                )
+        except Exception:
+            logger.exception("extract-before-delete failed")

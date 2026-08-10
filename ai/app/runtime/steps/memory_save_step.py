@@ -40,6 +40,7 @@ class MemorySaveStep(Step):
             "initiative": ctx.event.payload.get("initiative", {}),
             "character_id": getattr(character, "id", "") if character else "",
             "character": character,
+            "character_self": ctx.character_self,
             "turn_id": ctx.turn_id,
             "write_token": "conversation",
         }

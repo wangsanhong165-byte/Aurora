@@ -14,7 +14,7 @@ class CharacterSelfChange:
 
 
 class CharacterSelf:
-    """Own durable persona state; turns may only stage, never mutate it."""
+    """Own all durable persona-state mutations and commit semantics."""
 
     def __init__(self, character: Any):
         self.character = character
@@ -39,44 +39,45 @@ class CharacterSelf:
 
     def commit_emotion(self, emotion: str, *, intensity: float) -> None:
         """Commit immediate emotion and its slow mood effect atomically."""
-        self.sync_from_character()
+        emotion_state = getattr(self.character, "emotion", None)
+        valid = getattr(emotion_state, "VALID_EMOTIONS", None) if emotion_state is not None else None
+        if valid and emotion not in valid:
+            emotion = "neutral"
+        if hasattr(self.character, "emotion") and hasattr(self.character, "mood"):
+            self.character.emotion.current = emotion
+            self.character.emotion._intensity = max(0.0, min(1.0, float(intensity)))
+            self.character.mood.shift_from_emotion(emotion)
+            self.sync_from_character()
+            return
+
+        # Minimal domain doubles still use the canonical MoodTrend transition.
+        from app.domain.character.mood import MoodTrend
+
         state = self.snapshot()
         state["emotion"] = {
             "current": emotion,
             "intensity": max(0.0, min(1.0, float(intensity))),
         }
-        mood = dict(state.get("mood", {}))
-        valence = float(mood.get("valence", 0.0))
-        shifts = {
-            "happy": 0.3, "surprised": 0.2, "gentle": 0.1,
-            "serious": -0.1, "worried": -0.2, "sad": -0.3,
-            "angry": -0.3, "jealous": -0.4,
-        }
-        valence = max(-1.0, min(1.0, valence + shifts.get(emotion, 0.0) * 0.15))
-        if valence > 0.5:
-            current = "bright"
-        elif valence > 0.2:
-            current = "playful"
-        elif valence < -0.5:
-            current = "melancholy"
-        elif valence < -0.2:
-            current = "tired"
-        else:
-            current = "neutral"
-        history = list(mood.get("history", []))
-        if current != mood.get("current", "neutral"):
-            history.append({
-                "mood": current,
-                "triggered_by": f"emotion_shift:{emotion}",
-                "valence": valence,
-                "timestamp": time.time(),
-            })
-        state["mood"] = {
-            "current": current,
-            "valence": valence,
-            "history": history[-20:],
-        }
+        previous = dict(state.get("mood", {}))
+        trend = MoodTrend(str(previous.get("current", "neutral")))
+        trend._valence = float(previous.get("valence", 0.0))
+        trend._history = list(previous.get("history", []))[-20:]
+        trend.shift_from_emotion(emotion)
+        state["mood"] = trend.to_dict()
         self.commit(CharacterSelfChange(state=state))
+
+    def adjust_affinity(self, delta: float) -> None:
+        self.character.relationship.update_affinity(delta)
+        self.sync_from_character()
+
+    def set_explicit_preference(self, topic: str, valence: float) -> None:
+        self.character.preferences.set_explicit(topic, valence)
+        self.sync_from_character()
+
+    def ensure_goal(self, description: str, *, priority: int = 0) -> None:
+        if not any(goal.description == description for goal in self.character.goals.active):
+            self.character.goals.add(description, priority=priority)
+            self.sync_from_character()
 
     def record_interaction(
         self,
@@ -86,7 +87,15 @@ class CharacterSelf:
         previous_state: dict[str, Any] | None = None,
     ) -> None:
         """Record only observable, recent interaction context for the user view."""
-        state = deepcopy(self.character.dynamic_state())
+        # Seed from the previously committed snapshot so the tracking fields
+        # (recent_focus/recent_changes/last_interaction/interaction_count) are
+        # preserved across turns; then overlay the live emotion/mood/... state,
+        # which dynamic_state() alone does not contain.
+        state = deepcopy(self.snapshot())
+        live = self.character.dynamic_state()
+        for key in ("emotion", "mood", "relationship", "goals", "preferences"):
+            if key in live:
+                state[key] = live[key]
         text = " ".join(str(user_text or "").split())[:160]
         if text:
             focus = [f"刚刚聊到：{text}"]

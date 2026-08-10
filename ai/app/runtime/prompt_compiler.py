@@ -12,6 +12,7 @@ from app.runtime.character_turn import CharacterTurn
 @dataclass(frozen=True)
 class CompiledPrompt:
     messages: list[dict[str, Any]]
+    sources: list[str]
 
 
 class PromptCompiler:
@@ -25,8 +26,15 @@ class PromptCompiler:
         turn: CharacterTurn,
         character_self: Any,
     ) -> CompiledPrompt:
-        # character_self is an explicit input even while the existing planner
-        # reads turn.character during the migration.
-        del character_self
+        # CharacterSelf remains an explicit ownership input; the planner reads
+        # the same aggregate through turn.character_self.
+        turn.character_self = character_self
         plan = self._planner.plan(turn)
-        return CompiledPrompt(messages=deepcopy(list(plan.messages)))
+        messages = deepcopy(list(plan.messages))
+        sources = list(getattr(plan, "sources", []))
+        if len(sources) < len(messages):
+            sources.extend("" for _ in range(len(messages) - len(sources)))
+        for message, source_id in zip(messages, sources):
+            if source_id:
+                message["_source_id"] = source_id
+        return CompiledPrompt(messages=messages, sources=sources)

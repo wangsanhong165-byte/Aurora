@@ -14,8 +14,9 @@ from app.runtime.prompt_overrides import PromptOverrideStore
 
 
 class Plan:
-    def __init__(self, messages: list):
+    def __init__(self, messages: list, sources: list[str] | None = None):
         self.messages = messages
+        self.sources = list(sources or [])
 
 
 def _reply_language(card: object) -> str:
@@ -43,6 +44,7 @@ class DefaultPlanner:
 
     def plan(self, ctx: CharacterTurn) -> Plan:
         messages: list[dict[str, str]] = []
+        sources: list[str] = []
 
         character = ctx.character
         character_id = str(getattr(character, "id", "")) if character is not None else ""
@@ -60,6 +62,7 @@ class DefaultPlanner:
                     content = default_content
             if content and content.strip():
                 messages.append({"role": "system", "content": content.strip()})
+                sources.append(source_id)
 
         # 0. Language lock — placed FIRST so it overrides everything else
         prompt_lang = "en"
@@ -80,8 +83,8 @@ class DefaultPlanner:
             persona = getattr(character, "persona", None)
             if persona is not None:
                 system_text = persona.setting or ""
-                if persona.name:
-                    system_text = f"You are {persona.name}.\n{system_text}"
+                if persona.display_name:
+                    system_text = f"You are {persona.display_name}.\n{system_text}"
                 if system_text:
                     append_system("persona", system_text)
 
@@ -97,12 +100,14 @@ class DefaultPlanner:
                         + prompt_override
                     ),
                 })
+                sources.append("addition")
 
         if character is None and not messages:
             messages.append({
                 "role": "system",
                 "content": "You are a helpful assistant. Respond concisely.",
             })
+            sources.append("system")
 
         # 2. Retrieved memories as context (from SQLiteMemory)
         memories = ctx.memories
@@ -126,6 +131,10 @@ class DefaultPlanner:
         if conversation is not None:
             history = conversation.get_history(limit=10)
             messages.extend(history)
+            sources.extend(
+                "assistant_history" if item.get("role") == "assistant" else "user_history"
+                for item in history
+            )
 
         # 3b. Current emotion context
         if character is not None:
@@ -140,7 +149,7 @@ class DefaultPlanner:
             from app.runtime.context_assembler import ContextAssembler
             append_system(
                 "character_state",
-                ContextAssembler().assemble_character_state(character),
+                ContextAssembler().assemble_character_state(character, ctx.memories),
             )
 
         # 4. Output format instructions
@@ -160,15 +169,15 @@ class DefaultPlanner:
 
         format_instruction = (
             '\n[Output Instructions]\n'
-            f'1. LANGUAGE: Write ALL text in {nl}. Every "text" field MUST be in {nl}. CRITICAL: The user may write in Chinese, but you MUST respond in {nl}. Never mirror the user language.\n'
+            f'1. LANGUAGE (NON-NEGOTIABLE): Write ALL output text in {nl} ONLY, including every "text" and "final_reply" field. If the user writes in another language (for example in Chinese: "现在几点了"), you MUST still reply in {nl}. Mirroring the user\'s language is a hard failure.\n'
             '2. Keep your response SHORT — 1-2 sentences max, or a single brief paragraph.\n'
             '3. All JSON keys MUST be in English.\n'
             '4. Return ONLY valid JSON, no commentary.\n'
             '5. Format: {"segments":[{"text":"...","emotion":"neutral","behavior":"speak","attention":"user","energy":0.5,"intensity":0.5,"naturalVAD":{"valence":0,"arousal":0,"dominance":0},"contextTags":[],"motionPlan":{"durationMs":1200,"steps":[{"atMs":0,"durationMs":600,"primitive":"nod","intensity":0.5}]}}],"tool_calls":[],"final_reply":"..."}\n'
-            '5a. motionPlan is optional. Use it only when a visible gesture materially helps; ordinary speech should omit it. Use at most 3 steps. Allowed primitives: nod, tilt_left, tilt_right, lean_forward, lean_back, sway, look_left, look_right, breathe, shrug. durationMs must be 300-8000, step durationMs 120-2500, and intensity 0-1.\n'
+            '5a. motionPlan is optional. Use it only when a visible gesture materially helps; ordinary speech should omit it. Use at most 3 semantic beats per segment, and do not repeat the same primitive in adjacent segments. Allowed primitives: nod, tilt_left, tilt_right, lean_forward, lean_back, sway, look_left, look_right, breathe, shrug. durationMs must be 300-8000, step durationMs 120-2500, and intensity 0-1. The runtime aligns segment plans to the decoded speech duration, so atMs is relative to this segment and must not guess wall-clock playback time.\n'
             '5b. Never output Param*, Cubism IDs, parameter values, keyframes, animation files, or extra motionPlan fields.\n'
             f'6. Every final segment MUST set an "emotion" from: {presentation_emotions}.\n'
-            f'7. Every final segment MUST set a semantic "behavior" from: {presentation_behaviors}. Use "speak" for an ordinary spoken reply; use greet/agree/disagree/think only when they fit.\n'
+            f'7. Every final segment MUST set a semantic "behavior" from: {presentation_behaviors}. Describe the communicative act, not merely the fact that audio is playing: greetings use greet, agreement uses agree, disagreement uses disagree, reflection uses think, and only ordinary speech uses speak.\n'
             '8. Never use idle for a segment that contains spoken text.\n'
             '9. Leave tool_calls as [] when not needed.\n'
             '10. Do NOT use [keyword] tags for emotions — use the "emotion" field in JSON segments instead.\n'
@@ -187,7 +196,9 @@ class DefaultPlanner:
                     f"{user_text}\nStructured event: {initiative}"
                 ),
             })
+            sources.append("initiative")
         elif user_text:
             messages.append({"role": "user", "content": user_text})
+            sources.append("user_input")
 
-        return Plan(messages=messages)
+        return Plan(messages=messages, sources=sources)

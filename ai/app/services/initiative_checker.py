@@ -47,6 +47,7 @@ class InitiativeChecker:
         self,
         interval: float = 10.0,
         idle_threshold: float = 300.0,
+        character_getter: Callable[[], Any] | None = None,
     ) -> None:
         self.interval = interval
         self.idle_threshold = idle_threshold
@@ -54,6 +55,7 @@ class InitiativeChecker:
         self._running = False
         self._last_interaction = time.time()
         self.on_initiative: Callable[[list[Any]], None] | None = None
+        self._character_getter = character_getter
         # Extended state
         self._last_reminder_check: float = 0.0
         self._last_observation_time: float = 0.0
@@ -136,11 +138,15 @@ class InitiativeChecker:
         if now - self._last_relationship_check >= REL_CHECK_INTERVAL:
             self._last_relationship_check = now
             try:
-                character = state_store.get("character")
+                character = (
+                    self._character_getter()
+                    if self._character_getter is not None
+                    else state_store.get("character")
+                )
                 if character is not None and hasattr(character, "relationship"):
                     rel = character.relationship
                     affinity = rel.get_affinity()
-                    uid = "default"
+                    uid = str(getattr(character, "id", "default"))
                     if uid not in self._relationship_milestones:
                         self._relationship_milestones[uid] = set()
                     crossed = [m for m in self._RELATIONSHIP_MILESTONES

@@ -15,6 +15,7 @@ def compute_candidates(
     mood: float,
     activity: str = "idle",
     events: list | None = None,
+    character_mood: str = "",
 ) -> list[dict[str, Any]]:
     """Generate initiative candidates from current companion state."""
     candidates: list[dict[str, Any]] = []
@@ -104,11 +105,11 @@ def compute_candidates(
             "score": round(0.35 + min(idle_sec / 3600 * 0.15, 0.15), 2),
         })
 
-    if mood > 62:
+    if character_mood in {"bright", "playful", "energetic", "affectionate"}:
         candidates.append({
             "type": "share_thought",
             "topic": "daily_reflection",
-            "score": round((mood / 100) * 0.35, 2),
+            "score": 0.34,
         })
 
     return candidates

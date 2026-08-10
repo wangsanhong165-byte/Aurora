@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Info, Palette, Settings2, type LucideIcon } from 'lucide-react'
+import { Info, Settings2, type LucideIcon } from 'lucide-react'
 import { theme } from '../core/theme'
 import type { AppSettings } from '../core/store'
 import { electronWindowBridge } from '../session/electron-window-bridge'
@@ -17,12 +17,6 @@ export interface SettingsPanelProps {
   embedded?: boolean
   settings: AppSettings
   onSettingChange: (key: string, value: unknown) => void
-  /** Accessory parts: label -> partId */
-  accessoryParts?: Record<string, string>
-  /** Current accessory state: label -> enabled */
-  accessoryState?: Record<string, boolean>
-  /** Called when user toggles an accessory */
-  onAccessoryToggle?: (label: string) => void
 }
 
 const LIVE2D_TOGGLES = [
@@ -47,7 +41,7 @@ const CALIBRATION_CONTROLS = [
   { logical: 'mouth.form', label: '嘴型变化', min: -1, max: 1, step: .05 },
 ] as const
 
-type TabId = 'general' | 'appearance' | 'about'
+type TabId = 'general' | 'about'
 
 interface TabDef {
   id: TabId
@@ -57,13 +51,11 @@ interface TabDef {
 
 const TABS: TabDef[] = [
   { id: 'general', label: 'General', icon: Settings2 },
-  { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'about', label: 'About', icon: Info },
 ]
 
 const TAB_LABELS: Record<TabId, string> = {
   general: '常规',
-  appearance: '装扮',
   about: '关于',
 }
 
@@ -75,9 +67,6 @@ export function SettingsPanel({
   embedded = false,
   settings,
   onSettingChange,
-  accessoryParts,
-  accessoryState,
-  onAccessoryToggle,
 }: SettingsPanelProps) {
   const [activeTab, setActiveTab] = useState<TabId>('general')
 
@@ -125,13 +114,6 @@ export function SettingsPanel({
             {activeTab === 'general' && (
               <GeneralTab settings={settings} onSettingChange={onSettingChange} />
             )}
-            {activeTab === 'appearance' && (
-              <AppearanceTab
-                accessoryParts={accessoryParts}
-                accessoryState={accessoryState}
-                onAccessoryToggle={onAccessoryToggle}
-              />
-            )}
             {activeTab === 'about' && <AboutTab />}
           </div>
         </div>
@@ -150,10 +132,23 @@ export function SettingsPanel({
 export function Live2DWorkbench({
   settings,
   onSettingChange,
-}: Pick<SettingsPanelProps, 'settings' | 'onSettingChange'>) {
+  accessoryParts,
+  accessoryState,
+  onAccessoryToggle,
+}: Pick<SettingsPanelProps, 'settings' | 'onSettingChange'> & {
+  accessoryParts?: Record<string, string>
+  accessoryState?: Record<string, boolean>
+  onAccessoryToggle?: (label: string) => void
+}) {
   return (
     <div style={{ ...styles.content, height: '100%', boxSizing: 'border-box' }}>
-      <AnimationTab settings={settings} onSettingChange={onSettingChange} />
+      <AnimationTab
+        settings={settings}
+        onSettingChange={onSettingChange}
+        accessoryParts={accessoryParts}
+        accessoryState={accessoryState}
+        onAccessoryToggle={onAccessoryToggle}
+      />
     </div>
   )
 }
@@ -164,45 +159,33 @@ function GeneralTab({ settings, onSettingChange }: {
   settings: AppSettings
   onSettingChange: (key: string, value: unknown) => void
 }) {
-  const characters = [{ id: settings.activeCharacterId, label: settings.activeCharacterId }]
-  const [models, setModels] = useState<string[]>([settings.live2dModel])
+  const [env, setEnv] = useState<Record<string, Record<string, string>>>({})
   useEffect(() => {
-    void fetch('/api/models')
-      .then(response => response.ok ? response.json() : Promise.reject(new Error('models unavailable')))
-      .then((body: { models?: Array<{ name?: string }> }) => {
-        const names = (body.models ?? []).map(model => String(model.name || '')).filter(Boolean)
-        setModels(Array.from(new Set([settings.live2dModel, ...names])))
+    void fetch('/api/config/env')
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('env unavailable')))
+      .then((body: { config?: Record<string, Record<string, string>> }) => {
+        if (body.config) setEnv(body.config)
       })
       .catch(() => {})
-  }, [settings.live2dModel])
+  }, [])
+
+  const setEnvKey = (group: string, key: string, value: string) => {
+    setEnv(prev => ({ ...prev, [group]: { ...(prev[group] || {}), [key]: value } }))
+  }
+
+  const saveEnv = () => {
+    void fetch('/api/config/env', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: env }),
+    })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('save failed')))
+      .then(() => alert('已保存。部分配置需重启生效。'))
+      .catch(() => alert('保存失败'))
+  }
 
   return (
     <div style={styles.tabContent}>
-      <div style={styles.sectionLabel}>Character</div>
-
-      <SettingRow label="Character">
-        <select
-          style={styles.select}
-          value={settings.activeCharacterId}
-          onChange={(e) => onSettingChange('activeCharacterId', e.target.value)}
-        >
-          {characters.map((c) => (
-            <option key={c.id} value={c.id}>{c.label}</option>
-          ))}
-        </select>
-      </SettingRow>
-
-      <SettingRow label="Live2D Model">
-        <select
-          style={styles.select}
-          value={settings.live2dModel}
-          onChange={(e) => onSettingChange('live2dModel', e.target.value)}
-        >
-          {models.map((model) => (
-            <option key={model} value={model}>{model}</option>
-          ))}
-        </select>
-      </SettingRow>
 
       <div style={styles.divider} />
       <div style={styles.sectionLabel}>Window</div>
@@ -268,15 +251,94 @@ function GeneralTab({ settings, onSettingChange }: {
           onChange={(v) => onSettingChange('voiceInputEnabled', v)}
         />
       </SettingRow>
+
+      <div style={styles.divider} />
+      <div style={styles.sectionLabel}>核心配置</div>
+      <div style={styles.sectionDesc}>保存到 config/.env；部分配置需重启生效。</div>
+
+      <div style={styles.subSectionLabel}>LLM</div>
+      <EnvRow label="Engine" group="llm" keyName="LLM_ENGINE" value={env.llm?.LLM_ENGINE ?? ''} onChange={setEnvKey} options={['deepseek', 'openai', 'local']} />
+      <EnvRow label="Base URL" group="llm" keyName="LLM_BASE_URL" value={env.llm?.LLM_BASE_URL ?? ''} onChange={setEnvKey} />
+      <EnvRow label="Model" group="llm" keyName="LLM_MODEL" value={env.llm?.LLM_MODEL ?? ''} onChange={setEnvKey} />
+      <EnvRow label="DeepSeek API Key" group="llm" keyName="DEEPSEEK_API_KEY" value={env.llm?.DEEPSEEK_API_KEY ?? ''} onChange={setEnvKey} type="password" />
+      <EnvRow label="OpenAI API Key" group="llm" keyName="OPENAI_API_KEY" value={env.llm?.OPENAI_API_KEY ?? ''} onChange={setEnvKey} type="password" />
+      <EnvRow label="OpenAI Base URL" group="llm" keyName="OPENAI_BASE_URL" value={env.llm?.OPENAI_BASE_URL ?? ''} onChange={setEnvKey} />
+      <EnvRow label="Temperature" group="llm" keyName="LLM_TEMPERATURE" value={env.llm?.LLM_TEMPERATURE ?? ''} onChange={setEnvKey} />
+      <EnvRow label="Reasoning Effort" group="llm" keyName="LLM_REASONING_EFFORT" value={env.llm?.LLM_REASONING_EFFORT ?? ''} onChange={setEnvKey} options={['low', 'medium', 'high']} />
+      <EnvRow label="Timeout (s)" group="llm" keyName="LLM_TIMEOUT_SECONDS" value={env.llm?.LLM_TIMEOUT_SECONDS ?? ''} onChange={setEnvKey} />
+
+      <div style={styles.subSectionLabel}>语音服务</div>
+      <EnvRow label="ASR Engine" group="asr" keyName="ASR_ENGINE" value={env.asr?.ASR_ENGINE ?? ''} onChange={setEnvKey} />
+      <EnvRow label="ASR Base URL" group="asr" keyName="ASR_BASE_URL" value={env.asr?.ASR_BASE_URL ?? ''} onChange={setEnvKey} />
+      <EnvRow label="ASR API Key" group="asr" keyName="ASR_API_KEY" value={env.asr?.ASR_API_KEY ?? ''} onChange={setEnvKey} type="password" />
+      <EnvRow label="TTS Engine" group="tts" keyName="TTS_ENGINE" value={env.tts?.TTS_ENGINE ?? ''} onChange={setEnvKey} />
+      <EnvRow label="TTS Base URL" group="tts" keyName="TTS_BASE_URL" value={env.tts?.TTS_BASE_URL ?? ''} onChange={setEnvKey} />
+      <EnvRow label="TTS API Key" group="tts" keyName="TTS_API_KEY" value={env.tts?.TTS_API_KEY ?? ''} onChange={setEnvKey} type="password" />
+      <EnvRow label="GSVI URL" group="gsvi" keyName="GSVI_URL" value={env.gsvi?.GSVI_URL ?? ''} onChange={setEnvKey} />
+      <EnvRow label="GSVI Text Lang" group="gsvi" keyName="GSVI_TEXT_LANG" value={env.gsvi?.GSVI_TEXT_LANG ?? ''} onChange={setEnvKey} />
+      <EnvRow label="GSVI Prompt Lang" group="gsvi" keyName="GSVI_PROMPT_LANG" value={env.gsvi?.GSVI_PROMPT_LANG ?? ''} onChange={setEnvKey} />
+      <EnvRow label="GSVI Speed" group="gsvi" keyName="GSVI_SPEED" value={env.gsvi?.GSVI_SPEED ?? ''} onChange={setEnvKey} />
+      <EnvRow label="GSVI Timeout (s)" group="gsvi" keyName="GSVI_TIMEOUT" value={env.gsvi?.GSVI_TIMEOUT ?? ''} onChange={setEnvKey} />
+
+      <button
+        onClick={saveEnv}
+        style={{
+          marginTop: 12,
+          padding: '6px 14px',
+          borderRadius: 8,
+          border: 'none',
+          backgroundColor: theme.colors.accent,
+          color: '#fff',
+          fontSize: '0.8rem',
+          cursor: 'pointer',
+        }}
+      >
+        保存核心配置
+      </button>
     </div>
+  )
+}
+
+function EnvRow({ label, group, keyName, value, onChange, options, type }: {
+  label: string
+  group: string
+  keyName: string
+  value: string
+  onChange: (group: string, key: string, value: string) => void
+  options?: string[]
+  type?: string
+}) {
+  return (
+    <SettingRow label={label}>
+      {options ? (
+        <select
+          style={styles.select}
+          value={value}
+          onChange={(e) => onChange(group, keyName, e.target.value)}
+        >
+          {options.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      ) : (
+        <input
+          style={{ ...styles.select, width: '100%', boxSizing: 'border-box' }}
+          type={type || 'text'}
+          value={value}
+          onChange={(e) => onChange(group, keyName, e.target.value)}
+          spellCheck={false}
+        />
+      )}
+    </SettingRow>
   )
 }
 
 // ── Tab: Animation ──
 
-function AnimationTab({ settings, onSettingChange }: {
+function AnimationTab({ settings, onSettingChange, accessoryParts, accessoryState, onAccessoryToggle }: {
   settings: AppSettings
   onSettingChange: (key: string, value: unknown) => void
+  accessoryParts?: Record<string, string>
+  accessoryState?: Record<string, boolean>
+  onAccessoryToggle?: (label: string) => void
 }) {
   const [calibrating, setCalibrating] = useState(false)
   const [calibrationValues, setCalibrationValues] = useState<Record<string, number>>({})
@@ -288,6 +350,16 @@ function AnimationTab({ settings, onSettingChange }: {
     peakMouth?: number
     finalMouth?: number
   }>({ requestId: '', phase: 'idle', message: '使用真实 AudioContext 验证播放、口型与中断闭嘴。' })
+  const [models, setModels] = useState<string[]>([settings.live2dModel])
+  useEffect(() => {
+    void fetch('/api/models')
+      .then(response => response.ok ? response.json() : Promise.reject(new Error('models unavailable')))
+      .then((body: { models?: Array<{ name?: string }> }) => {
+        const names = (body.models ?? []).map(model => String(model.name || '')).filter(Boolean)
+        setModels(Array.from(new Set([settings.live2dModel, ...names])))
+      })
+      .catch(() => {})
+  }, [settings.live2dModel])
   const fallback = readModelPerformanceDefaults(settings.live2dModel)
   const tuning = normalizeLive2DPerformanceSettings(
     settings.live2dPerformanceProfiles?.[settings.live2dModel],
@@ -334,14 +406,42 @@ function AnimationTab({ settings, onSettingChange }: {
   return (
     <div style={styles.tabContent}>
       <div style={styles.heroCard}>
-        <div>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={styles.heroTitle}>Live2D 表现工作台</div>
-          <div style={styles.heroDesc}>
-            当前模型：{settings.live2dModel}
-          </div>
+          <div style={styles.heroDesc}>选择模型</div>
+          <select
+            style={styles.select}
+            value={settings.live2dModel}
+            onChange={(e) => onSettingChange('live2dModel', e.target.value)}
+          >
+            {models.map((model) => (
+              <option key={model} value={model}>{model}</option>
+            ))}
+          </select>
         </div>
         <span style={styles.profileBadge}>模型独立配置</span>
       </div>
+
+      {accessoryParts && Object.keys(accessoryParts).length > 0 && (
+        <>
+          <div style={styles.sectionDivider} />
+          <div style={styles.sectionLabel}>Accessories</div>
+          <div style={styles.sectionDesc}>Toggle model accessories on/off</div>
+          <div style={styles.toggleCards}>
+            {Object.keys(accessoryParts).map((label) => (
+              <div key={label} style={styles.toggleCard}>
+                <div style={styles.toggleCardInfo}>
+                  <span style={styles.toggleCardLabel}>{label}</span>
+                </div>
+                <Toggle
+                  checked={accessoryState?.[label] ?? true}
+                  onChange={() => onAccessoryToggle?.(label)}
+                />
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <div style={styles.sectionLabel}>基础组件</div>
       <div style={styles.sectionDesc}>模型不支持的参数会由能力配置自动过滤。</div>
@@ -568,6 +668,15 @@ function Live2DRuntimeMonitor({ model }: { model: string }) {
   const probe = capability?.parameters.find(parameter => parameter.id === probeId)
   const partProbe = capability?.parts.find(part => part.id === partProbeId)
   const resolved = snapshot?.resolvedParameters ?? {}
+  const director = snapshot?.director as {
+    turnId?: string | null
+    pendingCues?: unknown[]
+    audio?: { durationMs?: number } | null
+  } | undefined
+  const tracking = snapshot?.tracking as {
+    target?: { x?: number; y?: number }
+    torsoVelocity?: { x?: number; y?: number }
+  } | undefined
   const formatControl = (x: number | undefined, y: number | undefined) => (
     x === undefined && y === undefined ? '—' : `${(x ?? 0).toFixed(2)} / ${(y ?? 0).toFixed(2)}`
   )
@@ -600,6 +709,14 @@ function Live2DRuntimeMonitor({ model }: { model: string }) {
         <span>表情：{snapshot?.expression.name || 'neutral'}</span>
         <span>眼球 X/Y：{formatControl(resolved.ParamEyeBallX, resolved.ParamEyeBallY)}</span>
         <span>头部 X/Y：{formatControl(resolved.ParamAngleX, resolved.ParamAngleY)}</span>
+        <span>躯干 X/Y/Z：{resolved.ParamBodyAngleX === undefined
+          ? '—'
+          : `${resolved.ParamBodyAngleX.toFixed(2)} / ${(resolved.ParamBodyAngleY ?? 0).toFixed(2)} / ${(resolved.ParamBodyAngleZ ?? 0).toFixed(2)}`}</span>
+        <span>追踪目标：{formatControl(tracking?.target?.x, tracking?.target?.y)}</span>
+        <span>躯干速度：{formatControl(tracking?.torsoVelocity?.x, tracking?.torsoVelocity?.y)}</span>
+        <span>演出队列：{director?.turnId
+          ? `${director.turnId.slice(0, 8)} · ${director.pendingCues?.length ?? 0} 个动作 · ${Math.round(director.audio?.durationMs ?? 0)} ms`
+          : '空闲'}</span>
       </div>
       {snapshot && contested > 0 && (
         <details style={styles.parameterCatalog}>
@@ -744,48 +861,6 @@ function RuntimeMetric({ label, value }: { label: string; value: string }) {
 }
 
 // ── Tab: Appearance (Accessories) ──
-
-function AppearanceTab({
-  accessoryParts,
-  accessoryState,
-  onAccessoryToggle,
-}: {
-  accessoryParts?: Record<string, string>
-  accessoryState?: Record<string, boolean>
-  onAccessoryToggle?: (label: string) => void
-}) {
-  const parts = accessoryParts ? Object.keys(accessoryParts) : []
-
-  if (parts.length === 0) {
-    return (
-      <div style={styles.tabContent}>
-        <div style={styles.sectionLabel}>Accessories</div>
-        <div style={styles.emptyState}>No accessories available for this model</div>
-      </div>
-    )
-  }
-
-  return (
-    <div style={styles.tabContent}>
-      <div style={styles.sectionLabel}>Accessories</div>
-      <div style={styles.sectionDesc}>Toggle model accessories on/off</div>
-
-      <div style={styles.toggleCards}>
-        {parts.map((label) => (
-          <div key={label} style={styles.toggleCard}>
-            <div style={styles.toggleCardInfo}>
-              <span style={styles.toggleCardLabel}>{label}</span>
-            </div>
-            <Toggle
-              checked={accessoryState?.[label] ?? true}
-              onChange={() => onAccessoryToggle?.(label)}
-            />
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
 
 // ── Tab: About ──
 
@@ -970,6 +1045,11 @@ const styles: Record<string, React.CSSProperties> = {
   settingInfo: { display: 'flex', flexDirection: 'column', gap: 1 },
   settingLabel: { fontSize: theme.fontSize.md, fontWeight: theme.fontWeight.medium, color: theme.colors.text.primary },
   settingDesc: { fontSize: theme.fontSize.xs, color: theme.colors.text.muted, marginTop: 1 },
+  subSectionLabel: {
+    fontSize: '0.7rem', fontWeight: 600, color: '#7f899c',
+    textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 10,
+  },
+
   select: {
     padding: `${theme.spacing.xs}px ${theme.spacing.md}px`, borderRadius: theme.radius.md,
     border: `1px solid ${theme.colors.border}`, backgroundColor: theme.colors.bg.surface,

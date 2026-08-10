@@ -7,6 +7,11 @@ from typing import Any
 
 import requests
 
+# GSVI is a loopback service (same rationale as gsvi_v2.py): keep this
+# transport local so a desktop HTTP proxy cannot turn it into spurious 502s.
+_LOCAL_SESSION = requests.Session()
+_LOCAL_SESSION.trust_env = False
+
 from app.config_manager.service_config import service_config
 from app.modules.tts.base import BaseTTS
 from app.modules.tts.factory import TTSFactory
@@ -53,7 +58,7 @@ def synthesize(text: str) -> bytes:
             "emotion": os.environ.get("GSVI_EMOTION", "默认"),
         },
     }
-    r = requests.post(f"{gsvi_url}/v1/audio/speech", json=payload, timeout=180)
+    r = _LOCAL_SESSION.post(f"{gsvi_url}/v1/audio/speech", json=payload, timeout=180)
     r.raise_for_status()
     return r.content
 

@@ -153,6 +153,7 @@ class MotionPlanPayload(PayloadModel):
 
 
 class CharacterIntentSegmentPayload(PayloadModel):
+    text: str | None = None
     emotion: str | None = None
     behavior: str | None = None
     intensity: float | None = Field(default=None, ge=0, le=1)

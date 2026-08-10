@@ -253,7 +253,11 @@ export function DesktopSessionWorkspace() {
     audio.setHandlers({
       onStart(item) {
         actions.setAudioPlaying(true)
-        eventBus.emit('audio:start', { turnId: item.turnId, sequence: item.sequence })
+        eventBus.emit('audio:start', {
+          turnId: item.turnId,
+          sequence: item.sequence,
+          durationMs: item.durationMs ?? 0,
+        })
       },
       onEnd(turnId) {
         actions.setAudioPlaying(false)
@@ -392,9 +396,12 @@ export function DesktopSessionWorkspace() {
     }
   }, [])
 
-  const handleCharacterActivate = useCallback(async (character: CharacterDescriptor) => {
+  const handleCharacterActivate = useCallback(async (
+    character: CharacterDescriptor,
+    runtimeAlreadySwitched = false,
+  ) => {
     const client = clientRef.current
-    if (!client) throw new Error('runtime disconnected')
+    if (!client && !runtimeAlreadySwitched) throw new Error('runtime disconnected')
     const previousModel = settings.live2dModel
     const nextModel = character.live2dModel
     let modelSwitched = false
@@ -409,10 +416,15 @@ export function DesktopSessionWorkspace() {
         modelSwitched = true
         await requestLive2DModelLoad(nextModel)
       }
-      await client.requestCommand('switch_character', { character_id: character.id })
+      if (!runtimeAlreadySwitched) {
+        await client!.requestCommand('switch_character', { character_id: character.id })
+      }
       actions.setSetting('activeCharacterId', character.id)
       if (nextModel) {
         actions.setSetting('live2dModel', nextModel)
+      }
+      if (client) {
+        await client.requestCommand('get_histories', {}).catch(() => {})
       }
     } catch (error) {
       if (modelSwitched && previousModel) {

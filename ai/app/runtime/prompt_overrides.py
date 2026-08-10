@@ -38,3 +38,10 @@ class PromptOverrideStore:
         temp_path.write_text(normalized, encoding="utf-8")
         temp_path.replace(path)
         return normalized
+
+    def delete(self, character_id: str) -> bool:
+        """Remove a character's user-owned prompt addition."""
+        path = self._path_for(character_id)
+        existed = path.exists()
+        path.unlink(missing_ok=True)
+        return existed

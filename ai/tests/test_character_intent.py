@@ -98,3 +98,17 @@ def test_segment_adapter_rejects_motion_plans_with_renderer_fields():
     })
 
     assert intent.motion_plan is None
+
+
+def test_segment_adapter_enforces_llm_gesture_budget():
+    intent = CharacterIntent.from_llm_segment({
+        "motionPlan": {
+            "durationMs": 1800,
+            "steps": [
+                {"atMs": index * 300, "durationMs": 240, "primitive": "nod", "intensity": 0.4}
+                for index in range(4)
+            ],
+        },
+    })
+
+    assert intent.motion_plan is None

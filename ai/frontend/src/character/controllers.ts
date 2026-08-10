@@ -29,10 +29,12 @@ import { CalibrationController } from './CalibrationController'
 import { AttentionController } from './performance/AttentionController'
 import { ParameterController } from './ExpressionParameterController'
 import { FrameTimingMonitor, type FrameTimingSample } from './FrameTimingMonitor'
+import { EmbodiedTrackingController } from './performance/EmbodiedTrackingController'
+import { PerformanceDirector } from './performance/PerformanceDirector'
 export { ParameterController, expressionTargetForBlend } from './ExpressionParameterController'
 import {
   compileMotionAction,
-  compileMotionPlan,
+  compileMotionPlanForModel,
   normalizeMotionActions,
   type MotionActionDefinition,
 } from './MotionAction'
@@ -370,6 +372,8 @@ export class CharacterController {
   calibration = new CalibrationController()
   attention = new AttentionController()
   frameTiming = new FrameTimingMonitor()
+  embodiedTracking = new EmbodiedTrackingController()
+  performanceDirector = new PerformanceDirector()
 
   // References set externally by the animation loop
   private adapter: Live2DModelAdapter | null = null
@@ -398,21 +402,11 @@ export class CharacterController {
   private _performanceResetTimer: ReturnType<typeof setTimeout> | null = null
   private _audioEndTimer: ReturnType<typeof setTimeout> | null = null
 
-  // Mouse tracking state
-  private mouseX = 0
-  private mouseY = 0
-  private targetMouseX = 0
-  private targetMouseY = 0
-  private headX = 0
-  private headY = 0
-
   // Tracks motion arbiter transitions for idle restart guard
   private _wasPlaying = false
   private _lastMotionEnded = false
   private _baseMotionPresets: Record<string, import('./MotionArbiter').MotionPreset> = {}
   private _actionsByModel = new Map<string, MotionActionDefinition[]>()
-  private _intentTimelineTimers: ReturnType<typeof setTimeout>[] = []
-
   // Lip-sync mouth value from AudioAnalyzer (submitted to mixer)
   private _mouthOpenValue = 0
 
@@ -484,6 +478,8 @@ export class CharacterController {
     this.idleCtrl.attach()
     this.audioAnalyzer.reset()
     this.ambientPerformance.reset()
+    this.embodiedTracking.reset()
+    this.performanceDirector.reset()
     this.emitModelCapability()
 
     // Register mixer owners with priorities
@@ -587,15 +583,22 @@ export class CharacterController {
     this.cleanupFns.push(
       eventBus.on('audio:stop', ({ turnId }) => {
         if (turnId && !this.stateMachine.isCurrentTurn(turnId)) return
+        const activeTurnId = turnId || this.stateMachine.turnId
+        if (activeTurnId) {
+          this.performanceDirector.cancelTurn(activeTurnId)
+          this.motionArbiter.cancelTurn(activeTurnId)
+        }
         this.audioPlaybackActive = false
         this.audioAnalyzer.reset()
         this._mouthOpenValue = 0
+        if (this.currentActivity === 'speaking') this.onActivityChange('idle', activeTurnId)
       }),
     )
 
     this.cleanupFns.push(
-      eventBus.on('audio:start', ({ turnId }) => {
+      eventBus.on('audio:start', ({ turnId, durationMs }) => {
         if (!this.stateMachine.isCurrentTurn(turnId)) return
+        this.performanceDirector.onAudioStart(turnId, durationMs)
         this.audioPlaybackActive = true
         this.onActivityChange('speaking', turnId)
       }),
@@ -616,6 +619,7 @@ export class CharacterController {
     this.cleanupFns.push(
       eventBus.on('audio:end', ({ turnId }) => {
         if (!this.stateMachine.isCurrentTurn(turnId)) return
+        this.performanceDirector.onAudioEnd(turnId)
         this.audioPlaybackActive = false
         this.audioAnalyzer.reset()
         this._mouthOpenValue = 0
@@ -654,7 +658,7 @@ export class CharacterController {
     this.cleanupFns.push(
       eventBus.on('runtime:character.intent', ({ turnId, emotion, behavior, attention, energy, intensity, durationMs, naturalVAD, contextTags, motionPlan, segments }) => {
         if (!this.stateMachine.isCurrentTurn(turnId)) return
-        this.applyIntentTimeline(
+        this.performanceDirector.stage(
           { turnId, emotion, behavior, attention: attention as any, energy, intensity, durationMs, naturalVAD, contextTags, motionPlan },
           segments,
         )
@@ -668,12 +672,12 @@ export class CharacterController {
         }
       }),
       eventBus.on('runtime:turn.failed', ({ turnId }) => {
-        this.clearIntentTimeline()
+        this.performanceDirector.cancelTurn(turnId)
         this.motionArbiter.cancelTurn(turnId)
         if (this.stateMachine.isCurrentTurn(turnId)) this.onActivityChange('idle', turnId)
       }),
       eventBus.on('runtime:turn.cancelled', ({ turnId }) => {
-        this.clearIntentTimeline()
+        this.performanceDirector.cancelTurn(turnId)
         this.motionArbiter.cancelTurn(turnId)
         if (this.stateMachine.isCurrentTurn(turnId)) this.onActivityChange('idle', turnId)
       }),
@@ -684,7 +688,7 @@ export class CharacterController {
   setTurnId(turnId: string): void {
     const previousTurnId = this.stateMachine.turnId
     if (previousTurnId && previousTurnId !== turnId) {
-      this.clearIntentTimeline()
+      this.performanceDirector.cancelTurn(previousTurnId)
       this.motionArbiter.cancelTurn(previousTurnId)
     }
     this.stateMachine.force(this.stateMachine.activity, turnId)
@@ -704,6 +708,10 @@ export class CharacterController {
     this.previousActivity = from
     this.activityEnteredAt = performance.now()
     this.activityBlend = 0
+    // State motions are phase-scoped. In particular, the higher-priority
+    // thinking pose must release before speaking or semantic performance cues
+    // can own the same head/gaze channels.
+    this.motionArbiter.releaseState(turnId || this.stateMachine.turnId)
     this.ambientPerformance.setActivity(activity)
     // Emit telemetry event
     eventBus.emit('character:runtime-telemetry', { type: 'state.transition', metadata: { from, to } })
@@ -730,60 +738,15 @@ export class CharacterController {
         break
       case 'speaking':
         this.idleCtrl.setBreathing(true)
-        if (
-          !this.motionArbiter.isPlaying()
-          || this.motionArbiter.currentMotion?.toLowerCase() === 'native:idle'
-        ) this.motionArbiter.request({
-          name: 'speak',
-          owner: `state:${turnId || this.stateMachine.turnId || 'local'}`,
-          source: 'system',
-          priority: 35,
-          channels: ['head', 'body'],
-          turnId: turnId || this.stateMachine.turnId,
-          intensity: 0.32,
-        })
+        // SpeechPerformanceController already supplies continuous voice-driven
+        // posture. Do not reserve head/body here: semantic beats and embodied
+        // mouse tracking must remain able to recruit those channels.
         break
       case 'listening':
         this.idleCtrl.setBreathing(true)
         this.motionArbiter.stop()
         break
     }
-  }
-
-  /** Execute a semantic presentation plan through existing expression/motion controllers. */
-  private clearIntentTimeline(): void {
-    for (const timer of this._intentTimelineTimers) clearTimeout(timer)
-    this._intentTimelineTimers = []
-  }
-
-  private applyIntentTimeline(
-    base: import('./CharacterBehaviorResolver').CharacterIntent,
-    segments?: Array<Record<string, unknown>>,
-  ): void {
-    this.clearIntentTimeline()
-    if (!segments || segments.length <= 1) {
-      this.applyIntent(base)
-      return
-    }
-
-    let offsetMs = 0
-    segments.forEach((segment, index) => {
-      const segmentIntent = {
-        ...base,
-        ...segment,
-        turnId: base.turnId,
-        motionPlan: segment.motionPlan,
-      } as import('./CharacterBehaviorResolver').CharacterIntent
-      if (index === 0) this.applyIntent(segmentIntent)
-      else {
-        const timer = setTimeout(() => this.applyIntent(segmentIntent), offsetMs)
-        this._intentTimelineTimers.push(timer)
-      }
-      const duration = typeof segment.durationMs === 'number' && Number.isFinite(segment.durationMs)
-        ? segment.durationMs
-        : 700
-      offsetMs += Math.max(300, Math.min(4000, duration))
-    })
   }
 
   /** Execute a semantic presentation plan through existing expression/motion controllers. */
@@ -809,9 +772,10 @@ export class CharacterController {
     const policy = this.performancePolicy.evaluate(intent, basePlan, this.behaviorResolver.getConfig(), this._profile)
     this.exprCtrl.apply(policy.expression, policy.expressionIntensity, policy.transitionMs)
     const plannedMotion = intent.motionPlan
-      ? compileMotionPlan(
+      ? compileMotionPlanForModel(
           intent.motionPlan,
           `ai_${intent.turnId || this.stateMachine.turnId || 'local'}`,
+          this._modelName,
           'AI 动作',
         )
       : null
@@ -919,6 +883,8 @@ export class CharacterController {
     this.attention.reset()
     this.audioAnalyzer.reset()
     this.ambientPerformance.reset()
+    this.embodiedTracking.reset()
+    this.performanceDirector.reset()
     this.mixer.setBaselineProvider(null)
     this.adapter = null
   }
@@ -1028,15 +994,11 @@ export class CharacterController {
   setMouseTracking(enabled: boolean): void { this.headTrackingEnabled = enabled }
 
   resetMousePosition(): void {
-    this.targetMouseX = 0
-    this.targetMouseY = 0
-    this.mouseX = 0
-    this.mouseY = 0
+    this.embodiedTracking.release()
   }
 
   setMousePos(x: number, y: number): void {
-    this.targetMouseX = x
-    this.targetMouseY = y
+    this.embodiedTracking.setTarget(x, y)
   }
 
   // ── Per-frame update ──
@@ -1063,35 +1025,20 @@ export class CharacterController {
       })
     }
 
+    for (const cue of this.performanceDirector.update()) this.applyIntent(cue)
     const vadSnapshot = this.vad.update(dt)
     const trackingPose: Record<string, number> = {}
     if (this.headTrackingEnabled) {
-      const eyeSmooth = 1 - Math.exp(-Math.max(0, dt) * 11.9)
-      this.mouseX += (this.targetMouseX - this.mouseX) * eyeSmooth
-      this.mouseY += (this.targetMouseY - this.mouseY) * eyeSmooth
-
       const cfg = getModelParamConfig(this._modelName)
-      const headSmooth = 1 - Math.exp(-Math.max(0, dt) * 3.7)
-      this.headX += (this.targetMouseX - this.headX) * headSmooth
-      this.headY += (this.targetMouseY - this.headY) * headSmooth
-      const hx = this.headX
-      const hy = this.headY
+      const sample = this.embodiedTracking.update(dt)
       Object.assign(trackingPose, {
-        'eye.x': this.mouseX * 0.85,
-        'eye.y': cfg.eyeBallYSign * this.mouseY * 0.7,
-        'head.x': cfg.angleXSign * hx * 15,
-        'head.y': cfg.angleYSign * hy * 10,
-        'head.z': hx * 4,
-        'body.x': hx * 4,
-        'body.y': hy * 3,
+        ...sample,
+        'eye.y': cfg.eyeBallYSign * sample['eye.y'],
+        'head.x': cfg.angleXSign * sample['head.x'],
+        'head.y': cfg.angleYSign * sample['head.y'],
       })
       if (PER_FRAME_GAZE_LOGGING) {
-        console.debug(
-          '[Gaze] mouse=(%+.3f,%+.3f) eye=(%+.3f,%+.3f) angle=(%+.3f,%+.3f,%+.3f)',
-          this.mouseX, this.mouseY,
-          this.mouseX * 0.85, cfg.eyeBallYSign * this.mouseY * 0.7,
-          cfg.angleXSign * hx * 15, cfg.angleYSign * hy * 10, hx * 4,
-        )
+        console.debug('[Gaze]', sample)
       }
     }
     const attentionSample = this.attention.update(dt)
@@ -1368,6 +1315,8 @@ export class CharacterController {
           intensity: this.exprCtrl.getIntensity(),
         },
         motion: this.motionArbiter.getDebugState(),
+        director: this.performanceDirector.getDebugState(),
+        tracking: this.embodiedTracking.getDebugState(),
         ambient: {
           activity: ambientFrame.activity,
           values: { ...ambientFrame.values },

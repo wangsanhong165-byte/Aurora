@@ -57,6 +57,8 @@ def test_text_completion_is_typed_v3_domain_events_in_canonical_order():
     assert assistant.payload.text == "world"
     assert assistant.payload.segments[0].behavior == "greet"
     assert "diagnostics" not in assistant.payload.model_dump()
+    intent = events[3]
+    assert intent.payload.segments[0].text == "world"
 
 
 def test_audio_turn_has_asr_and_strict_tts_event_order():
