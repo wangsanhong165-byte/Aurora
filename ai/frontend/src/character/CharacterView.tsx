@@ -625,7 +625,7 @@ export const CharacterView = memo(function CharacterView() {
     if (!ctrl) return
     ctrl.idleCtrl.setBlinking(s.live2dBlink)
     ctrl.idleCtrl.setBreathing(s.live2dBreathe)
-    ctrl.audioAnalyzer.setEnabled(s.live2dLipSync)
+    ctrl.lipSync.setEnabled(s.live2dLipSync)
     ctrl.setMouseTracking(s.live2dHeadTracking)
     ctrl.exprCtrl.setEnabled(s.live2dExpression)
     ctrl.idleCtrl.setIdleEnabled(s.live2dIdle)

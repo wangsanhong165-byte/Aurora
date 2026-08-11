@@ -67,3 +67,28 @@ test('direct interactions always deliver their mapped reaction motion', () => {
   assert.equal(plan.motion, 'nod')
   assert.equal(plan.motionProbability, 1)
 })
+
+test('an intentional empty emotion mapping selects the built-in semantic preset', () => {
+  const profile: AvatarCapabilityProfile = {
+    model: 'Design_genius_White',
+    expressions: ['neutral', 'happy'],
+    motions: [],
+    sequences: [],
+    parameters: {},
+    bindings: {},
+  }
+  const config: CharacterBehaviorConfig = {
+    emotionMap: { neutral: '', playful: '', confused: '' },
+  }
+  const policy = new CharacterPerformancePolicy()
+
+  for (const emotion of ['playful', 'confused']) {
+    const plan = policy.evaluate(
+      { emotion, behavior: 'speak', intensity: 0.7 },
+      { expression: emotion, expressionIntensity: 0.7, motionIntensity: 0.5, suppressIdle: false },
+      config,
+      profile,
+    )
+    assert.equal(plan.expression, emotion, `${emotion} must not collapse to neutral`)
+  }
+})

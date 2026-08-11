@@ -9,7 +9,6 @@ import type { VADVector } from './VADState'
 export type IdleActionLabel =
   | 'small-nod'
   | 'head-tilt'
-  | 'side-look'
   | 'weight-shift'
   | 'gentle-lean'
   | 'sigh-sink'
@@ -57,7 +56,7 @@ export interface IdleActionState {
 }
 
 const labels: IdleActionLabel[] = [
-  'small-nod', 'head-tilt', 'side-look', 'weight-shift',
+  'small-nod', 'head-tilt', 'weight-shift',
   'gentle-lean', 'sigh-sink', 'slow-blink',
 ]
 
@@ -149,7 +148,9 @@ export class IdleActionScheduler {
 
   private sampleInterval(focusLevel: number): number {
     const activity = clamp(this.spontaneity, 0.1, 1.25)
-    return (8 + this.random() * 8) / activity + clamp(focusLevel, 0, 1) * 2
+    // ~4.5-9s base cadence (was 8-16s) so idle behaviours are visible and the
+    // character reads as "alive" rather than statue-like.
+    return (4.5 + this.random() * 4.5) / activity + clamp(focusLevel, 0, 1) * 2
   }
 }
 
@@ -161,26 +162,22 @@ function buildKeyframes(
   const side = direction || 1
   let frames: PoseKeyframe[]
   if (label === 'small-nod') {
-    frames = [frame(0, {}), frame(.2, { headY: 2.6, bodyY: .35 }),
-      frame(.42, { headY: -.8 }), frame(.68, { headY: .5 }), frame(1, {})]
+    frames = [frame(0, {}), frame(.2, { headY: 3.4, bodyY: .5 }),
+      frame(.42, { headY: -1.1 }), frame(.68, { headY: .7 }), frame(1, {})]
   } else if (label === 'head-tilt') {
-    frames = [frame(0, {}), frame(.28, { headX: side * .55, headZ: side * 2.8, eyeX: -side * .08 }),
-      frame(.64, { headZ: side * 2.3 }), frame(1, {})]
-  } else if (label === 'side-look') {
-    frames = [frame(0, {}), frame(.18, { eyeX: side * .45 }),
-      frame(.38, { eyeX: side * .58, headX: side * 1.4, headZ: -side * .8 }),
-      frame(.8, { eyeX: side * .06, headX: side * 1 }), frame(1, {})]
+    frames = [frame(0, {}), frame(.28, { headX: side * .85, headZ: side * 4.2, eyeX: -side * .12 }),
+      frame(.64, { headZ: side * 3.4 }), frame(1, {})]
   } else if (label === 'weight-shift') {
-    frames = [frame(0, {}), frame(.34, { bodyX: side * 2.3, headX: -side * .55, headZ: -side * 1.1 }),
-      frame(.7, { bodyX: side * 1.9, headZ: -side * .9 }), frame(1, {})]
+    frames = [frame(0, {}), frame(.34, { bodyX: side * 3.4, headX: -side * .85, headZ: -side * 1.6 }),
+      frame(.7, { bodyX: side * 2.8, headZ: -side * 1.3 }), frame(1, {})]
   } else if (label === 'gentle-lean') {
-    frames = [frame(0, {}), frame(.3, { bodyY: side * 1.3, headY: side * 1.1, eyeY: side * .06 }),
-      frame(.58, { bodyY: side * 1.1, headY: side * .9 }),
-      frame(.8, { bodyY: -side * .2 }), frame(1, {})]
+    frames = [frame(0, {}), frame(.3, { bodyY: side * 2, headY: side * 1.6, eyeY: side * .08 }),
+      frame(.58, { bodyY: side * 1.7, headY: side * 1.3 }),
+      frame(.8, { bodyY: -side * .3 }), frame(1, {})]
   } else if (label === 'sigh-sink') {
     frames = [frame(0, {}), frame(.2, { eyeClose: .08 }),
-      frame(.48, { headY: -1.9, bodyY: -1, eyeY: -.12, eyeClose: .22 }),
-      frame(.73, { headY: -1.4, bodyY: -.75, eyeClose: .06 }), frame(1, {})]
+      frame(.48, { headY: -2.6, bodyY: -1.5, eyeY: -.15, eyeClose: .22 }),
+      frame(.73, { headY: -1.9, bodyY: -1.1, eyeClose: .06 }), frame(1, {})]
   } else {
     frames = [frame(0, {}), frame(.3, { eyeClose: .82, headY: -.3 }),
       frame(.47, { eyeClose: 1, headY: -.42 }),
@@ -212,7 +209,6 @@ function evaluateKeyframes(frames: PoseKeyframe[], progress: number): IdleAction
 function isAvailable(label: IdleActionLabel, capabilities?: AvatarPerformanceCapabilities): boolean {
   if (!capabilities) return true
   if (label === 'slow-blink') return capabilities.eyeBlink !== false
-  if (label === 'side-look') return capabilities.gazeControl !== false || capabilities.headControl !== false
   if (label === 'weight-shift' || label === 'gentle-lean') return capabilities.bodyControl !== false
   return capabilities.headControl !== false
 }
@@ -224,13 +220,10 @@ function weightedPick(
   random: RandomSource,
 ): IdleActionLabel {
   const expressive = personality?.expressiveness ?? .75
-  const shy = personality?.shyness ?? .5
   const positive = Math.max(0, vad.valence)
   const negative = Math.max(0, -vad.valence)
   const active = Math.max(0, vad.arousal)
-  const withdrawn = Math.max(0, -vad.dominance)
   const weights = pool.map(label => {
-    if (label === 'side-look') return .7 + shy + withdrawn * .7 + negative * .3
     if (label === 'small-nod') return .8 + expressive + positive * .4 + active * .35
     if (label === 'sigh-sink') return .55 + negative * .8 + Math.max(0, -vad.arousal) * .5
     if (label === 'gentle-lean') return .7 + positive * .45 + Math.max(0, vad.dominance) * .3
@@ -246,7 +239,7 @@ function weightedPick(
 
 function durationFor(label: IdleActionLabel, random: RandomSource): number {
   const ranges: Record<IdleActionLabel, readonly [number, number]> = {
-    'small-nod': [.82, 1.2], 'head-tilt': [1.35, 2.15], 'side-look': [1.45, 2.35],
+    'small-nod': [.82, 1.2], 'head-tilt': [1.35, 2.15],
     'weight-shift': [1.65, 2.65], 'gentle-lean': [1.25, 2.05],
     'sigh-sink': [1.7, 2.8], 'slow-blink': [.72, 1.08],
   }
@@ -261,7 +254,7 @@ function neutralPose(): IdleActionPose {
   return { headX: 0, headY: 0, headZ: 0, bodyX: 0, bodyY: 0, eyeX: 0, eyeY: 0, eyeClose: 0 }
 }
 function isDirectional(label: IdleActionLabel): boolean {
-  return ['head-tilt', 'side-look', 'weight-shift', 'gentle-lean'].includes(label)
+  return ['head-tilt', 'weight-shift', 'gentle-lean'].includes(label)
 }
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value))

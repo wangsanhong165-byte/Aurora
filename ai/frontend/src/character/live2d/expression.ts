@@ -1,7 +1,7 @@
 // Expression presets — maps Runtime emotion names to Cubism parameter targets
 // Supports both model-specific .exp3.json presets and hardcoded fallback presets.
 
-import { PARAM_IDS as P } from './core'
+import { PARAM_IDS as P } from './parameters.ts'
 
 export interface ExpressionPreset {
   /** Target parameter values */
@@ -34,8 +34,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_L_OPEN, value: 1 },
       { id: P.EYE_R_OPEN, value: 1 },
       { id: P.MOUTH_OPEN_Y, value: 0 },
-      { id: P.ANGLE_X, value: 0 },
-      { id: P.ANGLE_Y, value: 0 },
     ],
   },
 
@@ -62,7 +60,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_L_OPEN, value: 0.7 },
       { id: P.EYE_R_OPEN, value: 0.7 },
       { id: P.MOUTH_OPEN_Y, value: 0.1 },
-      { id: P.ANGLE_Y, value: -5 },
     ],
   },
 
@@ -75,7 +72,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_L_OPEN, value: 0.9 },
       { id: P.EYE_R_OPEN, value: 0.9 },
       { id: P.MOUTH_OPEN_Y, value: 0.3 },
-      { id: P.ANGLE_X, value: -3 },
     ],
   },
 
@@ -86,7 +82,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_L_OPEN, value: 1.2 },
       { id: P.EYE_R_OPEN, value: 1.2 },
       { id: P.MOUTH_OPEN_Y, value: 0.5 },
-      { id: P.ANGLE_Y, value: 3 },
     ],
   },
 
@@ -98,8 +93,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_R_OPEN, value: 0.6 },
       { id: P.MOUTH_OPEN_Y, value: 0.05 },
       { id: P.CHEEK, value: 0.6 },
-      { id: P.ANGLE_X, value: -5 },
-      { id: P.ANGLE_Y, value: -5 },
     ],
   },
 
@@ -109,8 +102,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.BROW_R_Y, value: 0.3 },
       { id: P.EYE_L_OPEN, value: 0.6 },
       { id: P.EYE_R_OPEN, value: 0.6 },
-      { id: P.ANGLE_X, value: 5 },
-      { id: P.ANGLE_Y, value: -3 },
     ],
   },
 
@@ -120,7 +111,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.BROW_R_Y, value: 0.3 },
       { id: P.EYE_L_OPEN, value: 1.0 },
       { id: P.EYE_R_OPEN, value: 1.0 },
-      { id: P.ANGLE_X, value: 3 },
     ],
   },
 
@@ -130,8 +120,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.BROW_R_Y, value: 0.3 },
       { id: P.EYE_L_OPEN, value: 0.7 },
       { id: P.EYE_R_OPEN, value: 0.7 },
-      { id: P.ANGLE_X, value: -8 },
-      { id: P.ANGLE_Z, value: -5 },
     ],
   },
 
@@ -154,8 +142,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_L_OPEN, value: 1.1 },
       { id: P.EYE_R_OPEN, value: 1.1 },
       { id: P.MOUTH_OPEN_Y, value: 0.4 },
-      { id: P.ANGLE_Y, value: 5 },
-      { id: P.BODY_Y, value: 3 },
     ],
   },
 
@@ -166,8 +152,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_L_OPEN, value: 0.4 },
       { id: P.EYE_R_OPEN, value: 0.4 },
       { id: P.MOUTH_OPEN_Y, value: 0.05 },
-      { id: P.ANGLE_Y, value: -5 },
-      { id: P.BODY_Y, value: -5 },
     ],
   },
 
@@ -178,8 +162,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_L_OPEN, value: 0.2 },
       { id: P.EYE_R_OPEN, value: 0.2 },
       { id: P.MOUTH_OPEN_Y, value: 0 },
-      { id: P.ANGLE_X, value: -5 },
-      { id: P.ANGLE_Y, value: -8 },
     ],
   },
 
@@ -192,7 +174,6 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_L_SMILE, value: 0.3 },
       { id: P.EYE_R_SMILE, value: 0.4 },
       { id: P.MOUTH_OPEN_Y, value: 0.3 },
-      { id: P.ANGLE_X, value: 5 },
     ],
   },
 }

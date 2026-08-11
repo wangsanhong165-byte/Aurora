@@ -189,6 +189,7 @@ function withLocalSemanticGesture(intent: CharacterIntent): CharacterIntent {
   if (intent.motionPlan || intent.behavior !== 'speak') return intent
   const emotion = (intent.emotion || 'neutral').toLowerCase()
   const recipes: Record<string, MotionPrimitive[]> = {
+    neutral: ['tilt_left', 'tilt_right'],
     happy: ['tilt_left', 'tilt_right', 'nod'],
     playful: ['tilt_right', 'nod', 'tilt_left'],
     joyful: ['nod', 'tilt_left', 'tilt_right'],
@@ -201,7 +202,7 @@ function withLocalSemanticGesture(intent: CharacterIntent): CharacterIntent {
     angry: ['lean_forward', 'nod'],
   }
   const candidates = recipes[emotion]
-  if (!candidates || (intent.intensity ?? 0.5) < 0.32) return intent
+  if (!candidates || (intent.intensity ?? 0.5) < 0.25) return intent
   const hash = [...(intent.turnId || emotion)]
     .reduce((value, character) => ((value * 31) + character.charCodeAt(0)) >>> 0, 7)
   const primitive = candidates[hash % candidates.length]

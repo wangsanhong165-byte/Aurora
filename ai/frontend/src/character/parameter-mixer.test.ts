@@ -98,3 +98,12 @@ test('zero-weight override resolves to the baseline', () => {
   submit(mixer, { parameterId: 'ParamArm', value: 30, priority: 50, weight: 0 })
   assert.equal(resolveOne(mixer, 'ParamArm'), BASELINE)
 })
+
+test('lip-sync (76) beats the expression layer (75) so audio can open the mouth', () => {
+  const mixer = createMixer()
+  // The expression layer pins ParamMouthOpenY (e.g. neutral preset writes 0).
+  submit(mixer, { parameterId: 'ParamMouthOpenY', value: 0, priority: 75, source: 'expression' })
+  // Lip-sync writes the audio-driven opening at a higher priority.
+  submit(mixer, { parameterId: 'ParamMouthOpenY', value: 0.8, priority: 76, source: 'lip_sync' })
+  assert.ok(Math.abs(resolveOne(mixer, 'ParamMouthOpenY') - 0.8) < 1e-9)
+})

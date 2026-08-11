@@ -59,13 +59,22 @@ export class SpeechPerformanceController {
     this.previousAudioLevel += (level - this.previousAudioLevel)
       * (1 - Math.exp(-dt * 12))
 
-    const weight = onsetEnvelope * releaseEnvelope
+    const weight = this.state === 'speaking'
+      ? onsetEnvelope
+      : this.state === 'releasing' ? releaseEnvelope : 0
+    const voiceEnergy = 0.72 + level * 0.68
+    const phraseDrift = Math.sin(this.elapsed * 0.72 + 0.35)
+    const counterDrift = Math.sin(this.elapsed * 1.18 + 1.6)
     return {
-      headX: Math.sin(this.elapsed * 2.25 + 0.7) * 0.72 * weight,
-      headY: (Math.sin(this.elapsed * 4.1) * 0.42 + accentEnvelope * 1.25) * weight,
-      headZ: Math.sin(this.elapsed * 3.2) * 0.34 * weight,
-      bodyX: Math.sin(this.elapsed * 1.75) * 0.38 * weight,
-      bodyY: (Math.sin(this.elapsed * 1.35) * 0.2 + accentEnvelope * 0.32) * weight,
+      headX: (Math.sin(this.elapsed * 1.92 + 0.7) * 1.05 + phraseDrift * 0.62)
+        * voiceEnergy * weight,
+      headY: (Math.sin(this.elapsed * 3.45) * 0.72 + accentEnvelope * 1.85)
+        * weight,
+      headZ: (Math.sin(this.elapsed * 2.35 + 0.25) * 0.58 + counterDrift * 0.22)
+        * voiceEnergy * weight,
+      bodyX: (-phraseDrift * 0.68 + counterDrift * 0.26) * voiceEnergy * weight,
+      bodyY: (Math.sin(this.elapsed * 1.12) * 0.38 + accentEnvelope * 0.52)
+        * weight,
       weight,
       state: this.state,
     }

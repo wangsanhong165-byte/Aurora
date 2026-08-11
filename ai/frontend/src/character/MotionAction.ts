@@ -49,9 +49,13 @@ type PrimitiveFrame = {
 }
 
 const MAX_ACTION_DURATION_MS = 8_000
-const MAX_STEPS = 16
+const MAX_LLM_STEPS = 3
+const MAX_AUTHORED_STEPS = 16
 
-export function validateMotionPlan(value: unknown): MotionPlanValidation {
+export function validateMotionPlan(
+  value: unknown,
+  maxSteps = MAX_LLM_STEPS,
+): MotionPlanValidation {
   const errors: string[] = []
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { ok: false, errors: ['motion plan must be an object'] }
@@ -64,13 +68,13 @@ export function validateMotionPlan(value: unknown): MotionPlanValidation {
   if (durationMs === null || durationMs < 300 || durationMs > MAX_ACTION_DURATION_MS) {
     errors.push(`durationMs must be between 300 and ${MAX_ACTION_DURATION_MS}`)
   }
-  if (!Array.isArray(record.steps) || record.steps.length < 1 || record.steps.length > MAX_STEPS) {
-    errors.push(`steps must contain between 1 and ${MAX_STEPS} entries`)
+  if (!Array.isArray(record.steps) || record.steps.length < 1 || record.steps.length > maxSteps) {
+    errors.push(`steps must contain between 1 and ${maxSteps} entries`)
   }
 
   const steps: MotionActionStep[] = []
   if (Array.isArray(record.steps)) {
-    record.steps.slice(0, MAX_STEPS + 1).forEach((raw, index) => {
+    record.steps.slice(0, maxSteps + 1).forEach((raw, index) => {
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         errors.push(`steps[${index}] must be an object`)
         return
@@ -133,7 +137,7 @@ export function normalizeMotionAction(value: unknown): MotionActionDefinition {
     throw new Error('Action must be an object')
   }
   const record = value as Record<string, unknown>
-  const validation = validateMotionPlan(record)
+  const validation = validateMotionPlan(record, MAX_AUTHORED_STEPS)
   if (!validation.ok || !validation.plan) {
     throw new Error(validation.errors.join('; '))
   }

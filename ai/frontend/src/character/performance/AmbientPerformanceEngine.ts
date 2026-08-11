@@ -7,6 +7,7 @@ import { facsFromVAD, logicalFaceFromFACS } from './FACSState.ts'
 import { resolveMotionStyle, type MotionStyleOptions, type ResolvedMotionStyle } from './MotionStyle.ts'
 import { SpeechPerformanceController } from './SpeechPerformanceController.ts'
 import type { VADVector } from './VADState.ts'
+import { semanticPostureFromVAD } from './SemanticPosture.ts'
 import { VoiceWaitingMotionController } from './VoiceWaitingMotionController.ts'
 
 export type AmbientPerformanceChannel = 'head' | 'body' | 'gaze'
@@ -85,7 +86,6 @@ export class AmbientPerformanceEngine {
     const gain = Math.max(0, Math.min(2.5, input.gain ?? 1))
     const idleAllowed = input.enabled
       && this.activity === 'idle'
-      && input.blockedChannels.size === 0
     this.idle.setVAD(input.vad)
     this.idle.update(delta, idleAllowed)
     const idle = this.idle.getSnapshot()
@@ -156,14 +156,7 @@ function logicalSpeechPose(
 }
 
 function vadPosture(vad: VADVector, gain: number): Record<string, number> {
-  const facs = facsFromVAD(vad)
-  return {
-    'eye.y': (facs.gazeY ?? 0) * gain,
-    'head.y': (facs.headY ?? 0) * 0.7 * gain,
-    'head.z': (facs.headZ ?? 0) * 0.7 * gain,
-    'body.x': (facs.bodyX ?? 0) * 0.65 * gain,
-    'body.y': (facs.bodyY ?? 0) * 0.7 * gain,
-  }
+  return semanticPostureFromVAD(vad, gain)
 }
 
 function addLogical(

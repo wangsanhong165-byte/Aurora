@@ -149,7 +149,7 @@ class MotionPlanStepPayload(PayloadModel):
 
 class MotionPlanPayload(PayloadModel):
     duration_ms: int = Field(alias="durationMs", ge=300, le=8000)
-    steps: list[MotionPlanStepPayload] = Field(min_length=1, max_length=16)
+    steps: list[MotionPlanStepPayload] = Field(min_length=1, max_length=3)
 
 
 class CharacterIntentSegmentPayload(PayloadModel):

@@ -99,3 +99,48 @@ def test_response_interpreter_selects_dominant_segment_and_keeps_intensity_separ
     assert performance.intensity == 0.8
     assert performance.energy == 0.2
     assert performance.attention == "screen"
+
+
+def test_response_interpreter_canonicalizes_every_segment_motion_plan():
+    turn = CharacterTurn(input=TurnInput(text="hello"))
+    response = LLMResponse(
+        reply="Hi",
+        segments=[{
+            "text": "Hi",
+            "emotion": "playful",
+            "motionPlan": {
+                "durationMs": 1000,
+                "debugLabel": "harmless",
+                "steps": [
+                    {"atMs": 0, "durationMs": 600, "primitive": "tilt_left", "intensity": 0.4},
+                    {"atMs": 100, "durationMs": 500, "primitive": "ParamAngleX", "intensity": 1},
+                ],
+            },
+        }],
+    )
+
+    interpreted = ResponseInterpreter().interpret(response, turn)
+
+    assert interpreted.segments[0]["motionPlan"] == {
+        "durationMs": 1000,
+        "steps": [
+            {"atMs": 0, "durationMs": 600, "primitive": "tilt_left", "intensity": 0.4},
+        ],
+    }
+    assert "motion_plan_step_removed" in interpreted.warnings
+
+
+def test_response_interpreter_tolerates_malformed_segment_ranking_values():
+    turn = CharacterTurn(input=TurnInput(text="hello"))
+    response = LLMResponse(
+        reply="Hi",
+        segments=[
+            {"text": "broken", "emotion": "sad", "intensity": "not-a-number"},
+            {"text": "valid", "emotion": "happy", "intensity": 0.7, "energy": 0.8},
+        ],
+    )
+
+    performance = ResponseInterpreter().interpret(response, turn).performance
+
+    assert performance.emotion == "happy"
+    assert performance.intensity == 0.7

@@ -82,6 +82,24 @@ test('motion plans are bounded in duration, step count, and intensity', () => {
   assert.match(result.errors.join(' '), /duration|steps|intensity/i)
 })
 
+test('LLM plans stay concise without truncating authored multi-step actions', () => {
+  const steps = Array.from({ length: 4 }, (_, index) => ({
+    atMs: index * 300,
+    durationMs: 300,
+    primitive: index % 2 === 0 ? 'nod' : 'tilt_left',
+    intensity: 0.45,
+  }))
+  assert.equal(validateMotionPlan({ durationMs: 1200, steps }).ok, false)
+  const action = normalizeMotionAction({
+    version: 1,
+    id: 'authored_sequence',
+    name: 'Authored sequence',
+    durationMs: 1200,
+    steps,
+  })
+  assert.equal(action.steps.length, 4)
+})
+
 test('unrigged appendage gestures are not advertised as safe primitives', () => {
   assert.equal(MOTION_PRIMITIVES.includes('arm_wave' as never), false)
   assert.equal(MOTION_PRIMITIVES.includes('tail_sway' as never), false)

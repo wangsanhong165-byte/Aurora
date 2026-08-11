@@ -13,7 +13,7 @@
 //   ai motion:             80
 //   ai expression:         75
 //   motion playback:       50
-//   lip_sync:              60
+//   lip_sync:              76  (must own mouth.open while audio is active)
 //   pet interaction:       60
 //   gaze:                  30
 //   blink:                 40  (absolute override when eyes closing)

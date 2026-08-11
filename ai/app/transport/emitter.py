@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 
 from app.runtime.character_turn import CharacterTurn, TurnInput
+from app.runtime.character_intent import CharacterIntent
+from app.runtime.semantic_performance import normalize_motion_plan
 from app.transport.domain_event import DomainEvent
 
 
@@ -64,7 +66,25 @@ class TransportEmitter:
         for raw in turn.segments:
             if not isinstance(raw, dict):
                 continue
-            segment = {key: raw[key] for key in allowed if key in raw}
+            intent = CharacterIntent.from_llm_segment(raw)
+            segment = {key: raw[key] for key in allowed if key in raw and key != "motionPlan"}
+            segment["text"] = str(raw.get("text", ""))
+            segment["emotion"] = intent.emotion
+            segment["behavior"] = intent.behavior
+            segment["attention"] = intent.attention
+            segment["energy"] = intent.energy
+            segment["intensity"] = intent.intensity
+            segment["contextTags"] = list(intent.context_tags)
+            if intent.duration_ms is not None:
+                segment["durationMs"] = intent.duration_ms
+            else:
+                segment.pop("durationMs", None)
+            if intent.natural_vad is not None:
+                segment["naturalVAD"] = intent.natural_vad
+            else:
+                segment.pop("naturalVAD", None)
+            if intent.motion_plan is not None:
+                segment["motionPlan"] = intent.motion_plan
             if segment:
                 result.append(segment)
         return result
@@ -167,7 +187,7 @@ class TransportEmitter:
                 "energy": plan.energy,
                 "durationMs": plan.duration_ms,
                 "contextTags": list(plan.context_tags),
-                "motionPlan": plan.motion_plan,
+                "motionPlan": normalize_motion_plan(plan.motion_plan).plan,
                 "segments": self._intent_segments(turn),
             }),
             self._event(turn, "turn.completed", {"reason": "complete"}),

@@ -12,6 +12,8 @@ import { shouldStartAuthoredIdle } from './AvatarCapabilityProfile.ts'
 import { FrameTimingMonitor } from './FrameTimingMonitor.ts'
 import { AmbientPerformanceEngine } from './performance/AmbientPerformanceEngine.ts'
 import { BodySwayController } from './performance/BodySwayController.ts'
+import { getExpression } from './live2d/expression.ts'
+import { semanticPostureFromVAD } from './performance/SemanticPosture.ts'
 
 test('lip-sync noise gate stays closed and calibrated output never exceeds model maximum', () => {
   const analyzer = new AudioAnalyzer()
@@ -91,6 +93,32 @@ test('ambient performance emits one coordinated pose and yields owned channels',
   assert.equal(Object.keys(blocked.values).length, 0)
 })
 
+test('attention ownership leaves the unowned torso rhythm alive', () => {
+  const engine = new AmbientPerformanceEngine(17)
+  engine.configure({ preset: 'lively', seed: 17 }, undefined, {
+    headControl: true, bodyControl: true, gazeControl: true,
+  })
+  engine.setActivity('idle')
+
+  let bodyPeak = 0
+  for (let frameIndex = 0; frameIndex < 60 * 20; frameIndex += 1) {
+    const frame = engine.update(1 / 60, {
+      vad: { valence: 0, arousal: 0, dominance: 0 },
+      audioLevel: 0,
+      enabled: true,
+      blockedChannels: new Set(['head', 'gaze']),
+    })
+    assert.equal(Object.keys(frame.values).some(key => key.startsWith('head.') || key.startsWith('eye.')), false)
+    bodyPeak = Math.max(
+      bodyPeak,
+      ...Object.entries(frame.values)
+        .filter(([key]) => key.startsWith('body.'))
+        .map(([, value]) => Math.abs(value)),
+    )
+  }
+  assert.ok(bodyPeak > 0.2, 'looking around should not freeze the shoulders and torso')
+})
+
 test('ambient activity transitions keep velocity bounded instead of restarting at zero', () => {
   const engine = new AmbientPerformanceEngine(23)
   engine.configure({ preset: 'natural', seed: 23 }, undefined, undefined)
@@ -132,6 +160,31 @@ test('expression blend semantics use the real Cubism baseline', () => {
   assert.equal(expressionTargetForBlend(0.4, 0.5, 'add', 0.2), 0.4)
   assert.ok(Math.abs(expressionTargetForBlend(0.5, 0.5, 'multiply', 0.8) - 0.6) < 1e-9)
   assert.equal(expressionTargetForBlend(1, 0.25, 'overwrite', 0.2), 0.4)
+})
+
+test('semantic face presets never seize head or torso locomotion channels', () => {
+  for (const name of [
+    'neutral', 'happy', 'sad', 'angry', 'surprised', 'shy', 'thinking',
+    'curious', 'confused', 'smile', 'excited', 'tired', 'sleepy', 'playful',
+  ]) {
+    const ids = getExpression(name).params.map(param => param.id)
+    assert.equal(
+      ids.some(id => id.startsWith('ParamAngle') || id.startsWith('ParamBodyAngle')),
+      false,
+      `${name} must leave posture to the coordinated performance layer`,
+    )
+  }
+})
+
+test('semantic posture coordinates emotion across head and torso', () => {
+  const happy = semanticPostureFromVAD({ valence: 0.72, arousal: 0.35, dominance: 0.28 })
+  const sad = semanticPostureFromVAD({ valence: -0.72, arousal: -0.28, dominance: -0.56 })
+  const angry = semanticPostureFromVAD({ valence: -0.72, arousal: 0.78, dominance: 0.68 })
+
+  assert.ok(happy['head.y'] > 1 && happy['body.y'] > 0.5)
+  assert.ok(sad['head.y'] < -2 && sad['body.y'] < -1.5)
+  assert.ok(angry['body.y'] > 0, 'dominant anger should lean into the statement')
+  assert.equal('eye.x' in happy, false, 'semantic posture must not fight attention ownership')
 })
 
 test('expression release keeps submitting until the real baseline is restored', () => {

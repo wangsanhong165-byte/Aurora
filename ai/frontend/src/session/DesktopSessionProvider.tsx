@@ -183,7 +183,10 @@ export function DesktopSessionWorkspace() {
               turnId: run.turnId,
               reason: 'diagnostic_interrupt',
             })
-            run.finishTimer = setTimeout(() => finishDiagnostic(run), 350)
+            // Performance telemetry is sampled at 4 Hz. Allow two complete
+            // samples after interruption so the probe observes the smooth
+            // release instead of racing the first stale mouth snapshot.
+            run.finishTimer = setTimeout(() => finishDiagnostic(run), 650)
           }, 850)
         } catch (error) {
           finishDiagnostic(run, error)

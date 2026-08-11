@@ -111,4 +111,40 @@ def test_segment_adapter_enforces_llm_gesture_budget():
         },
     })
 
-    assert intent.motion_plan is None
+    assert intent.motion_plan is not None
+    assert len(intent.motion_plan["steps"]) == 3
+
+
+def test_segment_adapter_salvages_valid_steps_and_ignores_harmless_metadata():
+    intent = CharacterIntent.from_llm_segment({
+        "motionPlan": {
+            "durationMs": 1200,
+            "source": "llm-semantic-plan",
+            "steps": [
+                {
+                    "atMs": 0,
+                    "durationMs": 600,
+                    "primitive": "nod",
+                    "intensity": 0.55,
+                    "note": "agreement beat",
+                },
+                {
+                    "atMs": 200,
+                    "durationMs": 500,
+                    "primitive": "ParamAngleX",
+                    "intensity": 1,
+                    "parameter": "ParamAngleX",
+                },
+            ],
+        },
+    })
+
+    assert intent.motion_plan == {
+        "durationMs": 1200,
+        "steps": [{
+            "atMs": 0,
+            "durationMs": 600,
+            "primitive": "nod",
+            "intensity": 0.55,
+        }],
+    }

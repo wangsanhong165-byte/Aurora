@@ -287,29 +287,7 @@ export function releaseModel(handle: CubismModelHandle): void {
   CubismMoc.delete(handle.frameworkMoc)
 }
 
-/** Common parameter IDs used by most Cubism models */
-export const PARAM_IDS = {
-  MOUTH_OPEN_Y: 'ParamMouthOpenY',
-  MOUTH_FORM: 'ParamMouthForm',
-  EYE_L_OPEN: 'ParamEyeLOpen',
-  EYE_R_OPEN: 'ParamEyeROpen',
-  EYE_L_SMILE: 'ParamEyeLSmile',
-  EYE_R_SMILE: 'ParamEyeRSmile',
-  BROW_L_Y: 'ParamBrowLY',
-  BROW_R_Y: 'ParamBrowRY',
-  BROW_L_X: 'ParamBrowLX',
-  BROW_R_X: 'ParamBrowRX',
-  BODY_X: 'ParamBodyAngleX',
-  BODY_Y: 'ParamBodyAngleY',
-  ANGLE_X: 'ParamAngleX',
-  ANGLE_Y: 'ParamAngleY',
-  ANGLE_Z: 'ParamAngleZ',
-  CHEEK: 'ParamCheek',
-  NOSE: 'ParamNose',
-  MOUTH_X: 'ParamMouthX',
-  EYE_BALL_X: 'ParamEyeBallX',
-  EYE_BALL_Y: 'ParamEyeBallY',
-} as const
+export { PARAM_IDS } from './parameters.ts'
 
 export interface ModelConfig {
   /** URL/path to .model3.json */

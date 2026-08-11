@@ -5,7 +5,7 @@ import type { CharacterIntent, CharacterBehaviorConfig, CharacterPresentationPla
 export interface PerformanceModifiers {
   blinkRate: number
   bodyEnergy: number
-  attention: 'user' | 'away' | 'neutral'
+  attention: 'user' | 'screen' | 'away' | 'neutral'
 }
 
 export interface PerformancePlan extends CharacterPresentationPlan {
@@ -33,7 +33,7 @@ export class CharacterPerformancePolicy {
     const personality = config.personality ?? {}
     const requestedExpression = mapping.expression ?? base.expression ?? emotion
     const expression = (
-      Boolean(config.emotionMap?.[requestedExpression])
+      Object.prototype.hasOwnProperty.call(config.emotionMap ?? {}, requestedExpression)
       || supportsExpression(profile, requestedExpression)
     ) ? requestedExpression : 'neutral'
     // A profile sequence is descriptive metadata, not an executable motion.
@@ -78,10 +78,11 @@ export class CharacterPerformancePolicy {
       modifiers: {
         blinkRate: emotion === 'surprised' ? 0.75 : emotion === 'happy' ? 1.2 : 1,
         bodyEnergy: energy,
-        attention: intent.attention === 'screen' ? 'neutral'
+        attention: intent.attention === 'screen' ? 'screen'
           : intent.attention === 'away' ? 'away'
           : intent.attention === 'neutral' ? 'neutral'
-          : behavior === 'think' && !contextTags.has('close-up') ? 'away' : 'user',
+          : (behavior === 'think' || ['shy', 'embarrassed', 'confused'].includes(emotion))
+              && !contextTags.has('close-up') ? 'away' : 'user',
       },
       motionProbability,
     }

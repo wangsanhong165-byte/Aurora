@@ -171,3 +171,25 @@ def test_session_writer_owns_identity_sequence_and_unique_event_ids():
         for frame in probe.sent
         if frame["eventType"] != "runtime.status"
     )
+
+
+def test_character_intent_emission_never_fails_on_a_partially_invalid_segment_plan():
+    turn = completed_turn()
+    turn.output.segments = [{
+        "text": "world",
+        "emotion": "happy",
+        "motionPlan": {
+            "durationMs": 1100,
+            "steps": [
+                {"atMs": 0, "durationMs": 700, "primitive": "nod", "intensity": 0.5},
+                {"atMs": 100, "durationMs": 500, "primitive": "ParamAngleX", "intensity": 1},
+            ],
+        },
+    }]
+
+    events = TransportEmitter().emit(turn)
+    intent = next(event for event in events if event.event_type == "character.intent")
+
+    assert len(intent.payload.segments) == 1
+    assert intent.payload.segments[0].motion_plan.steps[0].primitive == "nod"
+    assert len(intent.payload.segments[0].motion_plan.steps) == 1

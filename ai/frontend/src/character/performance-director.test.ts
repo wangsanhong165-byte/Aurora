@@ -139,5 +139,9 @@ test('emotionally marked speech gets one subtle local gesture when the LLM omits
   now = 1_000
   director.stage({ ...base, turnId: 'turn-neutral', emotion: 'neutral' })
   now = 1_300
-  assert.equal(director.update()[0].motionPlan, undefined)
+  const neutralIntent = director.update()[0]
+  // Neutral speech still gets a gentle gesture so speaking never looks frozen.
+  assert.ok(neutralIntent.motionPlan)
+  assert.equal(neutralIntent.motionPlan!.steps.length, 1)
+  assert.ok(neutralIntent.motionPlan!.steps[0].intensity <= 0.55)
 })

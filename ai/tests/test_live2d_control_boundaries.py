@@ -29,8 +29,8 @@ def test_behavior_resolver_stays_between_intent_and_live2d_controllers():
 
     assert "class CharacterBehaviorResolver" in resolver
     assert ".setParameter(" not in resolver
-    assert "behaviorResolver.resolve(intent)" in controllers
-    assert "performancePolicy.evaluate(intent, basePlan" in controllers
+    assert "behaviorResolver.resolve(activeIntent)" in controllers
+    assert "performancePolicy.evaluate(activeIntent, basePlan" in controllers
     assert "exprCtrl.apply(policy.expression" in controllers
     assert "this.motionArbiter.request({" in controllers
     assert "name: policy.motion" in controllers
@@ -392,13 +392,14 @@ def test_idle_action_scheduler_is_capability_aware_and_avoids_repetition():
     for action in (
         "small-nod",
         "head-tilt",
-        "side-look",
         "weight-shift",
         "gentle-lean",
         "sigh-sink",
         "slow-blink",
     ):
         assert f"'{action}'" in scheduler
+    assert "'side-look'" not in scheduler
+    assert "'curious-look'" not in scheduler
     assert "recentActions" in scheduler
     assert "recentDirections" in scheduler
     assert "capabilities" in scheduler

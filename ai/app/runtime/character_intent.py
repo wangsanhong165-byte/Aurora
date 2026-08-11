@@ -2,6 +2,8 @@
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from app.runtime.semantic_performance import normalize_motion_plan
+
 EMOTIONS = {
     "neutral", "calm", "happy", "joyful", "playful", "love", "shy",
     "embarrassed", "surprised", "confused", "worried", "sad", "cry",
@@ -10,11 +12,6 @@ EMOTIONS = {
 }
 BEHAVIORS = {"greet", "listen", "think", "speak", "agree", "disagree", "laugh", "idle", "comfort", "wave", "nod", "tilt", "shrug"}
 ATTENTIONS = {"user", "screen", "away", "neutral"}
-MOTION_PRIMITIVES = {
-    "nod", "tilt_left", "tilt_right", "lean_forward", "lean_back",
-    "sway", "look_left", "look_right", "breathe", "shrug",
-}
-
 @dataclass(frozen=True)
 class CharacterIntent:
     emotion: str = "neutral"
@@ -33,8 +30,8 @@ class CharacterIntent:
         emotion = str(segment.get("emotion", "neutral")).lower()
         behavior = str(segment.get("behavior", "")).lower()
         attention = str(segment.get("attention", "user")).lower()
-        raw_intensity = segment.get("intensity", intensity)
-        raw_energy = segment.get("energy", raw_intensity)
+        raw_intensity = cls._bounded_float(segment.get("intensity", intensity), intensity)
+        raw_energy = cls._bounded_float(segment.get("energy", raw_intensity), raw_intensity)
         duration = segment.get("durationMs")
         natural_vad = cls._natural_vad(segment.get("naturalVAD", segment.get("natural_vad")))
         raw_tags = segment.get("contextTags", segment.get("context_tags", ()))
@@ -45,10 +42,10 @@ class CharacterIntent:
         return cls(
             emotion=emotion if emotion in EMOTIONS else "neutral",
             behavior=behavior if behavior in BEHAVIORS else "",
-            intensity=max(0.0, min(1.0, float(raw_intensity))),
+            intensity=raw_intensity,
             attention=attention if attention in ATTENTIONS else "user",
-            energy=max(0.0, min(1.0, float(raw_energy))),
-            duration_ms=int(duration) if isinstance(duration, (int, float)) and 0 < duration <= 10000 else None,
+            energy=raw_energy,
+            duration_ms=int(duration) if isinstance(duration, (int, float)) and not isinstance(duration, bool) and 0 < duration <= 10000 else None,
             natural_vad=natural_vad,
             context_tags=tags,
             motion_plan=cls._motion_plan(segment.get("motionPlan", segment.get("motion_plan"))),
@@ -71,46 +68,14 @@ class CharacterIntent:
 
     @staticmethod
     def _motion_plan(value: Any) -> dict[str, Any] | None:
-        if not isinstance(value, dict) or set(value) != {"durationMs", "steps"}:
-            return None
-        duration = value.get("durationMs")
-        steps = value.get("steps")
-        if (
-            not isinstance(duration, (int, float))
-            or isinstance(duration, bool)
-            or not 300 <= duration <= 8000
-            or not isinstance(steps, list)
-            or not 1 <= len(steps) <= 3
-        ):
-            return None
+        return normalize_motion_plan(value).plan
 
-        normalized_steps: list[dict[str, Any]] = []
-        allowed_keys = {"atMs", "durationMs", "primitive", "intensity"}
-        for step in steps:
-            if not isinstance(step, dict) or set(step) != allowed_keys:
-                return None
-            at_ms = step.get("atMs")
-            step_duration = step.get("durationMs")
-            primitive = step.get("primitive")
-            intensity = step.get("intensity")
-            numbers = (at_ms, step_duration, intensity)
-            if any(isinstance(number, bool) for number in numbers):
-                return None
-            if (
-                not isinstance(at_ms, (int, float))
-                or not isinstance(step_duration, (int, float))
-                or not isinstance(intensity, (int, float))
-                or primitive not in MOTION_PRIMITIVES
-                or at_ms < 0
-                or not 120 <= step_duration <= 2500
-                or not 0 <= intensity <= 1
-                or at_ms + step_duration > duration
-            ):
-                return None
-            normalized_steps.append({
-                "atMs": int(at_ms),
-                "durationMs": int(step_duration),
-                "primitive": str(primitive),
-                "intensity": float(intensity),
-            })
-        return {"durationMs": int(duration), "steps": normalized_steps}
+    @staticmethod
+    def _bounded_float(value: Any, fallback: float) -> float:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = fallback
+        if number != number or number in {float("inf"), float("-inf")}:
+            number = fallback
+        return max(0.0, min(1.0, number))
