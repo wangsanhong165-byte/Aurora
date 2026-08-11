@@ -1,0 +1,9 @@
+{
+  "id": "monika",
+  "name": "Monika",
+  "ref": "ref.wav",
+  "gpt": "gpt.ckpt",
+  "vits": "sovits.pth",
+  "prompt_text": "reference transcript",
+  "prompt_lang": "en"
+}

@@ -2,6 +2,7 @@
   "Design_genius_White": {
     "prompt_emotions": [
       "neutral",
+      "calm",
       "angry",
       "sad",
       "happy",
@@ -22,6 +23,7 @@
     ],
     "emotion_map": {
       "neutral": "",
+      "calm": "",
       "happy": "",
       "smile": "",
       "playful": "",
@@ -36,9 +38,9 @@
       "shy": "脸红",
       "embarrassed": "脸红",
       "pout": "嘟嘴",
-      "sad": "流泪关",
+      "sad": "",
       "cry": "哭哭",
-      "worried": "哭哭"
+      "worried": ""
     },
     "behaviors": [
       "wave",

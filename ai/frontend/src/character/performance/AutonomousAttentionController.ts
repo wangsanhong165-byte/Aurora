@@ -5,6 +5,8 @@ export type AutonomousAttentionPhase = 'waiting' | 'acquire' | 'hold' | 'release
 export interface AutonomousAttentionContext {
   enabled: boolean
   activity: string
+  /** Pointer/user focus suspends autonomous gaze even while activity is idle. */
+  interactionEngaged?: boolean
 }
 
 export interface AutonomousAttentionSample {
@@ -63,7 +65,9 @@ export class AutonomousAttentionController {
 
   update(dt: number, context: AutonomousAttentionContext): AutonomousAttentionSample {
     const delta = clamp(dt, 0, 0.1)
-    const allowed = context.enabled && context.activity === 'idle'
+    const allowed = context.enabled
+      && context.activity === 'idle'
+      && context.interactionEngaged !== true
     if (!allowed && this.phase !== 'waiting' && this.phase !== 'release') {
       this.beginPhase('release', 0.55)
     }

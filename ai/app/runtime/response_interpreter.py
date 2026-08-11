@@ -85,6 +85,7 @@ class ResponseInterpreter:
             energy=intent.energy,
             speaking=bool(response.reply),
             duration_ms=intent.duration_ms,
+            natural_vad=intent.natural_vad,
             context_tags=list(intent.context_tags),
             motion_plan=intent.motion_plan,
         )

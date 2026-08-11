@@ -18,6 +18,7 @@ export interface AmbientPerformanceInput {
   enabled: boolean
   blockedChannels: ReadonlySet<AmbientPerformanceChannel>
   tracking?: Record<string, number>
+  focusWeights?: { head: number; body: number; gaze: number }
   gain?: number
 }
 
@@ -87,7 +88,7 @@ export class AmbientPerformanceEngine {
     const idleAllowed = input.enabled
       && this.activity === 'idle'
     this.idle.setVAD(input.vad)
-    this.idle.update(delta, idleAllowed)
+    this.idle.update(delta, idleAllowed, input.focusWeights)
     const idle = this.idle.getSnapshot()
     const speech = this.speech.update(delta, input.audioLevel)
     const waiting = this.waiting.update(

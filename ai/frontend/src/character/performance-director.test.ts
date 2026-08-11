@@ -68,7 +68,8 @@ test('repeated LLM gestures are suppressed inside the Soullink-style repeat wind
   director.stage({ ...base, turnId: 'turn-2', motionPlan })
   now = 1_300
   const repeated = director.update()[0]
-  assert.equal(repeated.motionPlan, undefined)
+  assert.ok(repeated.motionPlan, 'a repeated LLM gesture must degrade to local choreography')
+  assert.notDeepEqual(repeated.motionPlan, motionPlan)
 
   now = 7_100
   director.stage({ ...base, turnId: 'turn-3', motionPlan })
@@ -125,7 +126,7 @@ test('late audio timing does not replay a fallback cue that already fired', () =
   assert.equal(director.update()[0]?.emotion, 'surprised')
 })
 
-test('emotionally marked speech gets one subtle local gesture when the LLM omits motion', () => {
+test('speech gets duration-aware local choreography when the LLM omits motion', () => {
   let now = 0
   const director = new PerformanceDirector(() => now)
   director.stage(base)
@@ -144,4 +145,17 @@ test('emotionally marked speech gets one subtle local gesture when the LLM omits
   assert.ok(neutralIntent.motionPlan)
   assert.equal(neutralIntent.motionPlan!.steps.length, 1)
   assert.ok(neutralIntent.motionPlan!.steps[0].intensity <= 0.55)
+})
+
+test('decoded long speech distributes multiple expression-compatible body beats', () => {
+  let now = 0
+  const director = new PerformanceDirector(() => now)
+  director.stage({ ...base, turnId: 'turn-long', emotion: 'shy' })
+  director.onAudioStart('turn-long', 9_000)
+
+  const cue = director.update()[0]
+  assert.equal(cue.durationMs, 9_000)
+  assert.equal(cue.motionPlan?.durationMs, 9_000)
+  assert.equal(cue.motionPlan?.steps.length, 3)
+  assert.ok(cue.motionPlan!.steps.at(-1)!.atMs > 6_000)
 })

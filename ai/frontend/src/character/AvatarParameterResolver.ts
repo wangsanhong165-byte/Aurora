@@ -64,6 +64,27 @@ export class AvatarParameterResolver {
       Object.entries(entries).filter(([logical]) => !protectedParameters.has(logical)),
     ))
   }
+  /** Resolve centered logical motion values as offsets for additive mixing. */
+  resolveMotionDeltas(entries: Record<string, number>): Record<string, number> {
+    const protectedParameters = this.protectedMotionParameters()
+    const result: Record<string, number> = {}
+    for (const [logical, value] of Object.entries(entries)) {
+      if (protectedParameters.has(logical) || !this.supportsLogicalParameter(logical)) continue
+      const binding = this._profile?.bindings[logical]
+      const id = typeof binding === 'string' ? binding : binding?.target
+      if (!id) continue
+      const expressive = logical.startsWith('head.')
+        || logical.startsWith('eye.')
+        || logical.startsWith('body.')
+        || logical === 'mouth.form'
+      const gain = (expressive ? this.parameterGain : 1)
+        * (logical.startsWith('body.') ? this.bodyMotionGain : 1)
+      const scale = typeof binding === 'string' ? 1 : binding?.scale ?? 1
+      const sign = typeof binding !== 'string' && binding?.mode === 'subtract' ? -1 : 1
+      result[id] = this.clampLogical(logical, value * gain * scale * sign)
+    }
+    return result
+  }
 
   isProtectedMotionTarget(parameterId: string): boolean {
     for (const logical of this.protectedMotionParameters()) {

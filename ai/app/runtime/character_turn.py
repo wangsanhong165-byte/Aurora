@@ -81,6 +81,7 @@ class PerformancePlan:
     energy: float = 0.5
     speaking: bool = False
     duration_ms: int | None = None
+    natural_vad: dict[str, float] | None = None
     context_tags: list[str] = field(default_factory=list)
     motion_plan: dict[str, Any] | None = None
 
@@ -205,6 +206,7 @@ class CharacterTurn:
             "energy": plan.energy,
             "speaking": plan.speaking,
             "duration_ms": plan.duration_ms,
+            "natural_vad": dict(plan.natural_vad) if plan.natural_vad else None,
             "context_tags": list(plan.context_tags),
             "motion_plan": plan.motion_plan,
         }
@@ -220,6 +222,9 @@ class CharacterTurn:
         plan.energy = float(value.get("energy", value.get("intensity", plan.energy)))
         plan.speaking = bool(value.get("speaking", plan.speaking))
         plan.duration_ms = value.get("duration_ms")
+        plan.natural_vad = CharacterIntent._natural_vad(
+            value.get("natural_vad", value.get("naturalVAD"))
+        )
         plan.context_tags = list(value.get("context_tags", ()))[:8]
         plan.motion_plan = CharacterIntent._motion_plan(
             value.get("motion_plan", value.get("motionPlan"))

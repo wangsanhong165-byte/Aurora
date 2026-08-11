@@ -133,6 +133,19 @@ def test_turn_recorder_persists_sanitized_read_only_trace(tmp_path: Path):
     turn.output.performance.emotion = "gentle"
     turn.output.performance.behavior = "nod"
     turn.output.performance.attention = "user"
+    turn.output.performance.intensity = 0.45
+    turn.output.performance.energy = 0.7
+    turn.output.performance.natural_vad = {
+        "valence": 0.3, "arousal": 0.2, "dominance": 0.1,
+    }
+    turn.output.performance.context_tags = ["reassuring"]
+    turn.output.performance.motion_plan = {
+        "durationMs": 800,
+        "steps": [{
+            "atMs": 0, "durationMs": 600,
+            "primitive": "nod", "intensity": 0.4,
+        }],
+    }
     turn.output.audio = b"RIFFsecret"
     turn.metrics = {"MemoryRetrieveStep_ms": 3.4, "e2e_latency_ms": 9.8}
     turn.learned_memories = [{"content": "用户允许读取该文件", "confidence": 0.8}]
@@ -147,6 +160,10 @@ def test_turn_recorder_persists_sanitized_read_only_trace(tmp_path: Path):
     assert detail["readOnly"] is True
     assert detail["response"]["text"] == "好的"
     assert detail["performance"]["behavior"] == "nod"
+    assert detail["performance"]["intensity"] == 0.45
+    assert detail["performance"]["energy"] == 0.7
+    assert detail["performance"]["motionPlan"]["steps"][0]["primitive"] == "nod"
+    assert detail["performance"]["naturalVAD"]["valence"] == 0.3
     assert detail["memory"]["retrieved"][0]["summary"] == "用户喜欢安静"
     serialized = str(detail)
     assert "private reasoning" not in serialized

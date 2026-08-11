@@ -64,3 +64,20 @@ test('recentering releases through a bounded recovery rather than snapping', () 
   assert.ok(Math.abs(recovered['head.x']) < 0.12)
   assert.ok(Math.abs(recovered['body.x']) < 0.12)
 })
+
+test('pointer leave releases head over a full visual beat without slowing acquisition', () => {
+  const tracking = new EmbodiedTrackingController()
+  tracking.setTarget(0.82, -0.38)
+  const acquired = advance(tracking, 0.8)
+
+  tracking.release()
+  const quarterSecond = advance(tracking, 0.25)
+  const recovered = advance(tracking, 1.35)
+
+  assert.ok(acquired['head.x'] > 10, 'pointer acquisition must remain immediate')
+  assert.ok(
+    Math.abs(quarterSecond['head.x'] - acquired['head.x']) / 60 < 0.1,
+    'release must not expose a one-sample head snap',
+  )
+  assert.ok(Math.abs(recovered['head.x']) < 0.5)
+})

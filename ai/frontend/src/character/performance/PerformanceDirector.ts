@@ -101,10 +101,10 @@ export class PerformanceDirector {
       const scheduled = this.cues.shift()!
       if (!this.staged || scheduled.intent.turnId !== this.staged.turnId) continue
       this.emittedCueCount += 1
-      due.push(this.suppressRepeatedGesture(
-        withLocalSemanticGesture(scheduled.intent),
-        timestamp,
-      ))
+      const accepted = this.suppressRepeatedGesture(scheduled.intent, timestamp)
+      // A repeated LLM gesture may be removed, but speech must never become
+      // visually silent: deterministic local choreography remains available.
+      due.push(withLocalSemanticChoreography(accepted))
     }
     return due
   }
@@ -124,12 +124,17 @@ export class PerformanceDirector {
     }
   }
 
+  isAwaitingAudio(turnId: string): boolean {
+    return this.staged?.turnId === turnId && this.audio?.turnId !== turnId
+  }
+
   private scheduleFallback(staged: StagedPerformance): void {
     const intents = this.buildIntents(staged)
     let dueAt = staged.stagedAt + this.audioWaitMs
     this.cues = intents.map((intent, index) => {
-      const cue = { dueAt, intent }
-      if (index < intents.length - 1) dueAt += estimateSegmentMs(staged.segments[index])
+      const durationMs = estimateSegmentMs(staged.segments[index])
+      const cue = { dueAt, intent: alignIntentToDuration(intent, durationMs) }
+      if (index < intents.length - 1) dueAt += durationMs
       return cue
     })
   }
@@ -141,8 +146,9 @@ export class PerformanceDirector {
     let elapsedWeight = 0
     this.cues = intents.map((intent, index) => {
       const dueAt = audio.startedAt + audio.durationMs * elapsedWeight / totalWeight
+      const durationMs = Math.max(300, Math.round(audio.durationMs * weights[index] / totalWeight))
       elapsedWeight += weights[index]
-      return { dueAt, intent }
+      return { dueAt, intent: alignIntentToDuration(intent, durationMs) }
     }).slice(this.emittedCueCount)
   }
 
@@ -185,38 +191,87 @@ function motionSignature(value: unknown): string {
   }).filter(Boolean).join('|')
 }
 
-function withLocalSemanticGesture(intent: CharacterIntent): CharacterIntent {
-  if (intent.motionPlan || intent.behavior !== 'speak') return intent
+function withLocalSemanticChoreography(intent: CharacterIntent): CharacterIntent {
+  if (intent.motionPlan || !intent.behavior || ['idle', 'listen'].includes(intent.behavior)) return intent
   const emotion = (intent.emotion || 'neutral').toLowerCase()
-  const recipes: Record<string, MotionPrimitive[]> = {
-    neutral: ['tilt_left', 'tilt_right'],
-    happy: ['tilt_left', 'tilt_right', 'nod'],
-    playful: ['tilt_right', 'nod', 'tilt_left'],
-    joyful: ['nod', 'tilt_left', 'tilt_right'],
-    cheerful: ['nod', 'tilt_right', 'tilt_left'],
-    surprised: ['lean_back', 'tilt_left'],
-    shy: ['tilt_left', 'tilt_right'],
-    embarrassed: ['tilt_right', 'tilt_left'],
-    sad: ['lean_forward', 'tilt_left'],
-    worried: ['lean_forward', 'tilt_right'],
-    angry: ['lean_forward', 'nod'],
+  const behavior = intent.behavior.toLowerCase()
+  const behaviorRecipes: Record<string, MotionPrimitive[]> = {
+    greet: ['lean_forward', 'tilt_right', 'nod'],
+    agree: ['nod', 'lean_forward', 'nod'],
+    disagree: ['tilt_left', 'lean_back', 'tilt_right'],
+    think: ['look_left', 'tilt_right', 'breathe'],
+    laugh: ['lean_forward', 'sway', 'nod'],
+    comfort: ['lean_forward', 'breathe', 'tilt_left'],
+    wave: ['sway', 'lean_forward', 'tilt_right'],
+    nod: ['nod', 'lean_forward', 'nod'],
+    tilt: ['tilt_left', 'lean_forward', 'tilt_right'],
+    shrug: ['shrug', 'lean_back', 'tilt_left'],
   }
-  const candidates = recipes[emotion]
-  if (!candidates || (intent.intensity ?? 0.5) < 0.25) return intent
+  const emotionRecipes: Record<string, MotionPrimitive[]> = {
+    neutral: ['lean_forward', 'tilt_left', 'nod'],
+    calm: ['breathe', 'tilt_right', 'lean_forward'],
+    happy: ['lean_forward', 'tilt_right', 'nod'],
+    playful: ['tilt_right', 'sway', 'nod'],
+    joyful: ['lean_forward', 'sway', 'nod'],
+    cheerful: ['nod', 'sway', 'lean_forward'],
+    surprised: ['lean_back', 'tilt_left', 'breathe'],
+    shy: ['tilt_left', 'lean_back', 'breathe'],
+    embarrassed: ['tilt_right', 'lean_back', 'breathe'],
+    sad: ['breathe', 'lean_back', 'tilt_left'],
+    worried: ['lean_forward', 'tilt_right', 'breathe'],
+    angry: ['lean_forward', 'nod', 'lean_back'],
+  }
+  const candidates = behaviorRecipes[behavior] ?? emotionRecipes[emotion] ?? emotionRecipes.neutral
   const hash = [...(intent.turnId || emotion)]
     .reduce((value, character) => ((value * 31) + character.charCodeAt(0)) >>> 0, 7)
-  const primitive = candidates[hash % candidates.length]
-  const intensity = clamp(
-    (intent.intensity ?? 0.5) * 0.55 + (intent.energy ?? 0.5) * 0.18,
-    0.25,
-    0.55,
+  const ordered = candidates.map((_, index) => candidates[(index + hash) % candidates.length])
+  const durationMs = Math.round(clamp(intent.durationMs ?? 1_800, 600, 30_000))
+  const beatCount = durationMs >= 5_500 ? 3 : durationMs >= 2_200 ? 2 : 1
+  const fractions = beatCount === 3 ? [0.06, 0.42, 0.72]
+    : beatCount === 2 ? [0.08, 0.58] : [0.12]
+  const baseIntensity = clamp(
+    (intent.intensity ?? 0.5) * 0.46 + (intent.energy ?? 0.5) * 0.2,
+    0.22,
+    0.58,
   )
+  const steps = fractions.map((fraction, index) => {
+    const atMs = Math.round(durationMs * fraction)
+    const available = Math.max(120, durationMs - atMs)
+    return {
+      atMs,
+      durationMs: Math.round(Math.min(1_250, Math.max(520, durationMs * 0.13), available)),
+      primitive: ordered[index % ordered.length],
+      intensity: clamp(baseIntensity * (index === 0 ? 0.9 : index === 1 ? 1 : 0.82), 0, 1),
+    }
+  })
   return {
     ...intent,
     motionPlan: {
-      durationMs: 900,
-      steps: [{ atMs: 40, durationMs: 720, primitive, intensity }],
+      durationMs,
+      steps,
     },
+  }
+}
+
+function alignIntentToDuration(intent: CharacterIntent, durationMs: number): CharacterIntent {
+  const decodedDuration = Math.round(clamp(durationMs, 300, 120_000))
+  if (!intent.motionPlan) return { ...intent, durationMs: decodedDuration }
+  const planDuration = Math.round(clamp(decodedDuration, 300, 30_000))
+  const sourceDuration = Math.max(300, intent.motionPlan.durationMs)
+  const scale = planDuration / sourceDuration
+  const steps = intent.motionPlan.steps.map(step => {
+    const atMs = Math.round(clamp(step.atMs * scale, 0, planDuration - 120))
+    const available = Math.max(120, planDuration - atMs)
+    return {
+      ...step,
+      atMs,
+      durationMs: Math.round(Math.min(2_500, Math.max(120, step.durationMs * scale), available)),
+    }
+  })
+  return {
+    ...intent,
+    durationMs: decodedDuration,
+    motionPlan: { durationMs: planDuration, steps },
   }
 }
 

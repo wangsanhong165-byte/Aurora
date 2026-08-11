@@ -82,7 +82,11 @@ export class IdleBehaviorController {
     )
   }
 
-  update(dt: number, allowed: boolean): void {
+  update(
+    dt: number,
+    allowed: boolean,
+    focusWeights: { head: number; body: number; gaze: number } = { head: 0, body: 0, gaze: 0 },
+  ): void {
     this._elapsedMs += dt * 1000
     const seconds = this._elapsedMs / 1000
     const targetWeight = allowed ? 1 : 0
@@ -90,8 +94,11 @@ export class IdleBehaviorController {
     const weight = this._snapshot.transitionProgress
       + (targetWeight - this._snapshot.transitionProgress) * blend
     const sway = this._bodySway.update(seconds, allowed ? 0 : 1, this._style.bodyMotionGain)
+    const focus = Math.max(focusWeights.head, focusWeights.gaze)
     const action = this._actions.update(seconds, {
-      allowed,
+      // SoulLink-style interruption: an interaction cancels an idle action
+      // instead of letting its hidden phase advance behind pointer tracking.
+      allowed: allowed && focus < 0.08,
       focusLevel: allowed ? 0 : 1,
       capabilities: this._capabilities,
       personality: this._personality,
@@ -102,15 +109,18 @@ export class IdleBehaviorController {
     const amplitude = this._legacy
       ? { headX: 0.18, headY: 0.12, headZ: 0.12, eyeX: 0.18, eyeY: 0.1 }
       : { headX: 0.48, headY: 0.34, headZ: 0.3, eyeX: 0.24, eyeY: 0.14 }
+    const headWeight = weight * (1 - clamp(focusWeights.head, 0, 1) * 0.88)
+    const gazeWeight = weight * (1 - clamp(focusWeights.gaze, 0, 1))
+    const bodyWeight = weight * (1 - clamp(focusWeights.body, 0, 1) * 0.35)
     this._snapshot = {
-      headX: (sway.headX + action.headX + Math.sin(seconds * 0.29 + this._phase) * amplitude.headX * microGain) * weight,
-      headY: (sway.headY + action.headY + Math.sin(seconds * 0.21 + 1.2) * amplitude.headY * microGain) * weight,
-      headZ: (sway.headZ + action.headZ + Math.sin(seconds * 0.17 + 0.4) * amplitude.headZ * microGain) * weight,
-      eyeX: (Math.sin(seconds * 0.13 + 2.1) * amplitude.eyeX * microGain + action.eyeX) * weight,
-      eyeY: (Math.sin(seconds * 0.09 + 0.8) * amplitude.eyeY * microGain + action.eyeY) * weight,
-      bodyX: (sway.bodyX + action.bodyX) * weight,
-      bodyY: (sway.bodyY + action.bodyY) * weight,
-      eyeClose: action.eyeClose * weight,
+      headX: (sway.headX + action.headX + Math.sin(seconds * 0.29 + this._phase) * amplitude.headX * microGain) * headWeight,
+      headY: (sway.headY + action.headY + Math.sin(seconds * 0.21 + 1.2) * amplitude.headY * microGain) * headWeight,
+      headZ: (sway.headZ + action.headZ + Math.sin(seconds * 0.17 + 0.4) * amplitude.headZ * microGain) * headWeight,
+      eyeX: (Math.sin(seconds * 0.13 + 2.1) * amplitude.eyeX * microGain + action.eyeX) * gazeWeight,
+      eyeY: (Math.sin(seconds * 0.09 + 0.8) * amplitude.eyeY * microGain + action.eyeY) * gazeWeight,
+      bodyX: (sway.bodyX + action.bodyX) * bodyWeight,
+      bodyY: (sway.bodyY + action.bodyY) * bodyWeight,
+      eyeClose: action.eyeClose * gazeWeight,
       activeAction: actionState.activeAction,
       actionProgress: actionState.progress,
       energy: 0.22 * weight,
@@ -119,4 +129,8 @@ export class IdleBehaviorController {
   }
 
   getSnapshot(): IdleBehaviorSnapshot { return { ...this._snapshot } }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
 }

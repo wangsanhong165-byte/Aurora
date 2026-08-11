@@ -48,7 +48,9 @@ type PrimitiveFrame = {
   values: Record<string, number>
 }
 
-const MAX_ACTION_DURATION_MS = 8_000
+// LLM plans are still capped to 8s by the backend boundary. Locally generated
+// speech choreography may span a longer decoded utterance.
+const MAX_ACTION_DURATION_MS = 30_000
 const MAX_LLM_STEPS = 3
 const MAX_AUTHORED_STEPS = 16
 

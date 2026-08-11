@@ -34,14 +34,23 @@ export class EmbodiedTrackingController {
   private headY = 0
   private readonly torsoX: SpringAxis = { value: 0, velocity: 0 }
   private readonly torsoY: SpringAxis = { value: 0, velocity: 0 }
+  private interactionEngaged = false
+  private engagementWeight = 0
 
   setTarget(x: number, y: number): void {
+    this.interactionEngaged = true
     this.targetX = clamp(x, -1, 1)
     this.targetY = clamp(y, -1, 1)
   }
 
   release(): void {
-    this.setTarget(0, 0)
+    this.interactionEngaged = false
+    this.targetX = 0
+    this.targetY = 0
+    this.previousTargetX = 0
+    this.previousTargetY = 0
+    this.targetVelocityX = 0
+    this.targetVelocityY = 0
   }
 
   reset(): void {
@@ -59,6 +68,8 @@ export class EmbodiedTrackingController {
     this.torsoX.velocity = 0
     this.torsoY.value = 0
     this.torsoY.velocity = 0
+    this.interactionEngaged = false
+    this.engagementWeight = 0
   }
 
   getDebugState(): Record<string, unknown> {
@@ -67,12 +78,21 @@ export class EmbodiedTrackingController {
       targetVelocity: { x: this.targetVelocityX, y: this.targetVelocityY },
       pose: this.sample(),
       torsoVelocity: { x: this.torsoX.velocity, y: this.torsoY.velocity },
+      engagement: this.getEngagementState(),
     }
+  }
+
+  getEngagementState(): { active: boolean; weight: number } {
+    return { active: this.interactionEngaged, weight: this.engagementWeight }
   }
 
   update(dt: number): EmbodiedTrackingSample {
     const delta = clamp(dt, 0, 0.05)
     if (delta <= 0) return this.sample()
+
+    const engagementTarget = this.interactionEngaged ? 1 : 0
+    const engagementResponse = 1 - Math.exp(-delta * (this.interactionEngaged ? 18 : 4.8))
+    this.engagementWeight += (engagementTarget - this.engagementWeight) * engagementResponse
 
     const observedVelocityX = clamp((this.targetX - this.previousTargetX) / delta, -3.2, 3.2)
     const observedVelocityY = clamp((this.targetY - this.previousTargetY) / delta, -3.2, 3.2)
@@ -84,13 +104,16 @@ export class EmbodiedTrackingController {
 
     const eyeTargetX = clamp(this.targetX + this.targetVelocityX * 0.035, -1, 1)
     const eyeTargetY = clamp(this.targetY + this.targetVelocityY * 0.025, -1, 1)
-    this.eyeX = approach(this.eyeX, eyeTargetX, delta, 24)
-    this.eyeY = approach(this.eyeY, eyeTargetY, delta, 22)
+    this.eyeX = approach(this.eyeX, eyeTargetX, delta, this.interactionEngaged ? 24 : 9)
+    this.eyeY = approach(this.eyeY, eyeTargetY, delta, this.interactionEngaged ? 22 : 8.5)
 
     const headInputX = softDeadZone(this.targetX + this.targetVelocityX * 0.018, 0.045)
     const headInputY = softDeadZone(this.targetY + this.targetVelocityY * 0.014, 0.055)
-    this.headX = approach(this.headX, headInputX, delta, 13.5)
-    this.headY = approach(this.headY, headInputY, delta, 12.2)
+    // Pointer acquisition stays immediate, while pointer leave releases over
+    // roughly one visual beat. A symmetric fast response exposed the first
+    // neutral sample as the "look finished, then snap" artifact.
+    this.headX = approach(this.headX, headInputX, delta, this.interactionEngaged ? 13.5 : 2.2)
+    this.headY = approach(this.headY, headInputY, delta, this.interactionEngaged ? 12.2 : 2.1)
 
     const torsoTargetX = softDeadZone(this.targetX, 0.27) * 4.4
     const torsoTargetY = softDeadZone(this.targetY, 0.3) * 3.2

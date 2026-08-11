@@ -25,6 +25,8 @@ export interface LogicalParameterContribution {
   source: string
   priority: number
   weight?: number
+  /** Logical presets are offsets layered over continuous posture. */
+  mode: 'add' | 'override'
 }
 export interface MotionRequest {
   name: string
@@ -248,6 +250,11 @@ export class MotionArbiter {
     return [...this.active.values()].some(active =>
       active.request.channels.includes('full') || active.request.channels.includes(channel))
   }
+  /** Only native motions require ambient channels to stand down completely. */
+  ownsExclusiveChannel(channel: MotionChannel): boolean {
+    return [...this.active.values()].some(active => Boolean(active.nativeName)
+      && (active.request.channels.includes('full') || active.request.channels.includes(channel)))
+  }
   getActiveChannels(): MotionChannel[] {
     const channels = new Set<MotionChannel>()
     for (const active of this.active.values()) {
@@ -313,6 +320,7 @@ export class MotionArbiter {
           source: `motion:${preset.name}:${active.request.owner}`,
           priority: active.request.priority,
           weight: motionWeight,
+          mode: 'add',
         })
       }
     }

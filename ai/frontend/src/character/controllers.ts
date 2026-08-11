@@ -16,10 +16,7 @@ import { LipSyncController, LIP_SYNC_PRIORITY } from './LipSyncController'
 import { resolveMotionStyle } from './performance/MotionStyle'
 import { VADState } from './performance/VADState'
 import { PrivateEmotionOverlay } from './performance/PrivateEmotionOverlay'
-import {
-  AmbientPerformanceEngine,
-  type AmbientPerformanceChannel,
-} from './performance/AmbientPerformanceEngine'
+import type { AmbientPerformanceChannel } from './performance/AmbientPerformanceEngine'
 import type { PerformanceMode } from './AvatarCapabilityProfile'
 import type { NativeMotionPlayer } from './live2d/NativeMotionPlayer'
 import type { Live2DModelAdapter } from './Live2DModelAdapter'
@@ -27,15 +24,11 @@ import { InteractionPerformancePolicy } from './performance/InteractionPerforman
 import { CharacterStateMachine, type CharacterActivity } from './CharacterStateMachine'
 import { CalibrationController } from './CalibrationController'
 import { AttentionController } from './performance/AttentionController'
-import {
-  AutonomousAttentionController,
-  blendAttentionWithTracking,
-  mergeAttentionSamples,
-} from './performance/AutonomousAttentionController'
 import { ParameterController } from './ExpressionParameterController'
 import { FrameTimingMonitor, type FrameTimingSample } from './FrameTimingMonitor'
 import { EmbodiedTrackingController } from './performance/EmbodiedTrackingController'
 import { PerformanceDirector } from './performance/PerformanceDirector'
+import { PerformanceCoordinator } from './performance/PerformanceCoordinator'
 export { ParameterController, expressionTargetForBlend } from './ExpressionParameterController'
 import {
   compileMotionAction,
@@ -367,7 +360,7 @@ export class CharacterController {
   motionArbiter = new MotionArbiter()
   behaviorResolver = new CharacterBehaviorResolver()
   performancePolicy = new CharacterPerformancePolicy()
-  ambientPerformance = new AmbientPerformanceEngine()
+  performanceCoordinator = new PerformanceCoordinator()
   mixer = new ParameterMixer()
   lipSync = new LipSyncController()
   vad = new VADState()
@@ -376,7 +369,6 @@ export class CharacterController {
   stateMachine = new CharacterStateMachine()
   calibration = new CalibrationController()
   attention = new AttentionController()
-  autonomousAttention = new AutonomousAttentionController()
   frameTiming = new FrameTimingMonitor()
   embodiedTracking = new EmbodiedTrackingController()
   performanceDirector = new PerformanceDirector()
@@ -406,6 +398,9 @@ export class CharacterController {
   private _nativeMotions: string[] = []
   private _performanceResetTimer: ReturnType<typeof setTimeout> | null = null
   private _audioEndTimer: ReturnType<typeof setTimeout> | null = null
+  private _turnCompletionTimer: ReturnType<typeof setTimeout> | null = null
+  private _lastIntentAudit: Record<string, unknown> = {}
+  private _performanceTrace: Array<Record<string, unknown>> = []
 
   // Tracks motion arbiter transitions for idle restart guard
   private _wasPlaying = false
@@ -425,18 +420,17 @@ export class CharacterController {
     this._profile = profiles?.[name]
     this.parameterResolver.setProfile(this._profile)
     this.lipSync.configure(this.parameterResolver.getLipSyncConfig())
-    this.ambientPerformance.configure(
+    this.performanceCoordinator.configure(
       this._profile?.motionStyle,
       this._profile?.personality,
       this._profile?.capabilities,
     )
     this._style = resolveMotionStyle(this._profile?.motionStyle)
-    this.autonomousAttention.reset(this._style.seed + 73)
     this.idleCtrl.setTiming(this._style.blinkRate, this._style.breathRate, this._style.breathVariance)
     this.idleCtrl.setBreathMotionGain(this._profile?.breathMotionGain ?? 1)
     this._performanceMode = this._profile?.performanceMode ?? 'enhanced'
-    this.ambientPerformance.setLegacy(this._performanceMode === 'legacy')
-    this.ambientPerformance.setActivity(this.currentActivity)
+    this.performanceCoordinator.setLegacy(this._performanceMode === 'legacy')
+    this.performanceCoordinator.setActivity(this.currentActivity)
     this._parameterGain = this._profile?.parameterGain ?? 1.45
     this._bodyMotionGain = this._profile?.bodyMotionGain ?? 1.25
     this.applyOutputGains()
@@ -480,9 +474,14 @@ export class CharacterController {
     this.paramCtrl.attach(adapter, this.mixer)
     this.idleCtrl.attach()
     this.lipSync.reset()
-    this.ambientPerformance.reset()
+    this.performanceCoordinator.reset()
     this.embodiedTracking.reset()
     this.performanceDirector.reset()
+    this._lastIntentAudit = {}
+    this._performanceTrace = []
+    ;(globalThis as unknown as {
+      __SOULLINK_PERFORMANCE_TRACE__?: Array<Record<string, unknown>>
+    }).__SOULLINK_PERFORMANCE_TRACE__ = []
     this.emitModelCapability()
 
     // Register mixer owners with priorities
@@ -518,7 +517,7 @@ export class CharacterController {
         if (mode) this._performanceMode = mode
         if (parameterGain !== undefined) this._parameterGain = parameterGain
         if (bodyMotionGain !== undefined) this._bodyMotionGain = bodyMotionGain
-        this.ambientPerformance.setLegacy(this._performanceMode === 'legacy')
+        this.performanceCoordinator.setLegacy(this._performanceMode === 'legacy')
         this.applyOutputGains()
       }),
     )
@@ -602,6 +601,8 @@ export class CharacterController {
     this.cleanupFns.push(
       eventBus.on('audio:start', ({ turnId, durationMs }) => {
         if (!this.stateMachine.isCurrentTurn(turnId)) return
+        if (this._turnCompletionTimer) clearTimeout(this._turnCompletionTimer)
+        this._turnCompletionTimer = null
         this.performanceDirector.onAudioStart(turnId, durationMs)
         this.audioPlaybackActive = true
         this.lipSync.setSpeaking(true)
@@ -646,6 +647,8 @@ export class CharacterController {
 
     this.cleanupFns.push(
       eventBus.on('runtime:turn.started', ({ turnId, inputMode }) => {
+        if (this._turnCompletionTimer) clearTimeout(this._turnCompletionTimer)
+        this._turnCompletionTimer = null
         this.setTurnId(turnId)
         this.onActivityChange(inputMode === 'audio' ? 'listening' : 'thinking', turnId)
       }),
@@ -671,9 +674,21 @@ export class CharacterController {
 
     this.cleanupFns.push(
       eventBus.on('runtime:turn.completed', ({ turnId }) => {
-        if (this.stateMachine.isCurrentTurn(turnId) && !this.audioPlaybackActive) {
+        if (!this.stateMachine.isCurrentTurn(turnId) || this.audioPlaybackActive) return
+        if (!this.performanceDirector.isAwaitingAudio(turnId)) {
           this.onActivityChange('idle', turnId)
+          return
         }
+        // Completion is emitted immediately after tts.audio, while decoded
+        // playback starts asynchronously. Preserve the staged expression and
+        // choreography through that gap; fall back to idle if audio never starts.
+        if (this._turnCompletionTimer) clearTimeout(this._turnCompletionTimer)
+        this._turnCompletionTimer = setTimeout(() => {
+          this._turnCompletionTimer = null
+          if (!this.audioPlaybackActive && this.stateMachine.isCurrentTurn(turnId)) {
+            this.onActivityChange('idle', turnId)
+          }
+        }, 1_000)
       }),
       eventBus.on('runtime:turn.failed', ({ turnId }) => {
         this.performanceDirector.cancelTurn(turnId)
@@ -716,7 +731,7 @@ export class CharacterController {
     // thinking pose must release before speaking or semantic performance cues
     // can own the same head/gaze channels.
     this.motionArbiter.releaseState(turnId || this.stateMachine.turnId)
-    this.ambientPerformance.setActivity(activity)
+    this.performanceCoordinator.setActivity(activity)
     // Emit telemetry event
     eventBus.emit('character:runtime-telemetry', { type: 'state.transition', metadata: { from, to } })
     // Emit activity change so the React Store mirrors StateMachine state
@@ -793,9 +808,19 @@ export class CharacterController {
           'AI 动作',
         )
       : null
+    let motionDecision: {
+      requested: boolean
+      source: string
+      accepted: boolean
+      reason: string
+      name?: string
+      durationMs?: number | null
+    } = intent.motionPlan
+      ? { requested: true, source: 'motionPlan', accepted: false, reason: 'compile_rejected' }
+      : { requested: false, source: 'none', accepted: false, reason: 'no_motion_requested' }
     if (plannedMotion) {
       this.motionArbiter.registerPreset(plannedMotion)
-      this.motionArbiter.request({
+      const accepted = this.motionArbiter.request({
         name: plannedMotion.name,
         owner: `intent-plan:${intent.turnId || this.stateMachine.turnId || 'local'}`,
         source: 'ai',
@@ -805,9 +830,16 @@ export class CharacterController {
         timeoutMs: plannedMotion.duration + (plannedMotion.recoveryMs ?? 0) + 250,
         intensity: 1,
       })
+      motionDecision = {
+        requested: true,
+        source: 'motionPlan',
+        accepted,
+        reason: accepted ? 'accepted' : 'arbiter_rejected',
+        name: plannedMotion.name,
+        durationMs: plannedMotion.duration,
+      }
     } else if (policy.motion && Math.random() <= policy.motionProbability) {
-      console.log('[MOTION APPLIED]', policy.motion, 'intensity:', policy.motionIntensity)
-      this.motionArbiter.request({
+      const accepted = this.motionArbiter.request({
         name: policy.motion,
         owner: `intent:${intent.turnId || this.stateMachine.turnId || 'local'}`,
         source: 'ai',
@@ -816,6 +848,26 @@ export class CharacterController {
         timeoutMs: intent.durationMs,
         intensity: policy.motionIntensity,
       })
+      motionDecision = {
+        requested: true,
+        source: 'policy',
+        accepted,
+        reason: accepted ? 'accepted' : 'arbiter_rejected',
+        name: policy.motion,
+        durationMs: intent.durationMs ?? null,
+      }
+    }
+    this._lastIntentAudit = {
+      turnId: intent.turnId ?? this.stateMachine.turnId,
+      emotion: intent.emotion ?? 'neutral',
+      behavior: intent.behavior ?? '',
+      expression: this.exprCtrl.getCurrent(),
+      expressionIntensity: this.exprCtrl.getIntensity(),
+      durationMs: intent.durationMs ?? null,
+      motion: motionDecision,
+      naturalVAD: intent.naturalVAD ?? null,
+      contextTags: intent.contextTags ?? [],
+      receivedAt: performance.now(),
     }
     eventBus.emit('character:performance', {
       emotion: intent.emotion || 'neutral', behavior: intent.behavior || '', expression: policy.expression,
@@ -891,14 +943,15 @@ export class CharacterController {
     this.idleCtrl.detach()
     if (this._performanceResetTimer) clearTimeout(this._performanceResetTimer)
     if (this._audioEndTimer) clearTimeout(this._audioEndTimer)
+    if (this._turnCompletionTimer) clearTimeout(this._turnCompletionTimer)
     this._performanceResetTimer = null
     this._audioEndTimer = null
+    this._turnCompletionTimer = null
     this.motionArbiter.stop()
     this.calibration.clear()
     this.attention.reset()
-    this.autonomousAttention.reset()
     this.lipSync.reset()
-    this.ambientPerformance.reset()
+    this.performanceCoordinator.reset()
     this.embodiedTracking.reset()
     this.performanceDirector.reset()
     this.mixer.setBaselineProvider(null)
@@ -1060,33 +1113,25 @@ export class CharacterController {
     const explicitAttention = this.attention.update(dt)
     const blockedAmbientChannels = new Set<AmbientPerformanceChannel>()
     for (const channel of ['head', 'body', 'gaze'] as const) {
-      if (this.motionArbiter.ownsChannel(channel)) blockedAmbientChannels.add(channel)
+      if (this.motionArbiter.ownsExclusiveChannel(channel)) blockedAmbientChannels.add(channel)
     }
     const canControlHead = this._profile?.capabilities?.headControl !== false
     const canControlGaze = this._profile?.capabilities?.gazeControl !== false
-    const autonomousAttention = this.autonomousAttention.update(dt, {
-      enabled: this._currentEmotion === 'neutral'
-        && explicitAttention.weight <= 0.05
-        && (canControlHead || canControlGaze)
-        && !blockedAmbientChannels.has('head')
-        && !blockedAmbientChannels.has('gaze'),
-      activity: this.currentActivity,
-    })
-    const attentionSample = mergeAttentionSamples(explicitAttention, autonomousAttention)
-    const attentionHeadWeight = attentionSample.channelWeights?.head ?? attentionSample.weight
-    const attentionGazeWeight = attentionSample.channelWeights?.gaze ?? attentionSample.weight
-    const attentionActive = Math.max(attentionHeadWeight, attentionGazeWeight) > 0.001
-    if (attentionActive) {
-      if (canControlHead && attentionHeadWeight > 0.001) blockedAmbientChannels.add('head')
-      if (canControlGaze && attentionGazeWeight > 0.001) blockedAmbientChannels.add('gaze')
-    }
     const lipSyncFrame = this.lipSync.update(dt)
-    const ambientFrame = this.ambientPerformance.update(dt, {
+    const ambientFrame = this.performanceCoordinator.update(dt, {
+      activity: this.currentActivity,
+      emotion: this._currentEmotion,
       vad: vadSnapshot.current,
       audioLevel: lipSyncFrame.value,
       enabled: true,
       blockedChannels: blockedAmbientChannels,
       tracking: trackingPose,
+      trackingEngagement: this.headTrackingEnabled
+        ? this.embodiedTracking.getEngagementState().weight
+        : 0,
+      explicitAttention,
+      canControlHead,
+      canControlGaze,
       gain: this._performanceMode === 'calibration' ? 1.45 : 1,
     })
     this.submitLogicalLayer('ambient_performance', ambientFrame.values, 24)
@@ -1215,39 +1260,6 @@ export class CharacterController {
       })
     }
 
-    if (attentionActive) {
-      const supportedAttention = filterAttentionChannels(
-        attentionSample.values,
-        canControlHead,
-        canControlGaze,
-      )
-      const supportedTracking = filterAttentionChannels(
-        trackingPose,
-        canControlHead,
-        canControlGaze,
-      )
-      const coordinatedAttention = blendAttentionWithTracking(
-        supportedAttention,
-        supportedTracking,
-        attentionSample.weight,
-        attentionSample.channelWeights,
-      )
-      const attentionParams = this.parameterResolver.values(coordinatedAttention)
-      for (const [parameterId, value] of Object.entries(attentionParams)) {
-        this.mixer.submit({
-          id: `attention:${parameterId}`,
-          parameterId,
-          source: 'attention',
-          channel: parameterId.toLowerCase().includes('eye') ? 'eye' : 'head',
-          value,
-          mode: 'override',
-          weight: 1,
-          priority: 34,
-          createdAt: performance.now(),
-        })
-      }
-    }
-
     // Step 5: Motion contributions
     for (const step of this.motionArbiter.drainDueSteps()) {
       if (step.type === 'expression') this.exprCtrl.apply(step.value, 1, 220)
@@ -1258,7 +1270,7 @@ export class CharacterController {
       else if (step.type === 'behavior') this.applyIntent({ emotion: 'neutral', behavior: step.value, intensity: 0.5 })
     }
     const motionContribs = this.motionArbiter.update(dt)
-    const resolvedMotion = this.parameterResolver.resolveMotionParameters(
+    const resolvedMotion = this.parameterResolver.resolveMotionDeltas(
       Object.fromEntries(motionContribs.map(c => [c.logicalParameter, c.value])),
     )
     for (const [parameterId, value] of Object.entries(resolvedMotion)) {
@@ -1270,6 +1282,9 @@ export class CharacterController {
         source: `motion:${this.motionArbiter.currentMotion ?? 'unknown'}`,
         channel: 'motion',
         value,
+        mode: motionContribs.find(item =>
+          this.parameterResolver.resolve(item.logicalParameter) === parameterId
+        )?.mode ?? 'add',
         weight: motionContribs.find(item =>
           this.parameterResolver.resolve(item.logicalParameter) === parameterId
         )?.weight,
@@ -1351,6 +1366,7 @@ export class CharacterController {
         .map(([logical, target]) => ({ logical, target }))
       const resolvedCount = bindings.length - missingBindings.length
       const snapshot = {
+        model: this._modelName,
         activity: this.currentActivity,
         previousActivity: this.previousActivity,
         transitionProgress: this.activityBlend,
@@ -1361,6 +1377,7 @@ export class CharacterController {
         },
         motion: this.motionArbiter.getDebugState(),
         director: this.performanceDirector.getDebugState(),
+        intentAudit: { ...this._lastIntentAudit },
         tracking: this.embodiedTracking.getDebugState(),
         ambient: {
           activity: ambientFrame.activity,
@@ -1370,7 +1387,7 @@ export class CharacterController {
         lipSync: { ...this.lipSync.getDebugInfo() },
         attention: {
           explicitWeight: explicitAttention.weight,
-          autonomous: this.autonomousAttention.getDebugState(),
+          ...ambientFrame.attention,
         },
         pose: this.adapter.getPoseDebug(),
         profileCoverage: {
@@ -1391,6 +1408,25 @@ export class CharacterController {
       }
       ;(globalThis as unknown as { __SOULLINK_RUNTIME_SNAPSHOT__?: typeof snapshot })
         .__SOULLINK_RUNTIME_SNAPSHOT__ = snapshot
+      this._performanceTrace.push({
+        at: now,
+        model: snapshot.model,
+        activity: snapshot.activity,
+        expression: snapshot.expression,
+        motion: snapshot.motion,
+        intentAudit: snapshot.intentAudit,
+        tracking: snapshot.tracking,
+        attention: snapshot.attention,
+        idle: snapshot.idle,
+        lipSync: snapshot.lipSync,
+        resolvedParameters: snapshot.resolvedParameters,
+      })
+      if (this._performanceTrace.length > 240) {
+        this._performanceTrace.splice(0, this._performanceTrace.length - 240)
+      }
+      ;(globalThis as unknown as {
+        __SOULLINK_PERFORMANCE_TRACE__?: Array<Record<string, unknown>>
+      }).__SOULLINK_PERFORMANCE_TRACE__ = this._performanceTrace.map(item => ({ ...item }))
       eventBus.emit('character:performance_debug', snapshot)
     }
   }
@@ -1411,13 +1447,3 @@ const PER_FRAME_GAZE_LOGGING = isPerFrameGazeLoggingEnabled(
     __SOULLINK_DIAGNOSTICS__?: { gazeFrames?: boolean }
   }).__SOULLINK_DIAGNOSTICS__?.gazeFrames,
 )
-
-function filterAttentionChannels(
-  values: Readonly<Record<string, number>>,
-  head: boolean,
-  gaze: boolean,
-): Record<string, number> {
-  return Object.fromEntries(Object.entries(values).filter(([key]) => (
-    (head && key.startsWith('head.')) || (gaze && key.startsWith('eye.'))
-  )))
-}

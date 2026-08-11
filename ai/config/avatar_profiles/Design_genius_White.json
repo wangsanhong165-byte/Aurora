@@ -2,12 +2,24 @@
   "model": "Design_genius_White",
   "expressions": [
     "neutral",
+    "calm",
     "happy",
     "sad",
     "angry",
     "surprised",
     "joyful",
-    "shy"
+    "shy",
+    "playful",
+    "cheerful",
+    "smile",
+    "laughing",
+    "love",
+    "embarrassed",
+    "confused",
+    "pout",
+    "blank",
+    "cry",
+    "worried"
   ],
   "motions": [
     "speak",

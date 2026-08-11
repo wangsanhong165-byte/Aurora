@@ -206,6 +206,18 @@ class TurnRecorder:
                         "text": _safe_text(item.get("text"), 300),
                         "emotion": _safe_text(item.get("emotion"), 40),
                         "behavior": _safe_text(item.get("behavior"), 40),
+                        "attention": _safe_text(item.get("attention"), 40),
+                        "energy": item.get("energy"),
+                        "intensity": item.get("intensity"),
+                        "durationMs": item.get("durationMs"),
+                        "naturalVAD": item.get("naturalVAD"),
+                        "contextTags": [
+                            _safe_text(tag, 40)
+                            for tag in item.get("contextTags", [])[:8]
+                            if isinstance(tag, str)
+                        ] if isinstance(item.get("contextTags"), list) else [],
+                        "motionPlan": item.get("motionPlan")
+                        if isinstance(item.get("motionPlan"), dict) else None,
                     }
                     for item in turn.segments
                     if isinstance(item, dict)
@@ -215,9 +227,13 @@ class TurnRecorder:
                 "emotion": _safe_text(plan.emotion, 40),
                 "behavior": _safe_text(plan.behavior, 40),
                 "attention": _safe_text(plan.attention, 40),
-                "intensity": max(0.0, min(1.0, float(plan.energy))),
+                "intensity": max(0.0, min(1.0, float(plan.intensity))),
+                "energy": max(0.0, min(1.0, float(plan.energy))),
                 "speaking": bool(plan.speaking),
                 "durationMs": plan.duration_ms,
+                "naturalVAD": dict(plan.natural_vad) if plan.natural_vad else None,
+                "contextTags": list(plan.context_tags),
+                "motionPlan": plan.motion_plan,
             },
             "memory": {
                 "retrieved": [_memory_summary(item) for item in turn.memories[:20]],

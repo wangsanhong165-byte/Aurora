@@ -53,6 +53,18 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
     ],
   },
 
+  calm: {
+    params: [
+      { id: P.BROW_L_Y, value: 0.12 },
+      { id: P.BROW_R_Y, value: 0.12 },
+      { id: P.EYE_L_OPEN, value: 0.78 },
+      { id: P.EYE_R_OPEN, value: 0.78 },
+      { id: P.EYE_L_SMILE, value: 0.18 },
+      { id: P.EYE_R_SMILE, value: 0.18 },
+      { id: P.MOUTH_OPEN_Y, value: 0.04 },
+    ],
+  },
+
   sad: {
     params: [
       { id: P.BROW_L_Y, value: -0.3 },
@@ -60,6 +72,16 @@ const HARDCODED_PRESETS: Record<string, ExpressionPreset> = {
       { id: P.EYE_L_OPEN, value: 0.7 },
       { id: P.EYE_R_OPEN, value: 0.7 },
       { id: P.MOUTH_OPEN_Y, value: 0.1 },
+    ],
+  },
+
+  worried: {
+    params: [
+      { id: P.BROW_L_Y, value: 0.28 },
+      { id: P.BROW_R_Y, value: 0.18 },
+      { id: P.EYE_L_OPEN, value: 0.72 },
+      { id: P.EYE_R_OPEN, value: 0.72 },
+      { id: P.MOUTH_OPEN_Y, value: 0.08 },
     ],
   },
 

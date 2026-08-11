@@ -186,6 +186,7 @@ class TransportEmitter:
                 "attention": plan.attention,
                 "energy": plan.energy,
                 "durationMs": plan.duration_ms,
+                "naturalVAD": plan.natural_vad,
                 "contextTags": list(plan.context_tags),
                 "motionPlan": normalize_motion_plan(plan.motion_plan).plan,
                 "segments": self._intent_segments(turn),

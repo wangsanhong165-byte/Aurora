@@ -54,6 +54,7 @@ def snapshot(page: Any) -> dict[str, Any] | None:
           const value = globalThis.__SOULLINK_RUNTIME_SNAPSHOT__;
           if (!value) return null;
           return {
+            model: value.model || '',
             observedAt: performance.now(),
             values: value.resolvedParameters || {},
             tracking: value.tracking || {},
@@ -101,7 +102,10 @@ def main() -> int:
         page.goto(args.url, wait_until="networkidle")
         canvas = page.wait_for_selector("canvas", timeout=20_000)
         page.wait_for_function("() => Boolean(globalThis.__SOULLINK_RUNTIME_SNAPSHOT__)")
-        correct_model = "Design_genius_White" in page.locator("body").inner_text()
+        current = snapshot(page) or {}
+        correct_model = (current.get("model") == "Design_genius_White") or (
+            "Design_genius_White" in page.locator("body").inner_text()
+        )
         box = canvas.bounding_box()
         if not box:
             raise RuntimeError("Live2D canvas has no bounding box")
