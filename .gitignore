@@ -18,6 +18,7 @@ ai/models/asr/Qwen3-ASR-1.7B/
 ai/tts_outputs/
 ai/last_recording.wav
 ai/memory/
+ai/_codex_tmp/final-live2d/
 
 # Character packs & model weights (large binary, use Hugging Face / releases)
 ai/characters/*.char
