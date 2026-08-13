@@ -1,164 +1,162 @@
-# Monika Voice Companion
+# Aurora / Monika Voice Companion
 
-本地持续型 AI 陪伴 — 语音/文本交互，实时 TTS 语音合成，Live2D 动画前端。
+Windows 本地 AI 陪伴系统：接收文本或语音输入，经 Runtime V3、LLM、记忆和情绪/表现规划后，通过 TTS 与 Live2D 前端完成回应。
 
----
+这份 README 只记录当前代码树中的可执行入口和架构边界。服务端口、启动配置和协议以 `config/services.json`、`app/`、`frontend/` 以及测试为准。
 
-## 项目简介
+## 能力概览
 
-Monika Voice Companion 是一个运行在 Windows 上的本地 AI 语音陪伴系统。它通过麦克风或文本接收用户输入，经过 LLM 推理、记忆检索、情绪分析，最终以语音合成 + Live2D 动画的方式回应用户。
-
-核心能力：
-- **语音交互** — VAD 检测、ASR 识别、TTS 语音合成
-- **持久记忆** — SQLite+FTS5 记忆存储，后台编译管线
-- **Live2D 动画** — 支持可中断音频驱动、参数/部件透明度统一仲裁、连续微动、安全动作编排、模型画像、真实口型诊断与按模型动作工作台
-- **主动对话** — 空闲检测、屏幕监控触发主动关怀
-- **工具使用** — MCP 工具系统（搜索、时间等）
-
-### 角色与资源
-
-角色卡（`config/characters/<id>/character.json`）是薄声明，**引用**系统级资源而非复制：Live2D 模型（`models/live2d-models/`）与声线包（`config/voices/`）。前端角色资源库按「角色 / 声线 / 模型」三库拆分，角色创建只需选模型和声线；记忆面板可查看每角色的编译记忆（LLM 视角）。
-
----
+- 文本与语音交互：ASR、LLM、TTS、VAD 和可选的屏幕/主动对话能力。
+- Runtime V3：统一处理用户回合、主动回合、工具调用、记忆提交、语音和表现意图。
+- Live2D：模型注册、角色独立配置、表情/参数/动作协调、口型和实时诊断。
+- 本地记忆：SQLite 存储与 FTS5 检索；角色卡只引用模型和音色资源，不复制资源。
+- 前端：React + Vite + Electron，浏览器和 Electron 共用 Bridge/WebSocket 协议。
 
 ## 环境要求
 
-| 依赖 | 版本要求 |
-|------|---------|
-| Python | ≥ 3.10 |
-| OS | Windows 10/11 |
-| GPU (推荐) | NVIDIA 50 系列 (GSVI v2Pro TTS 优化) |
-| 麦克风 | 必需 (语音模式) |
+- Windows 10/11
+- Python 3.10 或更高版本
+- Node.js/npm（仅运行前端和 Electron 时需要）
+- 麦克风仅在语音模式中需要
+- GPU 不是硬性要求；ASR、TTS 和 GSVI 的实际运行方式由本机服务配置与可用硬件决定
 
-### 外部服务
+项目默认使用本机配置的 Python/服务环境。密钥和机器相关覆盖项放在 `config/.env`、`config/runtime.local.json` 或环境变量中；这些文件被 Git 忽略，不要把密钥写入源码。
 
-系统自动启动以下微服务：
+## 启动与停止
 
-| 服务 | 端口 | 用途 |
-|------|------|------|
-| ASR | :19201 | Qwen3-ASR 语音识别 |
-| LLM | :19202 | OpenAI-compatible LLM API |
-| TTS | :19203 | TTS 统一入口 |
-| GSVI | :19205 | GPT-SoVITS v2Pro |
-| Bridge | :19206 | Web 服务 + WebSocket API |
-
-表中为首选端口；启动器会先检查可绑定性，必要时选择备用或系统动态端口，并将实际地址传给全栈。
-
----
-
-## 快速开始
-
-### 1. 安装依赖
+推荐使用 Windows 统一入口：
 
 ```powershell
-pip install -r requirements.txt
+# 先检查配置、解释器和服务端点
+.\soulctl.cmd doctor
+
+# 启动服务并打开 Electron 前端（生产构建模式）
+.\soulctl.cmd electron
+
+# 启动 Vite 热更新前端并打开 Electron
+.\soulctl.cmd electron --hot
+
+# 仅启动后端服务并打印 Bridge 地址
+.\soulctl.cmd web
+
+# 查看 / 重启 / 停止由 Supervisor 管理的服务
+.\soulctl.cmd status
+.\soulctl.cmd restart
+.\soulctl.cmd stop
 ```
 
-### 2. 配置
+`electron` 会在需要时准备前端构建；`electron --hot` 用于开发时的 Vite 热更新。`web` 是后端/Bridge 启动入口，不等同于一个独立的前端开发服务器；需要调试前端时使用 `electron --hot` 或在 `frontend/` 执行 Vite 命令。
 
-复制 `.env.example` 为 `.env`，填写以下必要配置：
-
-```
-DEEPSEEK_API_KEY=your_api_key_here
-```
-
-### 3. 运行
+命令行入口仍然可用：
 
 ```powershell
-# CLI 语音模式 (VAD 持续监听)
+# 语音模式
 python run.py
 
-# 纯文字聊天模式
+# 纯文本模式
 python run.py --text
 
-# 单轮定长录音模式
+# 单轮录音模式
 python run.py --no-vad
 
-# TUI 面板模式
-python run.py --ui tui
-
-# Web/Live2D 全功能模式
-soulctl.cmd web
-# 启动器会打印本次实际使用的地址
+# 启动后端 Web/Bridge 后进入运行流程
+python run.py --web
 ```
 
-启动后自动拉起 ASR/LLM/TTS/GSVI 服务（记忆由 Runtime 内嵌 SQLiteMemory 提供，无独立服务），进入持续监听。
+停止时优先使用 `soulctl.cmd stop`，不要只关闭一个服务窗口。Supervisor 会按服务依赖关系执行停止并清理运行记录。
 
----
+## 服务与端口
 
-## 使用说明
+`config/services.json` 是已提交的服务清单和生命周期配置。下表是首选端口；首选端口被占用时，Supervisor 会依次尝试配置的备用端口，必要时申请系统动态端口，并把实际地址传递给依赖服务。
 
-### 语音模式 (默认)
+| 服务 | 首选端口 | 用途 |
+| --- | ---: | --- |
+| ASR | 19201 | 语音识别 |
+| LLM | 19202 | OpenAI-compatible 对话/推理接口 |
+| TTS | 19203 | 统一语音合成入口 |
+| GSVI | 19205 | GPT-SoVITS 后端；可选、可隔离 |
+| Bridge | 19206 | HTTP API 与 `/client-ws` WebSocket |
+| Vite frontend | 5173 | 开发前端/Electron 热更新页面 |
 
-1. 运行 `python run.py`
-2. 程序自动检测麦克风，进入 VAD 监听
-3. 说话后自动录音 → ASR 识别 → LLM 推理 → TTS 合成 → 播放
-4. 空闲 5 分钟后自动触发主动对话
+不要在业务代码中硬编码端口。前端代理、服务启动和健康检查都应从 `config/services.json` 或运行时注入的实际地址读取。
 
-### 文本模式
+## 运行链路
 
-```powershell
-python run.py --text
+```text
+用户文本/语音
+  -> Bridge / CLI
+  -> CharacterRuntime.handle_turn(TurnInput)
+  -> ASR / 角色上下文 / 记忆 / 决策 / 工具 / 情绪与表现意图
+  -> TTS
+  -> TransportEmitter
+  -> /client-ws (protocolVersion 3.0)
+  -> React/Electron Live2D 表现层
 ```
 
-在终端输入文字，按 Enter 发送。
+Runtime 的唯一回合入口是 `CharacterRuntime.handle_turn(TurnInput)`。后端只发送语义化的 `character.intent`，不直接发送 Cubism 参数、表达式文件名或动作文件名；模型能力和渲染细节由前端角色配置与表现控制链解析。
 
-### Web/Live2D 模式
+Live2D 前端的核心控制边界是：
 
-```powershell
-soulctl.cmd web
+```text
+CharacterBehaviorResolver
+  -> CharacterPerformancePolicy
+  -> PerformanceCoordinator / MotionArbiter
+  -> ParameterMixer
+  -> Live2DModelAdapter
+  -> Cubism SDK
 ```
 
-打开 `soulctl.cmd web` 打印的地址，使用带 Live2D 动画的图形界面。
+所有参数写入必须经过统一控制链，避免鼠标跟踪、自然动作、口型、表情和 LLM 意图互相直接写模型。
 
----
+## 代码入口与目录
 
-## 环境变量
-
-| 变量 | 说明 | 默认 |
-|------|------|------|
-| `ASR_ENGINE` | ASR 引擎 | `qwen3-asr` |
-| `TTS_ENGINE` | TTS 引擎 | `gsvi-v2pro` |
-| `LLM_MODEL` | LLM 模型名 | `deepseek-v4-flash` |
-| `LLM_BASE_URL` | LLM API 地址 | `https://api.deepseek.com` |
-| `DEEPSEEK_API_KEY` | LLM API 密钥 | — |
-| `ACTIVE_CHARACTER` | 默认角色 | `monika` |
-| `START_GSVI` | 启动 GSVI v2Pro | `true` |
-| `SCREEN_ENABLED` | 屏幕监控 | `0` |
-| `INITIATIVE_IDLE_SEC` | 空闲主动触发间隔 | `300` |
-| `LLM_REASONING_EFFORT` | 推理强度 | `medium` |
-
----
-
-## 开发
-
-### 项目结构
-
-```
+```text
 ai/
-├── ARCHITECTURE.md               # 项目架构文档
-├── run.py                         # 启动入口
-├── .env                           # 配置文件
-├── app/                           # Python 后端
-├── frontend/                      # Electron + React + Vite 前端
-├── config/                        # 角色配置、模型映射
-├── models/                        # Live2D 模型文件
-├── data/                          # 运行时数据 (记忆、历史)
-├── soulctl.cmd                    # Windows 源码统一启动入口
-└── requirements.txt
+├─ soulctl.cmd                 # Windows 统一启动/停止入口
+├─ scripts/soulctl.cjs         # 启动器与命令分发
+├─ run.py                      # CLI 兼容入口
+├─ config/services.json        # 服务、端口、依赖和 profile 的来源
+├─ config/characters/          # 角色卡与角色注册
+├─ config/avatar_profiles/      # 模型能力和表现配置
+├─ models/live2d-models/       # Live2D 模型资源
+├─ app/lifecycle/              # Supervisor、健康检查和生命周期客户端
+├─ app/runtime/                # CharacterRuntime 与 Runtime V3 回合链
+├─ app/bridge/                 # HTTP/WebSocket Bridge
+├─ contracts/v3/               # V3 envelope、事件和 registry
+├─ frontend/src/               # React、Live2D 和表现控制器
+├─ frontend/electron/           # Electron 主进程
+├─ tests/                      # Python 测试
+├─ frontend/src/**/*.test.*    # 前端单元/集成测试
+├─ ARCHITECTURE.md             # 当前架构说明
+└─ docs/                       # 协议、生命周期和历史审计资料
 ```
 
-### 架构文档
+## 测试与构建
 
-详细架构、模块职责、数据流说明请见：
+在仓库根目录运行 Python 测试：
 
-→ **[ARCHITECTURE.md](ARCHITECTURE.md)**
+```powershell
+python -m pytest -p no:cacheprovider -q
+```
 
-Runtime V3 的唯一交互入口是 `CharacterRuntime.handle_turn(TurnInput)`；
-前端只通过 `/client-ws` 收发 `protocolVersion: "3.0"` 的类型化
-`EventEnvelope`，并由 V3 Registry 与 Adapter 统一进入 Runtime V3。
+在 `frontend/` 运行前端验证：
 
----
+```powershell
+npm.cmd test
+npm.cmd run typecheck
+npm.cmd run build
+```
+
+实时表现问题不能只用构建结果判断。Live2D 变更还应在实际模型上检查参数覆盖、表情/动作切换、口型、鼠标跟踪、自然动作和运行时监控面板。
+
+## 文档导航
+
+- [ARCHITECTURE.md](ARCHITECTURE.md)：当前 Runtime V3、Bridge、Live2D 和生命周期边界。
+- [docs/README.md](docs/README.md)：文档状态、当前资料和历史资料的分类。
+- [docs/runtime/V3_PROTOCOL.md](docs/runtime/V3_PROTOCOL.md)：Runtime V3 事件与 WebSocket 协议。
+- [docs/runtime/LAUNCH_ARCHITECTURE.md](docs/runtime/LAUNCH_ARCHITECTURE.md)：启动、就绪和关闭链路。
+
+`docs/` 中带日期的审计、交接和方案文件是当时的证据或决策记录，不应被当作当前端口、分支或行为的唯一说明；遇到冲突时以代码、配置和测试为准。
 
 ## License
 

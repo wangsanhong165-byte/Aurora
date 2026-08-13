@@ -1,44 +1,90 @@
-# Architecture — CharacterTurn Runtime V3
+# Aurora Architecture — Runtime V3
 
-> Date: 2026-07-29
-> Branch: `2.7`
-> This document describes the current implementation. Code and tests remain authoritative.
+> 本文描述当前代码树的架构边界。代码、配置和测试是最终事实来源；本文不绑定某个 Git 分支或某个日期。
 
-## Runtime ownership
+## 1. 总体分层
 
-Every text, speech, or initiative interaction is converted to a typed `TurnInput`.
-`CharacterRuntime.handle_turn()` is the only public turn entry point and returns a
-`CharacterTurn` with a stable `turn_id`, explicit phase, typed transient fields,
-`TurnOutput`, metrics, warnings, and a structured `TurnError`.
+```text
+soulctl.cmd
+  -> scripts/soulctl.cjs
+  -> app.lifecycle / Lifecycle Supervisor
+  -> config/services.json
+  -> ASR / LLM / TTS / GSVI / Bridge / frontend
+
+用户文本或语音
+  -> Bridge / CLI
+  -> CharacterRuntime.handle_turn(TurnInput)
+  -> Runtime V3 事件
+  -> /client-ws
+  -> React/Electron 表现层
+  -> Live2DModelAdapter -> Cubism SDK
+```
+
+系统分为四个需要保持清晰边界的部分：
+
+1. **生命周期层**：负责进程、依赖、端口选择、就绪和关闭，不负责角色决策。
+2. **Runtime 层**：负责一次回合的语义流程、记忆、工具、语音和表现意图，不负责 Cubism 参数。
+3. **Transport 层**：负责 V3 envelope、序列、会话和 WebSocket 事件，不负责业务状态拼装。
+4. **Frontend/Live2D 层**：负责模型能力、参数混合、动作仲裁和渲染，不让各个输入源直接写模型。
+
+## 2. 生命周期与服务
+
+`soulctl.cmd` 只是 Windows 入口，实际命令分发在 `scripts/soulctl.cjs`。启动器把命令转换为 Lifecycle Supervisor 的 profile，并通过 `app.lifecycle.client` 与 Supervisor 通信。
+
+`config/services.json` 是已提交的生命周期来源，包含服务命令、健康检查、依赖、首选端口、备用端口和 profile。当前服务关系如下：
+
+```text
+GSVI (optional/isolate)
+  -> TTS warmup
+  -> ASR preload
+  -> Bridge
+  -> frontend (full profile)
+
+LLM -> Bridge
+```
+
+首选端口为：
+
+| 服务 | 端口 |
+| --- | ---: |
+| ASR | 19201 |
+| LLM | 19202 |
+| TTS | 19203 |
+| GSVI | 19205 |
+| Bridge | 19206 |
+| Vite frontend | 5173 |
+
+端口被占用时，Supervisor 按清单选择备用端口或系统动态端口，并把实际端点注入后续服务。任何新增服务或端口都应先进入 `config/services.json`，而不是散落在 Python、前端或启动脚本中。
+
+完整启动的就绪条件不是“进程存在”或“HTTP 200”，而是依赖服务已经完成对应的模型加载/预热，并由生命周期事件确认可用。关闭时应由 Supervisor 负责停止注册服务和清理运行状态。
+
+## 3. Runtime V3 回合链
+
+所有文本、语音和主动对话都归一为类型化的 `TurnInput`，唯一公开的回合入口是：
+
+```text
+CharacterRuntime.handle_turn(TurnInput)
+```
+
+回合生命周期可概括为：
 
 ```text
 TurnInput
-  → CharacterRuntime.handle_turn()
-  → CharacterTurn (created → processing)
-  → ASR → Character → Memory retrieval → Decision
-  → Emotion → Memory commit → TTS → PerformancePlan
-  → completed | failed
+  -> CharacterTurn (created -> processing)
+  -> ASR
+  -> character/context
+  -> memory retrieval
+  -> decision/tool calls
+  -> emotion and performance plan
+  -> memory commit
+  -> TTS
+  -> TransportEmitter
+  -> completed | failed
 ```
 
-The former `CompanionRuntime.dispatch(Event)`, mutable `Context.state`,
-`ChatPipeline`, and file-history save step no longer exist. The module-level
-`runtime: CharacterRuntime` remains the composition root.
+`CharacterSelf` 持有角色的持久状态。回合只能读取快照并暂存 `CharacterSelfChange`，持久变化必须通过 `CharacterSelf.commit()` 生效。`PromptCompiler` 只生成脱离运行时的模型请求，不做 I/O，也不修改回合。
 
-`CharacterSelf` owns durable character state. A turn may read a snapshot and
-stage a `CharacterSelfChange`; durable changes only take effect through
-`CharacterSelf.commit()`.
-
-## Decision and performance boundaries
-
-`PromptCompiler` creates a detached model request from the turn, character
-aggregate, memories, conversation, and tool schemas. It performs no I/O and
-does not mutate the turn.
-
-`ResponseInterpreter` converts canonical `LLMResponse` data into reply text,
-segments, tool calls, and `PerformancePlan`. Renderer-specific keys are removed
-and reported through turn warnings.
-
-`PerformancePlan` contains only semantic fields:
+`ResponseInterpreter` 将规范化的 `LLMResponse` 转换成回复文本、分段、工具调用和 `PerformancePlan`。表现计划只允许语义字段，例如：
 
 - `emotion`
 - `behavior`
@@ -48,114 +94,110 @@ and reported through turn warnings.
 - `duration_ms`
 - `context_tags`
 
-The backend never sends Cubism parameters, expression filenames, motion files,
-or model identifiers as part of a Runtime presentation update.
+后端不得把 Cubism 参数、表达式文件名、动作文件名或模型专属参数塞进 Runtime 表现更新。这样同一套 LLM/Runtime 可以服务不同 Live2D 模型，模型差异留在前端能力配置。
 
-## Transport
+## 4. Transport 与协议边界
 
-`contracts/v3/envelope.py`, `contracts/v3/events.py`, and
-`contracts/v3/registry.py` are the canonical server-side protocol sources.
-`/client-ws` is the only WebSocket route. `WebSocketSession` validates the
-V3 envelope, session identity, `eventId`, and contiguous inbound sequence
-before `RuntimeEventHandler` maps an event to
-`CharacterRuntime.handle_turn()`. The old bridge Runtime handler, V2 protocol
-module, compatibility adapter, and duplicate WebSocket routes were removed.
+`contracts/v3/envelope.py`、`contracts/v3/events.py` 和 `contracts/v3/registry.py` 是服务端 V3 协议来源。`app/bridge/server.py` 的 `/client-ws` 是客户端 WebSocket 主入口。
 
-`TransportEmitter` is the only normal turn-to-domain-event emitter. It never
-constructs WebSocket JSON; the connection-local session writer is the only
-owner of outbound `eventId`, `sessionId`, `sequence`, timestamp, and send
-serialization:
+`WebSocketSession` 负责校验：
+
+- V3 envelope 和协议版本
+- session identity
+- `eventId`
+- 连续的 inbound sequence
+
+通过校验的事件由 `RuntimeEventHandler` 映射到 `CharacterRuntime.handle_turn()`。`TransportEmitter` 是回合到领域事件的唯一正常发射器；连接级 writer 才能创建出站 `eventId`、`sessionId`、sequence、时间戳并执行序列化。
+
+典型事件顺序：
 
 ```text
-success:
 turn.started
-→ [asr.started → asr.result]
-→ [tool.started → tool.result | tool.failed]
-→ assistant.text.started → assistant.text.completed
-→ [tts.started → tts.audio → tts.completed | tts.failed]
-→ character.intent
-→ turn.completed
-→ runtime.status(idle)
-
-failure:
-turn.failed → runtime.status(idle)
+  -> asr.started / asr.result (optional)
+  -> tool.started / tool.result | tool.failed (optional)
+  -> assistant.text.started / assistant.text.completed
+  -> tts.started / tts.audio / tts.completed | tts.failed (optional)
+  -> character.intent
+  -> turn.completed
+  -> runtime.status(idle)
 ```
 
-`character.intent` is renderer independent. The frontend resolves it through:
+失败回合以 `turn.failed` 结束并恢复 `runtime.status(idle)`。`character.intent` 是渲染器无关的语义事件；明确的用户 Avatar 管理消息属于另一条受权限控制的通道，不应伪装成 Runtime 决策。
+
+## 5. Live2D 表现控制链
+
+前端将 Runtime 的语义意图与鼠标跟踪、口型、眨眼、呼吸、自然动作和模型专属动作协调起来：
 
 ```text
-CharacterBehaviorResolver
-→ CharacterPerformancePolicy
-→ ParameterMixer
-→ Live2DModelAdapter
-→ Cubism SDK
+character.intent / user input / audio
+  -> CharacterBehaviorResolver
+  -> CharacterPerformancePolicy
+  -> PerformanceCoordinator
+  -> MotionArbiter
+  -> ParameterMixer
+  -> Live2DModelAdapter
+  -> Cubism SDK
 ```
 
-Explicit user Avatar management messages remain a separate permission-controlled
-channel. They are not emitted by Runtime decisions.
+控制原则：
 
-## Memory and history
+- 模型参数只有一个最终写入路径，禁止自然动作、鼠标跟踪、LLM、口型等模块绕过 `ParameterMixer` 直接写 Cubism。
+- 每个模型先通过能力配置筛选实际支持的参数和动作，再生成表现计划。
+- 表情、动作、口型和身体微动是不同通道，需在仲裁和参数级混合处协调，不能简单地让后到事件覆盖前一个事件。
+- 追踪输入要经过统一的时间采样和响应策略，避免自然动作与鼠标目标互相拉扯产生抽动。
+- `runtime snapshot`、实时表现监控和模型参数目录用于验证控制链是否真的生效；构建通过不代表动作自然。
 
-SQLite schema version 4 adds `turn_id`, `write_token`, and `history_uid` to
-conversation logs plus a `turn_commits` table. `MemorySaveStep` commits a turn
-with the unique key `(character_id, turn_id, write_token)`. Replaying the same
-write returns without inserting duplicate user or assistant rows.
+Live2D 资源和角色引用关系：
 
-The first V3 migration creates `memory.v2-backup.db` beside the existing
-database. Schema migration is repeatable and retains legacy rows with nullable
-V3 identifiers.
+```text
+config/characters/<id>/character.json
+  -> models/live2d-models/<model_id>/
+  -> config/avatar_profiles/<model_id>.json (if present)
+  -> frontend Live2D adapter / Cubism model
+```
 
-Conversation messages are written only to SQLite. The history JSON directory is
-read-only legacy input/fallback; Runtime no longer appends conversation turns to
-JSON. The lightweight index remains for history list metadata.
+角色卡只引用系统资源。模型注册会维护模型侧注册表和能力配置；不同模型的参数名、动作和表情不能假定完全相同。
 
-## Initiative scheduling
+## 6. 记忆、历史与主动对话
 
-Initiative producers only create `InitiativeCandidate` values. Each candidate
-has a stable ID, source, normalized topic fingerprint, priority, freshness,
-expiry, timestamp, and payload.
+SQLite 是当前对话记忆的持久存储。V3 的记忆提交使用 `turn_id`、`write_token` 和 `history_uid` 等唯一信息，重复提交应幂等，不得重复插入对话。
 
-`CharacterRuntime` owns the queue:
+旧历史 JSON 目录只作为读取/回退来源，Runtime 不再把新对话追加到 JSON；轻量索引只服务于历史列表元数据。
 
-- duplicate topics collapse to the newer/higher-scored candidate;
-- expired candidates are discarded;
-- candidates remain queued while a turn is processing or speaking;
-- one candidate is selected only while Runtime is idle;
-- the selected candidate becomes a normal `TurnInput(origin=initiative)` and
-  uses the same Decision, Memory, TTS, transport, and performance path.
+主动对话生产者只产生 `InitiativeCandidate`，由 `CharacterRuntime` 统一排队、去重、过期清理和选择。主动回合最终仍转换成普通 `TurnInput(origin=initiative)`，沿用同一套决策、记忆、TTS、传输和表现路径；主动对话不得中断正在进行的用户回合或语音回合。
 
-Initiative never interrupts an active user or speech turn.
+## 7. 前端与开发入口
 
-## Character and voice assets
+- `frontend/src/`：React 页面、Bridge 客户端、Live2D 控制器和运行时监控。
+- `frontend/electron/`：Electron 主进程入口。
+- `frontend/vite.config.ts`：从服务清单读取端口并设置 API、WebSocket 和模型资源代理。
+- `frontend/package.json`：开发、Electron、测试、类型检查、构建和性能检查命令。
 
-Character cards (`config/characters/<id>/character.json`) are thin declarations that
-**reference** system-level resources instead of embedding them:
+常用命令：
 
-- Live2D models live in `models/live2d-models/<model_id>/`; `register_model` backfills
-  the side registries (`live2d_models.json`, `avatar_profiles/`).
-- Voice packs live in `config/voices/<voice_id>/` (`VoiceRegistry`); a card references one
-  via `tts.voice_id`, resolved by `tts_step` instead of per-character embedded assets.
-- `create_character` supports a reference spec `{model_id, voice_id}` that validates the
-  refs and writes only the card — nothing is copied.
-- `switch_character` persists the active character to `config/characters/index.yaml`
-  (`default`) so the next startup loads the same character.
-- The memory panel can show each character's compiled memory (`memory.md`) via
-  `get_compiled_memory_view`.
+```powershell
+.\soulctl.cmd doctor
+.\soulctl.cmd electron
+.\soulctl.cmd electron --hot
+python -m pytest -p no:cacheprovider -q
+cd frontend
+npm.cmd test
+npm.cmd run typecheck
+npm.cmd run build
+```
 
-## Service configuration
+实时 Live2D 变更需要在实际模型上做视觉和运行时验收，至少覆盖：自然状态、鼠标追踪、口型、表情切换、LLM 表现意图、动作/身体微动和控制链监控。单元测试、构建和静态截图不能单独证明这些行为已经完成。
 
-`config/services.json` is the single checked-in service-endpoint source. The table
-lists preferred ports; the Supervisor selects a configured fallback before it starts
-any process when a preferred port is occupied or excluded by Windows. If every named
-fallback is unavailable, it asks the OS for a currently bindable dynamic port:
+## 8. 当前事实来源
 
-| Service | Port |
-|---|---:|
-| ASR | 19201 |
-| LLM | 19202 |
-| TTS | 19203 |
-| GSVI | 19205 |
-| Bridge | 19206 |
-| Vite frontend | 5173 |
+| 问题 | 首要来源 |
+| --- | --- |
+| 服务、端口、依赖、profile | `config/services.json` |
+| 启动/停止/诊断 | `scripts/soulctl.cjs`, `app/lifecycle/` |
+| 回合语义与状态 | `app/runtime/`, `contracts/v3/` |
+| WebSocket 事件 | `app/bridge/server.py`, `contracts/v3/` |
+| 前端和 Live2D | `frontend/src/`, `frontend/vite.config.ts` |
+| 角色/模型能力 | `config/characters/`, `config/avatar_profiles/`, `models/` |
+| 可回归行为 | `tests/`, `frontend/src/**/*.test.*` |
 
-Environment variables may override configured values at runtime.
+带日期的审计、交接和方案文档是历史证据或设计记录，不替代上述来源。文档分类见 [docs/README.md](docs/README.md)。
