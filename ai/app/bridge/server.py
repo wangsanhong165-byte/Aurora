@@ -309,7 +309,7 @@ FRONTEND_PUBLIC_DIR = BASE_DIR / "frontend" / "public"
 LIVE2D_DIR = BASE_DIR / "models" / "live2d-models"
 BACKGROUNDS_DIR = Path(
     os.environ.get("BRIDGE_BACKGROUNDS_DIR",
-                   str(BASE_DIR.parent / "Open-LLM-VTuber-1.2.1" / "Open-LLM-VTuber-1.2.1" / "backgrounds"))
+                   str(BASE_DIR / "backgrounds"))
 )
 
 # ── App ─────────────────────────────────────────────────────────────────
