@@ -11,8 +11,9 @@ const MIN_REFRESH_INTERVAL = 15_000
 const REQUEST_TIMEOUTS = Object.freeze({
   start: 480_000,
   restart: 480_000,
-  stop: 30_000,
-  shutdown: 30_000,
+  // Stopping GPU voice services (GSVI/TTS) can outlive 30s.
+  stop: 60_000,
+  shutdown: 60_000,
   status: 30_000,
 })
 

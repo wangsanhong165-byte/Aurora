@@ -19,6 +19,7 @@ import {
 } from './UserViewPanels'
 import type { DrawerSection } from './workspace-state'
 import { CharacterManagerPanel } from './CharacterManagerPanel'
+import { StageBackground } from './StageBackground'
 import type { CharacterDescriptor } from './character-catalog'
 
 const DRAWER_ITEMS: DrawerItem[] = [
@@ -56,7 +57,7 @@ export interface CompanionWorkspaceProps {
     character: CharacterDescriptor,
     runtimeAlreadySwitched?: boolean,
   ) => Promise<void>
-  onAccessoryToggle: (label: string) => void
+  onAccessoryToggle: (label: string, enabled: boolean) => void
 }
 
 export function CompanionWorkspace(props: CompanionWorkspaceProps) {
@@ -124,7 +125,8 @@ export function CompanionWorkspace(props: CompanionWorkspaceProps) {
   return (
     <Layout
       characterArea={<CharacterView />}
-      subtitle={<StageSubtitle text={props.subtitleText} />}
+      background={props.settings.windowMode === 'pet' ? null : <StageBackground settings={props.settings} />}
+      subtitle={props.settings.windowMode === 'pet' ? null : <StageSubtitle text={props.subtitleText} />}
       conversationArea={(
         <div className="conversation-dock">
           <ChatView />

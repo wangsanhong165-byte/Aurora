@@ -9,6 +9,15 @@ type ExpressionResolver = (name: string) => ExpressionPreset
 
 interface ParamTarget { id: string; from: number; to: number; startTime: number; duration: number }
 
+export interface ExpressionParameterPolicy {
+  discreteParameterIds?: string[]
+  exclusiveParameterGroups?: string[][]
+  /** Let ordinary brow/mouth parameters begin blending before replacement art swaps. */
+  discreteSwitchDelayMs?: number
+  /** Model-specific lower bound for ordinary facial blending. Zero-duration setup stays immediate. */
+  minimumBlendDurationMs?: number
+}
+
 export function expressionTargetForBlend(
   value: number,
   intensity: number,
@@ -30,9 +39,26 @@ export class ParameterController {
   private releasing = new Set<string>()
   private activeParts = new Set<string>()
   private values = new Map<string, number>()
+  private excludedParameterIds = new Set<string>()
+  private discreteParameterIds = new Set<string>()
+  private exclusiveParameterGroups: string[][] = []
+  private discreteSwitchDelayMs = 0
+  private minimumBlendDurationMs = 0
 
   constructor(resolveExpression: ExpressionResolver) {
     this.resolveExpression = resolveExpression
+  }
+
+  configurePolicy(policy: ExpressionParameterPolicy | undefined): void {
+    this.exclusiveParameterGroups = (policy?.exclusiveParameterGroups ?? [])
+      .map(group => [...new Set(group.filter(Boolean))])
+      .filter(group => group.length > 0)
+    this.discreteParameterIds = new Set([
+      ...(policy?.discreteParameterIds ?? []),
+      ...this.exclusiveParameterGroups.flat(),
+    ])
+    this.discreteSwitchDelayMs = Math.max(0, Math.min(240, policy?.discreteSwitchDelayMs ?? 0))
+    this.minimumBlendDurationMs = Math.max(0, Math.min(1200, policy?.minimumBlendDurationMs ?? 0))
   }
 
   attach(adapter: Live2DModelAdapter, mixer: ParameterMixer): void {
@@ -84,20 +110,56 @@ export class ParameterController {
   getActiveTargetParams(): Set<string> { return new Set(this.targets.map(target => target.id)) }
   getOwnedParameterIds(): Set<string> { return new Set([...this.active, ...this.releasing]) }
 
+  /** Component visibility and pose toggles are orthogonal to facial emotion. */
+  setExcludedParameterIds(ids: Iterable<string>): void {
+    this.excludedParameterIds = new Set(ids)
+    for (const id of this.excludedParameterIds) {
+      this.removeTargets(id)
+      this.active.delete(id)
+      this.releasing.delete(id)
+      this.values.delete(id)
+    }
+  }
+
   applyExpression(name: string, intensity: number, duration = 400, now = performance.now()): void {
     const preset = this.resolveExpression(name)
-    const next = new Set(preset.params.map(param => param.id))
+    const expressionParams = preset.params.filter(param => !this.excludedParameterIds.has(param.id))
+    const next = new Set(expressionParams.map(param => param.id))
+    const blendDuration = duration === 0 ? 0 : Math.max(duration, this.minimumBlendDurationMs)
+    const exclusiveResets = new Set<string>()
+    for (const group of this.exclusiveParameterGroups) {
+      if (!group.some(id => next.has(id) || this.active.has(id))) continue
+      for (const id of group) {
+        if (!next.has(id) && !this.excludedParameterIds.has(id)) exclusiveResets.add(id)
+      }
+    }
     for (const id of this.active) {
       if (next.has(id)) continue
       this.releasing.add(id)
-      this.setSmooth(id, this.baseline(id), duration, 0, now)
+      const discrete = this.discreteParameterIds.has(id)
+      this.setSmooth(
+        id,
+        this.baseline(id),
+        discrete ? 0 : blendDuration,
+        discrete ? this.discreteSwitchDelayMs * 0.45 : 0,
+        now,
+      )
+    }
+    for (const id of exclusiveResets) {
+      // Active replacement art already has an earlier exit target. Do not
+      // overwrite it with the later entry time: the gap is the normal-eye
+      // bridge that prevents two eye textures from ever overlapping.
+      if (this.active.has(id) && !next.has(id)) continue
+      this.releasing.add(id)
+      this.setSmooth(id, this.baseline(id), 0, this.discreteSwitchDelayMs, now)
     }
     this.active = next
-    for (const param of preset.params) {
+    for (const param of expressionParams) {
       this.releasing.delete(param.id)
+      const discrete = this.discreteParameterIds.has(param.id)
       this.setSmooth(param.id, expressionTargetForBlend(
-        param.value, intensity, param.blend, this.baseline(param.id),
-      ), duration, 0, now)
+        param.value, discrete ? 1 : intensity, param.blend, this.baseline(param.id),
+      ), discrete ? 0 : blendDuration, discrete ? this.discreteSwitchDelayMs : 0, now)
     }
 
     const nextParts = new Set((preset.parts ?? []).map(part => part.id))
@@ -125,7 +187,11 @@ export class ParameterController {
   update(now = performance.now()): Array<{ parameterId: string; value: number; source: string; priority: number }> {
     const completedReleases = new Set<string>()
     this.targets = this.targets.filter(target => {
-      const progress = target.duration === 0 ? 1 : Math.max(0, Math.min(1, (now - target.startTime) / target.duration))
+      const progress = now < target.startTime
+        ? 0
+        : target.duration === 0
+          ? 1
+          : Math.max(0, Math.min(1, (now - target.startTime) / target.duration))
       const eased = 1 - Math.pow(1 - progress, 3)
       this.values.set(target.id, target.from + (target.to - target.from) * eased)
       if (progress >= 1 && this.releasing.has(target.id)) completedReleases.add(target.id)

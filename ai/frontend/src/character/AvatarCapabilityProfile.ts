@@ -1,4 +1,5 @@
 import type { MotionStyleOptions } from './performance/MotionStyle'
+import type { ExpressionParameterPolicy } from './ExpressionParameterController'
 
 export interface CharacterPerformancePersonality {
   expressiveness: number
@@ -82,6 +83,7 @@ export interface AvatarCapabilityProfile {
   /** Logical parameters that semantic/native motion plans may not own. */
   protectedMotionParameters?: string[]
   lipSync?: AvatarLipSyncConfig
+  expressionParameterPolicy?: ExpressionParameterPolicy
   /** Small per-model silent opening used only while authored native idle is active. */
   idleMouthOpen?: number
   /** Model-specific gain for the logical breath input used by physics rigs. */
@@ -112,7 +114,10 @@ function clampFinite(
 }
 
 export function supportsExpression(profile: AvatarCapabilityProfile | undefined, name: string): boolean {
-  return !profile || profile.expressions.length === 0 || profile.expressions.includes(name)
+  return !profile
+    || profile.expressions.length === 0
+    || profile.expressions.includes(name)
+    || Object.prototype.hasOwnProperty.call(profile.expressionMap ?? {}, name)
 }
 
 export function supportsMotion(profile: AvatarCapabilityProfile | undefined, name: string): boolean {

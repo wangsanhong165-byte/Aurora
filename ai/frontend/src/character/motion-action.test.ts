@@ -8,7 +8,7 @@ import {
   normalizeMotionAction,
   validateMotionPlan,
 } from './MotionAction.ts'
-import { sampleMotionKeyframes } from './MotionArbiter.ts'
+import { MotionArbiter, sampleMotionKeyframes } from './MotionArbiter.ts'
 
 test('motion plan rejects renderer parameters and unknown primitives', () => {
   const result = validateMotionPlan({
@@ -122,4 +122,21 @@ test('Design Genius compiler adds restrained torso load without writing physics 
   assert.ok(preset!.keyframes.some(frame => frame.parameter === 'body.y'))
   assert.equal(preset!.keyframes.some(frame => frame.parameter.startsWith('Param')), false)
   assert.equal(preset!.keyframes.some(frame => frame.parameter.includes('tail')), false)
+})
+
+test('shirone tail coupling remains part of the body channel instead of seizing full motion', () => {
+  const compiled = compileMotionPlanForModel({
+    durationMs: 1_000,
+    steps: [{ atMs: 0, durationMs: 600, primitive: 'tilt_left', intensity: 0.5 }],
+  }, 'shirone-tail', 'shirone')!
+  const arbiter = new MotionArbiter(() => 0)
+  arbiter.registerPreset(compiled)
+  assert.equal(arbiter.request({
+    name: compiled.name,
+    owner: 'intent:shirone',
+    source: 'ai',
+    priority: 50,
+  }), true)
+
+  assert.deepEqual(arbiter.getActiveChannels().sort(), ['body', 'head'])
 })

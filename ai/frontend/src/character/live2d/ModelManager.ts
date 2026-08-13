@@ -64,8 +64,7 @@ function releaseSession(session: Pick<CandidateSession, 'handle' | 'renderer'> |
   const gl = getGL()
   const textures = session.renderer.getBindedTextures()
   if (gl && textures) {
-    for (let index = 0; index < textures.getSize(); index += 1) {
-      const texture = textures.getValue(index)
+    for (const texture of textures.values()) {
       if (texture) gl.deleteTexture(texture)
     }
   }
@@ -170,7 +169,10 @@ export class ModelManager {
       if (!mocResponse.ok) throw new Error(`moc3 fetch failed: ${mocResponse.status}`)
       handle = loadModelFromBuffer(await mocResponse.arrayBuffer())
       if (!handle) throw new Error('loadModelFromBuffer returned null')
-      renderer = createFrameworkRenderer(handle.frameworkModel)
+      renderer = createFrameworkRenderer(
+        handle.frameworkModel,
+        (model3Json.Layout ?? undefined) as Record<string, number> | undefined,
+      )
       if (!renderer) throw new Error('createFrameworkRenderer returned null')
 
       const textures: string[] = (references.Textures ?? []).map((file: string) => `${baseUrl}/${file}`)

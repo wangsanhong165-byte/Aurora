@@ -363,8 +363,11 @@ export function DesktopSessionWorkspace() {
     actions.setStatusMessage('')
   }, [])
 
-  const handleAccessoryToggle = useCallback((label: string) => {
-    eventBus.emit('accessory:toggle', { label })
+  const handleAccessoryToggle = useCallback((label: string, enabled: boolean) => {
+    // Keep the controlled checkbox responsive even if the renderer is between
+    // generations; CharacterController will immediately confirm the same state.
+    setAccessoryState(current => ({ ...current, [label]: enabled }))
+    eventBus.emit('accessory:set', { label, enabled })
   }, [])
 
   const handleSettingChange = useCallback((key: string, value: unknown) => {
@@ -398,6 +401,12 @@ export function DesktopSessionWorkspace() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    return window.electronAPI?.onPetExitRequest?.(() => {
+      handleSettingChange('windowMode', 'window')
+    })
+  }, [handleSettingChange])
 
   const handleCharacterActivate = useCallback(async (
     character: CharacterDescriptor,

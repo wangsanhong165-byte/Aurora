@@ -8,7 +8,6 @@
 
 import { CubismIdHandle } from '../id/cubismid';
 import { CubismModel } from '../model/cubismmodel';
-import { csmVector } from '../type/csmvector';
 
 /**
  * 呼吸機能
@@ -37,7 +36,7 @@ export class CubismBreath {
    * 呼吸のパラメータの紐づけ
    * @param breathParameters 呼吸を紐づけたいパラメータのリスト
    */
-  public setParameters(breathParameters: csmVector<BreathParameterData>): void {
+  public setParameters(breathParameters: Array<BreathParameterData>): void {
     this._breathParameters = breathParameters;
   }
 
@@ -45,7 +44,7 @@ export class CubismBreath {
    * 呼吸に紐づいているパラメータの取得
    * @return 呼吸に紐づいているパラメータのリスト
    */
-  public getParameters(): csmVector<BreathParameterData> {
+  public getParameters(): Array<BreathParameterData> {
     return this._breathParameters;
   }
 
@@ -57,10 +56,10 @@ export class CubismBreath {
   public updateParameters(model: CubismModel, deltaTimeSeconds: number): void {
     this._currentTime += deltaTimeSeconds;
 
-    const t: number = this._currentTime * 2.0 * 3.14159;
+    const t: number = this._currentTime * 2.0 * Math.PI;
 
-    for (let i = 0; i < this._breathParameters.getSize(); ++i) {
-      const data: BreathParameterData = this._breathParameters.at(i);
+    for (let i = 0; i < this._breathParameters.length; ++i) {
+      const data: BreathParameterData = this._breathParameters[i];
 
       model.addParameterValueById(
         data.parameterId,
@@ -77,7 +76,7 @@ export class CubismBreath {
     this._currentTime = 0.0;
   }
 
-  _breathParameters: csmVector<BreathParameterData>; // 呼吸にひもづいているパラメータのリスト
+  _breathParameters: Array<BreathParameterData>; // 呼吸にひもづいているパラメータのリスト
   _currentTime: number; // 積算時間[秒]
 }
 

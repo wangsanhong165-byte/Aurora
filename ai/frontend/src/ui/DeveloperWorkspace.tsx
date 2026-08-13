@@ -86,6 +86,13 @@ export function DeveloperWorkspace({
       action={<button type="button" className="drawer-text-action" onClick={refresh}>刷新</button>}
     >
       <div className="developer-workspace">
+        <div className="developer-intro">
+          <div>
+            <span className="developer-kicker">RUNTIME INSPECTOR</span>
+            <p>只读诊断 · 记录、时间线与服务状态</p>
+          </div>
+          <span className="developer-retention-badge">保留 30 天 / 500 条</span>
+        </div>
         <section className="developer-overview">
           <DevMetric label="WebSocket" value={connected ? '已连接' : '未连接'} />
           <DevMetric label="Runtime" value={diagnostics?.runtime?.idle ? '空闲' : '处理中'} />
@@ -99,7 +106,10 @@ export function DeveloperWorkspace({
 
         <section className="turn-browser">
           <div className="turn-list">
-            <h3>CharacterTurn</h3>
+            <div className="developer-section-heading">
+              <div><span className="developer-kicker">ACTIVITY</span><h3>CharacterTurn</h3></div>
+              <small>{turns.length} 条</small>
+            </div>
             {turns.length === 0 && <p className="empty-copy">完成一次对话后会生成只读记录。</p>}
             {turns.map(turn => (
               <button
@@ -133,24 +143,24 @@ export function DeveloperWorkspace({
                     ))}
                   </ol>
                 </DevSection>
-                <DevSection title="PromptBundle">
+                <DevSection title="PromptBundle" collapsible>
                   <p>内容已脱敏；仅显示上下文预算。</p>
                   <KeyValues value={detail.prompt.contextBudget} />
                 </DevSection>
-                <DevSection title="模型响应与解析">
+                <DevSection title="模型响应与解析" collapsible>
                   <p>{detail.response.text || '无文本响应'}</p>
                   <KeyValues value={detail.usage} />
                 </DevSection>
-                <DevSection title="PerformancePlan">
+                <DevSection title="PerformancePlan" collapsible>
                   <KeyValues value={detail.performance} />
                 </DevSection>
-                <DevSection title="Memory Retrieve / Commit">
+                <DevSection title="Memory Retrieve / Commit" collapsible>
                   <p>检索 {detail.memory.retrieved.length} 条 · 提交 {detail.memory.committed.length} 条</p>
                   {[...detail.memory.retrieved, ...detail.memory.committed].map((item, index) =>
                     <small key={index}>{item.type || 'memory'} · {item.summary}</small>
                   )}
                 </DevSection>
-                <DevSection title="ASR / TTS">
+                <DevSection title="ASR / TTS" collapsible>
                   <p>{detail.timeline.some(item => item.event.includes('ASR')) ? '包含 ASR 生命周期' : '文本输入'}</p>
                   <p>{detail.timeline.some(item => item.event.includes('TTS')) ? 'TTS 已生成音频' : '本轮无 TTS 音频'}</p>
                 </DevSection>
@@ -165,19 +175,14 @@ export function DeveloperWorkspace({
           </div>
         </section>
 
-        <DevSection title="服务健康">
-          {diagnostics?.providers?.map((provider: any) => (
-            <small key={provider.name}>{provider.name} · {provider.status} · {provider.adapter}</small>
-          ))}
-          {services.map((service: any) => (
-            <small key={service.name}>{service.name} · {service.status}</small>
-          ))}
-        </DevSection>
+        <div className="developer-lower-grid">
+        <ServiceHealth diagnostics={diagnostics} services={services} />
         {errors.length > 0 && (
           <DevSection title="本次连接的错误">
             {errors.map((error, index) => <small key={`${error.code}-${index}`}>{error.code} · {error.message}</small>)}
           </DevSection>
         )}
+        </div>
         <p className="developer-retention">
           Turn 记录默认保留 30 天、最多 500 条；只读查询，不提供 Runtime 状态修改或逐帧参数回放。
         </p>
@@ -190,8 +195,96 @@ function DevMetric({ label, value }: { label: string; value: string }) {
   return <div><span>{label}</span><strong>{value}</strong></div>
 }
 
-function DevSection({ title, children }: { title: string; children: React.ReactNode }) {
+function DevSection({ title, children, collapsible = false }: { title: string; children: React.ReactNode; collapsible?: boolean }) {
+  if (collapsible) {
+    return <details className="dev-section dev-section-collapsible"><summary>{title}</summary><div className="dev-section-content">{children}</div></details>
+  }
   return <section className="dev-section"><h3>{title}</h3>{children}</section>
+}
+
+function ServiceHealth({ diagnostics, services }: { diagnostics: any; services: any[] }) {
+  const rows = getServiceHealthRows(diagnostics, services)
+  const healthyCount = rows.filter(row => isHealthy(row)).length
+
+  return (
+    <section className="dev-section service-health">
+      <div className="service-health-heading">
+        <div>
+          <span className="developer-kicker">SYSTEM STATUS</span>
+          <h3>服务健康</h3>
+        </div>
+        <span className="service-health-summary">
+          {rows.length ? `${healthyCount}/${rows.length} 正常` : '等待状态'}
+        </span>
+      </div>
+      {rows.length ? (
+        <div className="service-health-list">
+          {rows.map(row => {
+            const tone = getServiceStatusTone(row.status)
+            return (
+              <div className="service-health-row" key={row.name}>
+                <div className="service-health-service">
+                  <strong>{row.name}</strong>
+                  <small>{row.detail || '运行服务'}</small>
+                </div>
+                <span className={`service-health-status is-${tone}`}>
+                  <i aria-hidden="true" />
+                  {getServiceStatusLabel(row.status)}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <p className="empty-copy service-health-empty">暂时没有可用的服务状态。</p>
+      )}
+    </section>
+  )
+}
+
+type ServiceHealthRow = { name: string; status: string; detail: string }
+
+function getServiceHealthRows(diagnostics: any, services: any[]): ServiceHealthRow[] {
+  const rows = new Map<string, ServiceHealthRow>()
+  const add = (item: any) => {
+    const name = String(item?.name ?? item?.service ?? item?.id ?? '').trim()
+    if (!name) return
+    const current = rows.get(name)
+    rows.set(name, {
+      name,
+      status: String(item?.status ?? current?.status ?? 'unknown'),
+      detail: String(item?.adapter ?? item?.provider ?? item?.type ?? current?.detail ?? '').trim(),
+    })
+  }
+
+  ;(diagnostics?.providers ?? []).forEach(add)
+  services.forEach(add)
+  return Array.from(rows.values())
+}
+
+function getServiceStatusTone(status: string) {
+  const normalized = status.toLowerCase()
+  if (isHealthy({ status })) return 'healthy'
+  if (['starting', 'loading', 'busy', 'degraded', 'unknown'].includes(normalized)) return 'pending'
+  return 'error'
+}
+
+function getServiceStatusLabel(status: string) {
+  const normalized = status.toLowerCase()
+  return {
+    ready: '就绪',
+    running: '运行中',
+    healthy: '健康',
+    ok: '正常',
+    starting: '启动中',
+    loading: '加载中',
+    busy: '处理中',
+    degraded: '降级',
+    unknown: '未知',
+    error: '异常',
+    failed: '失败',
+    offline: '离线',
+  }[normalized] ?? status
 }
 
 function KeyValues({ value }: { value: Record<string, unknown> }) {

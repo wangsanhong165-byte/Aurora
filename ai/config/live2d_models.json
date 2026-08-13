@@ -207,5 +207,58 @@
       "nod",
       "shrug"
     ]
+  },
+  "shirone": {
+    "prompt_emotions": [
+      "neutral",
+      "happy",
+      "joyful",
+      "cheerful",
+      "laughing",
+      "playful",
+      "smile",
+      "love",
+      "angry",
+      "pout",
+      "sad",
+      "cry",
+      "worried",
+      "surprised",
+      "confused",
+      "shy",
+      "embarrassed",
+      "calm",
+      "blank"
+    ],
+    "emotion_map": {
+      "neutral": "重置",
+      "calm": "重置",
+      "blank": "",
+      "happy": "心心眼",
+      "joyful": "心心眼",
+      "smile": "心心眼",
+      "love": "心心眼",
+      "cheerful": "星星眼",
+      "laughing": "星星眼",
+      "playful": "星星眼",
+      "angry": "生气表情",
+      "pout": "生气表情",
+      "sad": "悲伤表情",
+      "cry": "悲伤表情",
+      "worried": "悲伤表情",
+      "surprised": "圈圈眼",
+      "confused": "圈圈眼",
+      "shy": "鸡爪眼",
+      "embarrassed": "鸡爪眼"
+    },
+    "behaviors": [],
+    "behavior_map": {},
+    "accessories": {
+      "丸子头": "丸子头",
+      "猫耳": "猫耳",
+      "拿麦克风": "拿麦克风",
+      "白丝": "白丝",
+      "衣领": "衣领"
+    }
   }
 }

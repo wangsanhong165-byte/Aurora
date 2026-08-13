@@ -142,8 +142,9 @@ class DefaultPlanner:
             emotion_content = ""
             if current_emotion and current_emotion != "neutral":
                 emotion_content = (
-                        f"Current emotion: {current_emotion}. "
-                        "Let this naturally influence your tone and phrasing."
+                        f"Previous expression state: {current_emotion}. "
+                        "This is continuity context, not a default for the next segment. "
+                        "Re-evaluate emotion from the current message and reply; do not reuse it by default."
                 )
             append_system("emotion", emotion_content)
             from app.runtime.context_assembler import ContextAssembler
@@ -177,6 +178,7 @@ class DefaultPlanner:
             '5a. motionPlan is optional, but use 1-3 restrained semantic body-language beats when the segment contains emphasis, an emotional shift, greeting, agreement, disagreement, reflection, reassurance, or playful intent. Omit it only for genuinely short neutral speech; the runtime supplies a subtle deterministic fallback. Do not repeat the same primitive in adjacent segments. Allowed primitives: nod, tilt_left, tilt_right, lean_forward, lean_back, sway, look_left, look_right, breathe, shrug. durationMs must be 300-8000, step durationMs 120-2500, and intensity 0-1. The runtime rescales segment plans to the decoded speech duration, so atMs is relative to this segment and must not guess wall-clock playback time.\n'
             '5b. Never output Param*, Cubism IDs, parameter values, keyframes, animation files, or extra motionPlan fields.\n'
             f'6. Every final segment MUST set an "emotion" from: {presentation_emotions}.\n'
+            '6a. Choose emotion from the meaning of THIS segment. Ordinary informative speech defaults to neutral or calm; positive warmth uses smile/happy, playfulness uses playful, and surprise/concern/anger/sadness require matching semantic evidence. shy and embarrassed require explicit evidence of bashfulness, embarrassment, blushing, or romantic awkwardness. Never carry a previous emotion forward merely for continuity, and do not assign one conspicuous expression to every sentence.\n'
             f'7. Every final segment MUST set a semantic "behavior" from: {presentation_behaviors}. Describe the communicative act, not merely the fact that audio is playing: greetings use greet, agreement uses agree, disagreement uses disagree, reflection uses think, and only ordinary speech uses speak.\n'
             '8. Never use idle for a segment that contains spoken text.\n'
             '9. Leave tool_calls as [] when not needed.\n'

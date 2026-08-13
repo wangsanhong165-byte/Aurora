@@ -100,7 +100,12 @@ interface ParameterValue {
 }
 
 interface MixerDebugFrame {
-  frameValues: Record<string, Array<{ source: string; value: number; priority: number }>>
+  frameValues: Record<string, Array<{
+    source: string
+    value: number
+    priority: number
+    mode: 'override' | 'add' | 'multiply'
+  }>>
   resolved: Record<string, number>
 }
 
@@ -357,12 +362,13 @@ export class ParameterMixer {
   }
 
   debugFrame(): MixerDebugFrame {
-    const frameValues: Record<string, Array<{ source: string; value: number; priority: number }>> = {}
+    const frameValues: MixerDebugFrame['frameValues'] = {}
     for (const [pid, vals] of this._frameValues.entries()) {
       frameValues[pid] = vals.map(v => ({
         source: v.source,
         value: v.value,
         priority: v.priority,
+        mode: v.mode,
       }))
     }
     return { frameValues, resolved: { ...this._resolved } }

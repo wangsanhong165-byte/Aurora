@@ -137,6 +137,15 @@ export class CubismMath {
     return left > right ? right : left;
   }
 
+  public static clamp(val: number, min: number, max: number): number {
+    if (val < min) {
+      return min;
+    } else if (max < val) {
+      return max;
+    }
+    return val;
+  }
+
   /**
    * 角度値をラジアン値に変換する
    *
@@ -253,7 +262,7 @@ export class CubismMath {
     c: number,
     d: number
   ): number {
-    if (this.sqrt(a) < CubismMath.Epsilon) {
+    if (this.abs(a) < CubismMath.Epsilon) {
       return this.range(this.quadraticEquation(b, c, d), 0.0, 1.0);
     }
 
@@ -325,7 +334,7 @@ export class CubismMath {
    *
    * @param dividend 被除数（割られる値）
    * @param divisor 除数（割る値）
-   * @returns 余り
+   * @return 余り
    */
   static mod(dividend: number, divisor: number): number {
     if (

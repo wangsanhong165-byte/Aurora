@@ -31,7 +31,9 @@ export class CharacterPerformancePolicy {
     }
     const mapping = config.behaviorMap?.[behavior] ?? defaults[behavior as keyof typeof defaults] ?? {}
     const personality = config.personality ?? {}
-    const requestedExpression = mapping.expression ?? base.expression ?? emotion
+    const requestedExpression = emotion === 'neutral' && mapping.expression
+      ? mapping.expression
+      : (base.expression ?? emotion)
     const expression = (
       Object.prototype.hasOwnProperty.call(config.emotionMap ?? {}, requestedExpression)
       || supportsExpression(profile, requestedExpression)

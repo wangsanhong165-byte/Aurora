@@ -14,6 +14,7 @@ import { AmbientPerformanceEngine } from './performance/AmbientPerformanceEngine
 import { BodySwayController } from './performance/BodySwayController.ts'
 import { getExpression } from './live2d/expression.ts'
 import { semanticPostureFromVAD } from './performance/SemanticPosture.ts'
+import { mergeAccessoryParameterState, resolveAccessoryParameterState } from './AccessoryState.ts'
 
 test('lip-sync noise gate stays closed and calibrated output never exceeds model maximum', () => {
   const analyzer = new AudioAnalyzer()
@@ -215,6 +216,176 @@ test('expression release keeps submitting until the real baseline is restored', 
   assert.ok(Math.abs((finalFrame.find(item => item.parameterId === 'ParamCheek')?.value ?? 0) - 0.15) < 1e-9)
   assert.equal(finalFrame.find(item => item.parameterId === 'ParamPoseHand')?.value, 0)
   assert.equal(afterRelease.some(item => item.parameterId === 'ParamCheek'), false)
+})
+
+test('cat-tail secondary motion is visible, continuous, and coupled to the living pose', () => {
+  const engine = new AmbientPerformanceEngine(31)
+  engine.configure({ preset: 'natural', seed: 31 }, undefined, {
+    headControl: true, bodyControl: true, gazeControl: true,
+  })
+  engine.setActivity('idle')
+
+  const previous = Array.from({ length: 15 }, () => 0)
+  let segmentPeak = 0
+  let rootPeak = 0
+  let maxFrameDelta = 0
+  let maxSpatialSpread = 0
+  for (let index = 0; index < 60 * 18; index += 1) {
+    const frame = engine.update(1 / 60, {
+      vad: { valence: 0.2, arousal: 0.15, dominance: 0 },
+      audioLevel: 0,
+      enabled: true,
+      blockedChannels: new Set(),
+    })
+    const segments = previous.map((_, segmentIndex) => (
+      frame.values[`tail.segment${String(segmentIndex + 1).padStart(2, '0')}`] ?? 0
+    ))
+    rootPeak = Math.max(rootPeak, Math.abs(frame.values['tail.z'] ?? 0))
+    segmentPeak = Math.max(segmentPeak, ...segments.map(Math.abs))
+    maxSpatialSpread = Math.max(maxSpatialSpread, Math.max(...segments) - Math.min(...segments))
+    segments.forEach((value, segmentIndex) => {
+      maxFrameDelta = Math.max(maxFrameDelta, Math.abs(value - previous[segmentIndex]))
+      previous[segmentIndex] = value
+    })
+  }
+
+  assert.ok(segmentPeak > 4, `tail segment peak ${segmentPeak} should be visibly larger than controller noise`)
+  assert.ok(rootPeak < segmentPeak * 0.4, `root ${rootPeak} should guide rather than rigidly swing the tail`)
+  assert.ok(maxSpatialSpread > 0.8, `segment spread ${maxSpatialSpread} should create visible curvature`)
+  assert.ok(maxFrameDelta < 0.45, `tail frame delta ${maxFrameDelta} should remain spring-continuous`)
+})
+
+test('expression presets cannot seize parameters reserved for accessory state', () => {
+  const presets = {
+    test_neutral: { params: [
+      { id: 'ParamCatTailVisible', value: 0, blend: 'overwrite' as const },
+      { id: 'ParamFaceSmile', value: 0, blend: 'overwrite' as const },
+    ] },
+  }
+  const mixer = new ParameterMixer()
+  const adapter = {
+    configureMixerBaseline(target: ParameterMixer) {
+      target.setBaselineProvider(() => 0)
+    },
+  } as any
+  const controller = new ParameterController(name => presets[name as keyof typeof presets])
+  controller.attach(adapter, mixer)
+  controller.setExcludedParameterIds(['ParamCatTailVisible'])
+  controller.applyExpression('test_neutral', 1, 0, 0)
+
+  const output = controller.update(0)
+  assert.equal(output.some(item => item.parameterId === 'ParamCatTailVisible'), false)
+  assert.equal(output.some(item => item.parameterId === 'ParamFaceSmile'), true)
+})
+
+test('overlapping accessories produce one bounded state owner per parameter', () => {
+  const presets = {
+    cat: { params: [{ id: 'ParamShared', value: 1 }, { id: 'ParamTail', value: 1 }] },
+    hair: { params: [{ id: 'ParamShared', value: 1 }, { id: 'ParamIgnoredZero', value: 0 }] },
+  }
+  const merged = mergeAccessoryParameterState(
+    { 猫耳: 'cat', 丸子头: 'hair' },
+    { 猫耳: true, 丸子头: true },
+    name => presets[name as keyof typeof presets],
+  )
+
+  assert.deepEqual(merged.get('ParamShared'), { value: 1, labels: ['猫耳', '丸子头'] })
+  assert.equal(merged.has('ParamIgnoredZero'), false)
+  assert.equal(merged.size, 2)
+})
+
+test('accessory state restores every owned parameter to baseline when switched off', () => {
+  const presets = {
+    cat: { params: [{ id: 'ParamCatVisible', value: 1 }, { id: 'ParamTailVisible', value: 1 }] },
+  }
+  const resolve = (name: string) => presets[name as keyof typeof presets]
+
+  const enabled = resolveAccessoryParameterState(
+    { 猫耳: 'cat' }, { 猫耳: true }, resolve, () => 0,
+  )
+  const disabled = resolveAccessoryParameterState(
+    { 猫耳: 'cat' }, { 猫耳: false }, resolve, () => 0,
+  )
+  const enabledAgain = resolveAccessoryParameterState(
+    { 猫耳: 'cat' }, { 猫耳: true }, resolve, () => 0,
+  )
+
+  assert.equal(enabled.get('ParamCatVisible')?.value, 1)
+  assert.equal(enabled.get('ParamTailVisible')?.value, 1)
+  assert.equal(disabled.get('ParamCatVisible')?.value, 0)
+  assert.equal(disabled.get('ParamTailVisible')?.value, 0)
+  assert.equal(enabledAgain.get('ParamCatVisible')?.value, 1)
+})
+
+test('discrete replacement expressions switch atomically at full opacity', () => {
+  const presets = {
+    surprised: { params: [{ id: 'ParamRingEyes', value: 1 }] },
+    shy: { params: [{ id: 'ParamShyEyes', value: 1 }, { id: 'ParamShyAux', value: 0.5 }] },
+  }
+  const mixer = new ParameterMixer()
+  const adapter = {
+    configureMixerBaseline(target: ParameterMixer) {
+      target.setBaselineProvider(() => 0)
+    },
+  } as any
+  const controller = new ParameterController(name => presets[name as keyof typeof presets])
+  controller.attach(adapter, mixer)
+  controller.configurePolicy({
+    discreteParameterIds: ['ParamRingEyes', 'ParamShyEyes', 'ParamShyAux'],
+    exclusiveParameterGroups: [['ParamRingEyes', 'ParamShyEyes', 'ParamShyAux']],
+  })
+
+  controller.applyExpression('surprised', 0.35, 400, 0)
+  const surprised = controller.update(0)
+  controller.applyExpression('shy', 0.25, 400, 100)
+  const switched = controller.update(100)
+
+  assert.equal(surprised.find(item => item.parameterId === 'ParamRingEyes')?.value, 1)
+  assert.equal(switched.find(item => item.parameterId === 'ParamRingEyes')?.value ?? 0, 0)
+  assert.equal(switched.find(item => item.parameterId === 'ParamShyEyes')?.value, 1)
+  assert.equal(switched.find(item => item.parameterId === 'ParamShyAux')?.value, 0.5)
+})
+
+test('replacement eyes wait for the facial blend before switching without overlap', () => {
+  const presets = {
+    surprised: { params: [
+      { id: 'ParamRingEyes', value: 1 },
+      { id: 'ParamSurprisedBrow', value: 0.8 },
+    ] },
+    shy: { params: [
+      { id: 'ParamShyEyes', value: 1 },
+      { id: 'ParamShyBrow', value: 0.6 },
+    ] },
+  }
+  const mixer = new ParameterMixer()
+  const adapter = {
+    configureMixerBaseline(target: ParameterMixer) {
+      target.setBaselineProvider(() => 0)
+    },
+  } as any
+  const controller = new ParameterController(name => presets[name as keyof typeof presets])
+  controller.attach(adapter, mixer)
+  controller.configurePolicy({
+    discreteParameterIds: ['ParamRingEyes', 'ParamShyEyes'],
+    exclusiveParameterGroups: [['ParamRingEyes', 'ParamShyEyes']],
+    discreteSwitchDelayMs: 220,
+    minimumBlendDurationMs: 520,
+  })
+
+  controller.applyExpression('surprised', 1, 480, 0)
+  controller.update(220)
+  controller.applyExpression('shy', 1, 480, 300)
+  const blending = controller.update(380)
+  const neutralBridge = controller.update(420)
+  const switched = controller.update(520)
+
+  assert.equal(blending.find(item => item.parameterId === 'ParamRingEyes')?.value, 1)
+  assert.equal(blending.find(item => item.parameterId === 'ParamShyEyes')?.value, 0)
+  assert.ok((blending.find(item => item.parameterId === 'ParamShyBrow')?.value ?? 0) > 0)
+  assert.equal(neutralBridge.find(item => item.parameterId === 'ParamRingEyes')?.value ?? 0, 0)
+  assert.equal(neutralBridge.find(item => item.parameterId === 'ParamShyEyes')?.value ?? 0, 0)
+  assert.equal(switched.find(item => item.parameterId === 'ParamRingEyes')?.value ?? 0, 0)
+  assert.equal(switched.find(item => item.parameterId === 'ParamShyEyes')?.value, 1)
 })
 
 test('partial override fades from the baseline while full override is exclusive', () => {

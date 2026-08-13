@@ -1,18 +1,26 @@
-const PET_MARGIN = 24
-
 function getPetBounds(workArea) {
-  const marginX = Math.min(PET_MARGIN, Math.max(0, Math.floor((workArea.width - 1) / 2)))
-  const marginY = Math.min(PET_MARGIN, Math.max(0, Math.floor((workArea.height - 1) / 2)))
-  const availableWidth = Math.max(1, workArea.width - marginX * 2)
-  const availableHeight = Math.max(1, workArea.height - marginY * 2)
-  const width = Math.min(availableWidth, 440, Math.max(320, Math.round(workArea.width * 0.32)))
-  const height = Math.min(availableHeight, 680, Math.max(480, Math.round(workArea.height * 0.72)))
   return {
-    x: workArea.x + workArea.width - width - marginX,
-    y: workArea.y + workArea.height - height - marginY,
-    width,
-    height,
+    x: Math.round(workArea.x),
+    y: Math.round(workArea.y),
+    width: Math.max(1, Math.round(workArea.width)),
+    height: Math.max(1, Math.round(workArea.height)),
   }
+}
+
+function isPointInPetRegions(point, regions) {
+  if (!point || !Array.isArray(regions)) return false
+  return regions.some(region => {
+    if (!region) return false
+    const x = Number(region.x)
+    const y = Number(region.y)
+    const width = Number(region.width)
+    const height = Number(region.height)
+    if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+      return false
+    }
+    return point.x >= x && point.x <= x + width
+      && point.y >= y && point.y <= y + height
+  })
 }
 
 function fitBoundsToWorkArea(bounds, workArea) {
@@ -36,4 +44,9 @@ function selectRestorableBounds({ current, normal, maximized, fullScreen }) {
   return maximized || fullScreen ? normal : current
 }
 
-module.exports = { fitBoundsToWorkArea, getPetBounds, selectRestorableBounds }
+module.exports = {
+  fitBoundsToWorkArea,
+  getPetBounds,
+  isPointInPetRegions,
+  selectRestorableBounds,
+}

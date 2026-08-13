@@ -348,6 +348,17 @@ export function CapabilityPanel({ requestCommand }: { requestCommand: RequestCom
   return (
     <DrawerPanel title="能力">
       <div className="capability-view">
+        <div className="capability-intro">
+          <div>
+            <span className="capability-kicker">CAPABILITIES</span>
+            <p>角色可以调用的工具</p>
+          </div>
+          {items.length > 0 && (
+            <span className="capability-count">
+              {items.filter(item => item.status === 'available').length}/{items.length} 可用
+            </span>
+          )}
+        </div>
         {items.length === 0 && (
           <EmptyState>
             {loading
@@ -362,23 +373,27 @@ export function CapabilityPanel({ requestCommand }: { requestCommand: RequestCom
         )}
         {items.map(item => {
           const isAvailable = item.status === 'available'
+          const presentation = capabilityPresentation(item)
           return (
-            <article key={item.name}>
-              <div>
-                <strong>{item.name}</strong>
-                <p>{item.description || '由角色在需要时使用。'}</p>
-                <small>
-                  {item.permission === 'ask' ? '使用前询问' : '只读自动使用'}
-                  {' · '}
-                  {item.allowedProactively ? '允许主动使用' : '仅响应你的请求'}
-                  {item.recentlyUsedAt ? ` · 最近使用 ${formatDate(item.recentlyUsedAt)}` : ''}
-                </small>
+            <article key={item.name} className={`capability-card ${isAvailable ? 'is-available' : 'is-disabled'}`}>
+              <div className="capability-card-main">
+                <div className="capability-card-heading">
+                  <span className="capability-mark" aria-hidden="true" />
+                  <strong>{presentation.title}</strong>
+                </div>
+                <p>{presentation.description}</p>
+                <div className="capability-meta">
+                  <span>{item.permission === 'ask' ? '使用前询问' : '自动使用'}</span>
+                  <span>{item.allowedProactively ? '可主动调用' : '按需调用'}</span>
+                  {item.recentlyUsedAt && <span>最近使用 {formatDate(item.recentlyUsedAt)}</span>}
+                </div>
               </div>
               <button
                 type="button"
                 className={isAvailable ? 'is-active' : ''}
                 disabled={toggling === item.name}
                 onClick={() => void toggleCapability(item)}
+                aria-label={`${item.name}${isAvailable ? '已开启' : '已关闭'}`}
               >{isAvailable ? '已开启' : '已关闭'}</button>
             </article>
           )
@@ -408,4 +423,18 @@ function StatusLine({ label, value }: { label: string; value: string }) {
 
 function statusLabel(status: string) {
   return status === 'ready' ? '正常' : status === 'unavailable' ? '不可用' : status
+}
+
+function capabilityPresentation(item: CapabilityItem): { title: string; description: string } {
+  const known: Record<string, { title: string; description: string }> = {
+    screen_capture: { title: '屏幕截图', description: '需要时查看当前屏幕内容。' },
+    get_current_time: { title: '当前时间', description: '获取现在的日期和时间。' },
+    convert_time: { title: '时区转换', description: '在不同地区的时间之间进行换算。' },
+    search: { title: '网页搜索', description: '搜索公开网页，找到相关资料和答案。' },
+    fetch_content: { title: '阅读网页', description: '提取网页正文，方便继续阅读和整理。' },
+  }
+  return known[item.name] ?? {
+    title: item.name,
+    description: item.description || '由角色在需要时使用。',
+  }
 }

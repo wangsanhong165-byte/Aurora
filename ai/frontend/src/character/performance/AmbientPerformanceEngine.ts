@@ -46,6 +46,11 @@ export class AmbientPerformanceEngine {
   private current: Record<string, number> = {}
   private eyeClose = 0
   private enhanced = true
+  private tailPhase = 0
+  private tailRootValue = 0
+  private tailRootVelocity = 0
+  private readonly tailSegmentValues = Array.from({ length: 15 }, () => 0)
+  private readonly tailSegmentVelocities = Array.from({ length: 15 }, () => 0)
 
   constructor(seed = 1) {
     this.style = resolveMotionStyle({ seed })
@@ -60,6 +65,7 @@ export class AmbientPerformanceEngine {
     this.style = resolveMotionStyle(options)
     this.idle.setMotionStyle({ ...options, seed: this.style.seed }, personality, capabilities)
     this.speech.configure(this.style)
+    this.tailPhase = (this.style.seed % 17) * 0.37
     this.reset()
   }
 
@@ -76,6 +82,10 @@ export class AmbientPerformanceEngine {
   reset(): void {
     this.current = {}
     this.eyeClose = 0
+    this.tailRootValue = 0
+    this.tailRootVelocity = 0
+    this.tailSegmentValues.fill(0)
+    this.tailSegmentVelocities.fill(0)
     this.idle.reset()
     this.speech.reset()
     this.speech.setSpeaking(this.activity === 'speaking')
@@ -113,6 +123,8 @@ export class AmbientPerformanceEngine {
       ? filterChannels(input.tracking, input.blockedChannels)
       : {}
     const resolvedPose = addLogical(this.current, tracking)
+    const tail = this.updateSecondaryTail(delta, resolvedPose, input.audioLevel, gain, input.enabled)
+    if (input.enabled && !input.blockedChannels.has('body')) Object.assign(resolvedPose, tail)
 
     const eyeCloseTarget = idleAllowed && !input.blockedChannels.has('gaze')
       ? idle.eyeClose * gain
@@ -129,6 +141,70 @@ export class AmbientPerformanceEngine {
       activity: this.activity,
     }
   }
+
+  /**
+   * Model-optional appendage chain driven as inertial secondary motion.
+   *
+   * It deliberately lives downstream of the body pose: the torso supplies
+   * direction, a low-frequency phase prevents a mannequin hold, and fifteen
+   * progressively softer followers turn that direction into curvature. The
+   * overall root is deliberately small: large root-only rotation is exactly
+   * what makes a segmented tail look like a rigid baton. Models without these
+   * bindings simply discard the optional logical channels.
+   */
+  private updateSecondaryTail(
+    dt: number,
+    pose: Readonly<Record<string, number>>,
+    audioLevel: number,
+    gain: number,
+    enabled: boolean,
+  ): Record<string, number> {
+    const activityRate = this.activity === 'speaking' ? 1.24 : 0.82
+    this.tailPhase += dt * activityRate
+    const autonomous = Math.sin(this.tailPhase) * 6.2
+      + Math.sin(this.tailPhase * 0.47 + 1.3) * 1.35
+    const bodyInertia = -(pose['body.x'] ?? 0) * 1.35 - (pose['head.z'] ?? 0) * 0.72
+    const speechPulse = this.activity === 'speaking'
+      ? Math.sin(this.tailPhase * 2.35 + 0.4) * (0.8 + clamp(audioLevel, 0, 1) * 2.4)
+      : 0
+    const driver = enabled
+      ? clamp((autonomous + bodyInertia + speechPulse) * gain, -10, 10)
+      : 0
+
+    // Root establishes direction only. Most of the silhouette change belongs
+    // to the skinning chain below.
+    const rootTarget = driver * 0.24
+    const rootAcceleration = (rootTarget - this.tailRootValue) * 17 - this.tailRootVelocity * 6.8
+    this.tailRootVelocity += rootAcceleration * dt
+    this.tailRootValue = clamp(this.tailRootValue + this.tailRootVelocity * dt, -3, 3)
+
+    let parent = driver
+    for (let index = 0; index < this.tailSegmentValues.length; index += 1) {
+      // Each stage follows the previous stage rather than the shared driver.
+      // A small travelling bias prevents all segments from becoming parallel,
+      // while attenuation keeps the tip soft instead of whip-like.
+      const attenuation = 0.965 - index * 0.006
+      const travellingBias = Math.sin(this.tailPhase - index * 0.19) * (0.18 + index * 0.025)
+      const desired = clamp(parent * attenuation + travellingBias, -10, 10)
+      const stiffness = Math.max(9.5, 17 - index * 0.42)
+      const damping = Math.max(4.4, 6.4 - index * 0.12)
+      const acceleration = (desired - this.tailSegmentValues[index]) * stiffness
+        - this.tailSegmentVelocities[index] * damping
+      this.tailSegmentVelocities[index] += acceleration * dt
+      this.tailSegmentValues[index] = clamp(
+        this.tailSegmentValues[index] + this.tailSegmentVelocities[index] * dt,
+        -10,
+        10,
+      )
+      parent = this.tailSegmentValues[index]
+    }
+
+    const output: Record<string, number> = { 'tail.z': this.tailRootValue }
+    this.tailSegmentValues.forEach((value, index) => {
+      output[`tail.segment${String(index + 1).padStart(2, '0')}`] = value
+    })
+    return output
+  }
 }
 
 function logicalIdlePose(snapshot: IdleBehaviorSnapshot, gain: number): Record<string, number> {
@@ -140,6 +216,7 @@ function logicalIdlePose(snapshot: IdleBehaviorSnapshot, gain: number): Record<s
     'eye.y': snapshot.eyeY * gain,
     'body.x': snapshot.bodyX * gain,
     'body.y': snapshot.bodyY * gain,
+    'body.z': (-snapshot.bodyX * 0.18 + snapshot.headZ * 0.24) * gain,
   }
 }
 
@@ -153,6 +230,7 @@ function logicalSpeechPose(
     'head.z': sample.headZ * gain,
     'body.x': sample.bodyX * gain,
     'body.y': sample.bodyY * gain,
+    'body.z': sample.bodyZ * gain,
   }
 }
 
@@ -192,7 +270,12 @@ function filterChannels(
   return Object.fromEntries(Object.entries(values).filter(([key]) => {
     if (key.startsWith('head.')) return !blocked.has('head')
     if (key.startsWith('body.')) return !blocked.has('body')
+    if (key.startsWith('tail.')) return !blocked.has('body')
     if (key.startsWith('eye.')) return !blocked.has('gaze')
     return true
   }))
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value))
 }

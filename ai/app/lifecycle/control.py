@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import psutil
 import secrets
 import sys
 from multiprocessing.connection import Client, Listener
@@ -134,12 +135,20 @@ class ControlServer:
             authkey=None,
         )
         temporary = record.with_suffix(".tmp")
+        try:
+            create_time = psutil.Process(os.getpid()).create_time()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            create_time = None
         temporary.write_text(json.dumps({
             "schema_version": SCHEMA_VERSION,
             "endpoint": self.endpoint,
             "family": "AF_PIPE" if sys.platform == "win32" else "AF_UNIX",
             "token": self.token,
             "pid": os.getpid(),
+            # Persist a positive identity so recovery can distinguish a reused
+            # PID from a genuine orphan Supervisor without relying on cmdline.
+            "create_time": create_time,
+            "executable": sys.executable,
         }), encoding="utf-8")
         temporary.replace(record)
         try:
@@ -198,8 +207,18 @@ class ControlServer:
             connection.close()
 
 
+class ControlUnavailable(RuntimeError):
+    """The lifecycle control record is missing, unreadable, or not yet written."""
+
+
 def send_request(root: Path, request: dict) -> dict:
-    record = json.loads(control_record_path(root).read_text(encoding="utf-8"))
+    try:
+        record = json.loads(control_record_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        # A Supervisor writes its control record only after binding the pipe,
+        # so a bounded client racing cold start may observe it as absent. Surface
+        # that as a clean, retryable state instead of a raw traceback.
+        raise ControlUnavailable(f"control record not ready: {exc}") from exc
     request = {**request, "token": record["token"]}
     connection = Client(
         record["endpoint"],

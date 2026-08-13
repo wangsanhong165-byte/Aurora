@@ -64,3 +64,28 @@ class TestLive2DV3Handoff(unittest.TestCase):
 
         self.assertEqual(ctx.live2d_intent["behavior"], "speak")
         self.assertEqual(ctx.live2d_intent["emotion"], "happy")
+
+    def test_live2d_step_preserves_interpreter_selected_dominant_motion_plan(self):
+        ctx = CharacterTurn(input=TurnInput(text="explain"))
+        ctx.reply_text = "First point. Second point."
+        ctx.output.performance.emotion = "neutral"
+        ctx.output.performance.behavior = "speak"
+        ctx.output.performance.energy = 0.4
+        ctx.output.performance.motion_plan = {
+            "durationMs": 3000,
+            "steps": [{
+                "atMs": 0, "durationMs": 800,
+                "primitive": "tilt_left", "intensity": 0.3,
+            }],
+        }
+        ctx.segments = [
+            {"text": "First point.", "emotion": "neutral", "behavior": "speak",
+             "intensity": 0.4, "motionPlan": ctx.output.performance.motion_plan},
+            {"text": "Second point.", "emotion": "neutral", "behavior": "speak",
+             "intensity": 0.3},
+        ]
+
+        _run(Live2DStep().run(ctx))
+
+        self.assertEqual(ctx.live2d_intent["motion_plan"]["steps"][0]["primitive"], "tilt_left")
+        self.assertEqual(ctx.live2d_intent["energy"], 0.4)

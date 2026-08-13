@@ -11,9 +11,10 @@ if (process.env.ELECTRON_RUN_AS_NODE) {
   process.exit(1);
 }
 
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, screen, shell, dialog } = require('electron')
+const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain, screen, shell, dialog, protocol, net } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const { pathToFileURL } = require('url')
 const {
   fitBoundsToWorkArea,
   getPetBounds,
@@ -21,6 +22,18 @@ const {
 } = require('./pet-window.cjs')
 const { serviceUrl, waitForUrl } = require('./startup-readiness.cjs')
 const { dialogOptionsFor } = require('./character-asset-dialog.cjs')
+const {
+  findWorkshopDirectory,
+  inspectWallpaperPath,
+  wallpaperDialogOptions,
+} = require('./wallpaper-dialog.cjs')
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'wallpaper',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true },
+  },
+])
 
 // ProcessManager — backend service lifecycle management
 const { ProcessManager } = require('../../electron/process-manager.cjs')
@@ -65,6 +78,7 @@ let mainUiLoaded = false
 let mainUiLoading = false
 let appLoadRetryTimer = null
 let appUrl = null
+const allowedWallpaperPaths = new Set()
 
 // Frameless-window drag state (driven over IPC, see setupIPC). Polled from
 // the main process so dragging stays smooth while the renderer is busy
@@ -92,7 +106,9 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     frame: false,
-    backgroundColor: '#0d0e12',
+    transparent: true,
+    backgroundColor: '#00000000',
+    hasShadow: false,
     title: 'Monika Companion',
     show: false,
     webPreferences: {
@@ -179,6 +195,10 @@ function createTray() {
   const contextMenu = Menu.buildFromTemplate([
     { label: '显示窗口', click: () => mainWindow?.show() },
     { label: '隐藏窗口', click: () => mainWindow?.hide() },
+    {
+      label: '返回舞台模式',
+      click: () => mainWindow?.webContents.send('pet:exit-request'),
+    },
     { type: 'separator' },
     {
       label: '置顶显示',
@@ -211,6 +231,21 @@ function setupIPC() {
       dialogOptionsFor(kind, path.join(__dirname, '..', '..')),
     )
     return result.canceled ? '' : (result.filePaths[0] || '')
+  })
+
+  ipcMain.handle('wallpaper:select', async (_event, mode = 'directory') => {
+    const result = await dialog.showOpenDialog(mainWindow, wallpaperDialogOptions(mode))
+    if (result.canceled || !result.filePaths[0]) return { ok: false, code: 'canceled' }
+    return createWallpaperResource(inspectWallpaperPath(result.filePaths[0]))
+  })
+
+  ipcMain.handle('wallpaper:openWorkshop', async () => {
+    const directory = findWorkshopDirectory()
+    if (!directory) {
+      return { ok: false, message: '没有找到 Steam 的 Wallpaper Engine 创意工坊目录，请确认 Steam 和壁纸引擎已经安装。' }
+    }
+    const error = await shell.openPath(directory)
+    return error ? { ok: false, message: error } : { ok: true, path: directory }
   })
 
   // Window controls (from existing UI)
@@ -266,15 +301,21 @@ function setupIPC() {
       const display = screen.getDisplayMatching(bounds)
       const petBounds = getPetBounds(display.workArea)
       mainWindow.setMinimumSize(
-        Math.min(320, petBounds.width),
-        Math.min(480, petBounds.height),
+        1,
+        1,
       )
       mainWindow.setBounds(petBounds, true)
-      mainWindow.setIgnoreMouseEvents(false)
+      mainWindow.setResizable(false)
+      mainWindow.setSkipTaskbar(true)
+      mainWindow.setMenuBarVisibility(false)
+      mainWindow.setIgnoreMouseEvents(true, { forward: true })
       mainWindow.setAlwaysOnTop(true)
       petMode = true
     } else if (!enabled && petMode) {
       mainWindow.setIgnoreMouseEvents(false)
+      mainWindow.setSkipTaskbar(false)
+      mainWindow.setResizable(true)
+      mainWindow.setMenuBarVisibility(true)
       mainWindow.setMinimumSize(800, 600)
       if (normalWindowState) {
         const display = screen.getDisplayMatching(normalWindowState.bounds)
@@ -289,6 +330,11 @@ function setupIPC() {
       petMode = false
     }
     return { enabled: petMode, bounds: mainWindow.getBounds() }
+  })
+
+  ipcMain.on('pet:setMousePassthrough', (_event, passthrough) => {
+    if (!mainWindow || mainWindow.isDestroyed() || !petMode) return
+    mainWindow.setIgnoreMouseEvents(Boolean(passthrough), { forward: true })
   })
 
   // ── Window dragging (frameless fallback) ──
@@ -372,9 +418,68 @@ function setupIPC() {
   })
 }
 
+function createWallpaperResource(result) {
+  if (!result?.ok || !result.path) return result
+  allowedWallpaperPaths.add(path.resolve(result.path))
+  return {
+    ...result,
+    url: wallpaperResourceUrl(result.path),
+  }
+}
+
+function wallpaperResourceUrl(filePath) {
+  const token = Buffer.from(path.resolve(filePath), 'utf8').toString('base64url')
+  return `wallpaper://asset/${token}`
+}
+
+function decodeWallpaperResourceUrl(requestUrl) {
+  try {
+    const parsed = new URL(requestUrl)
+    if (parsed.protocol !== 'wallpaper:' || parsed.hostname !== 'asset') return null
+    const token = parsed.pathname.replace(/^\/+/, '')
+    if (!token) return null
+    return Buffer.from(token, 'base64url').toString('utf8')
+  } catch {
+    return null
+  }
+}
+
+function registerWallpaperProtocol() {
+  try {
+    const settingsPath = path.join(__dirname, '..', '..', 'data', 'settings.json')
+    const persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+    const backgroundPath = persisted?.backgroundPath
+    if (typeof backgroundPath === 'string' && backgroundPath) {
+      const inspected = inspectWallpaperPath(backgroundPath)
+      if (inspected.ok && inspected.path) allowedWallpaperPaths.add(path.resolve(inspected.path))
+    }
+  } catch {
+    // A missing or invalid settings file is handled by the normal defaults.
+  }
+
+  protocol.handle('wallpaper', async request => {
+    const filePath = decodeWallpaperResourceUrl(request.url)
+    if (!filePath) return new Response('Wallpaper resource unavailable', { status: 404 })
+    const normalizedPath = path.resolve(filePath)
+    if (!allowedWallpaperPaths.has(normalizedPath)) {
+      return new Response('Wallpaper resource unavailable', { status: 404 })
+    }
+    const inspected = inspectWallpaperPath(normalizedPath)
+    if (!inspected.ok || inspected.type === undefined || inspected.path !== normalizedPath) {
+      return new Response('Wallpaper resource unavailable', { status: 404 })
+    }
+    try {
+      return await net.fetch(pathToFileURL(inspected.path).toString())
+    } catch {
+      return new Response('Wallpaper resource unavailable', { status: 404 })
+    }
+  })
+}
+
 // ── App lifecycle ──
 
 app.whenReady().then(async () => {
+  registerWallpaperProtocol()
   fs.mkdirSync(path.dirname(ELECTRON_PID_FILE), { recursive: true })
   fs.writeFileSync(ELECTRON_PID_FILE, String(process.pid), 'utf8')
   // Clear previous console log

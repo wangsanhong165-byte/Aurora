@@ -112,7 +112,9 @@ function pythonArgs (python, args) {
 
 function controlTimeoutFor (command) {
   if (command === 'start' || command === 'restart') return 480_000
-  if (command === 'stop') return 30_000
+  // Stopping GPU voice services (GSVI/TTS) can outlive 30s; both stop and
+  // shutdown stop the full registered set, so bound them identically.
+  if (command === 'stop' || command === 'shutdown') return 60_000
   return 5_000
 }
 
@@ -155,36 +157,22 @@ function waitForControl (python, timeoutMs = 10000) {
   throw new Error('Lifecycle Supervisor did not open its control endpoint')
 }
 
-function ensureSupervisor (python) {
-  if (fs.existsSync(CONTROL_RECORD)) {
-    const result = invokeClient(python, ['status'], { quiet: true, timeoutMs: 10_000 })
-    if (result.status === 0) return
-    const record = JSON.parse(fs.readFileSync(CONTROL_RECORD, 'utf8'))
-    if (Number.isInteger(record.pid)) {
-      let alive = false
-      try {
-        process.kill(record.pid, 0)
-        alive = true
-      } catch (error) {
-        alive = error?.code === 'EPERM'
-      }
-      if (alive) {
-        console.log(`[RECOVERY] Supervisor PID ${record.pid} is unresponsive; verifying workspace identities...`)
-        const recovery = spawnSync(
-          python,
-          pythonArgs(python, ['-m', 'app.lifecycle.recovery', '--root', ROOT]),
-          { cwd: ROOT, encoding: 'utf8', windowsHide: true, timeout: 30_000 },
-        )
-        if (recovery.stdout) process.stdout.write(recovery.stdout)
-        if (recovery.status !== 0) {
-          throw new Error(
-            recovery.stderr?.trim() ||
-            `Lifecycle Supervisor (PID ${record.pid}) could not be recovered safely.`,
-          )
-        }
-      }
-    }
+function runRecovery (python) {
+  const recovery = spawnSync(
+    python,
+    pythonArgs(python, ['-m', 'app.lifecycle.recovery', '--root', ROOT]),
+    { cwd: ROOT, encoding: 'utf8', windowsHide: true, timeout: 30_000 },
+  )
+  if (recovery.stdout) process.stdout.write(recovery.stdout)
+  if (recovery.status !== 0) {
+    throw new Error(
+      recovery.stderr?.trim() ||
+      'Lifecycle runtime could not be recovered safely.',
+    )
   }
+}
+
+function spawnSupervisor (python) {
   const logDir = path.join(ROOT, 'logs')
   fs.mkdirSync(logDir, { recursive: true })
   const output = fs.openSync(path.join(logDir, 'supervisor-bootstrap.log'), 'a')
@@ -203,7 +191,29 @@ function ensureSupervisor (python) {
     },
   })
   child.unref()
-  waitForControl(python)
+}
+
+function ensureSupervisor (python) {
+  if (fs.existsSync(CONTROL_RECORD)) {
+    const result = invokeClient(python, ['status'], { quiet: true, timeoutMs: 10_000 })
+    if (result.status === 0) return
+    // The recorded Supervisor is not serving. Recover any stale runtime state
+    // (which always clears the stale record) before starting a fresh one.
+    console.log('[RECOVERY] Lifecycle Supervisor is unresponsive; recovering stale runtime state...')
+    runRecovery(python)
+  }
+  spawnSupervisor(python)
+  try {
+    waitForControl(python)
+  } catch (_firstError) {
+    // A first spawn can fail if an orphan still held the control pipe or the
+    // platform briefly rejected the bind. Recover once more and retry before
+    // surfacing the error.
+    console.log('[RECOVERY] Supervisor did not come up; retrying after recovery...')
+    runRecovery(python)
+    spawnSupervisor(python)
+    waitForControl(python)
+  }
 }
 
 function doctor (python) {
@@ -287,8 +297,13 @@ async function main (argv = process.argv.slice(2)) {
   if (['start', 'restart'].includes(mapped)) args.push('--launch-id', launchId, '--owner-id', ownerId)
   if (mapped === 'stop' && argv.includes('--all')) args.push('--all')
   const result = invokeClient(python, args)
+  if (mapped === 'stop') {
+    // Always request shutdown so the Supervisor exits and clears its control
+    // record even when the stop command itself was slow or failed.
+    invokeClient(python, ['shutdown'], { quiet: true })
+    return result.status || 0
+  }
   if (result.status !== 0) return result.status || 1
-  if (mapped === 'stop') invokeClient(python, ['shutdown'], { quiet: true })
   if (command === 'web') {
     const bridgeUrl = serviceUrlFromLifecycleOutput(result.stdout, 'bridge')
     console.log(`Open ${bridgeUrl || 'the resolved Bridge URL above'} (Ctrl+C stops this launch)`)

@@ -50,9 +50,10 @@ export class AvatarParameterResolver {
         const expressive = logical.startsWith('head.')
           || logical.startsWith('eye.')
           || logical.startsWith('body.')
+          || logical.startsWith('tail.')
           || logical === 'mouth.form'
         const gain = (expressive ? this.parameterGain : 1)
-          * (logical.startsWith('body.') ? this.bodyMotionGain : 1)
+          * (logical.startsWith('body.') || logical.startsWith('tail.') ? this.bodyMotionGain : 1)
         result[id] = this.clampLogical(logical, this.applyBinding(value * gain, binding))
       }
     }
@@ -76,9 +77,10 @@ export class AvatarParameterResolver {
       const expressive = logical.startsWith('head.')
         || logical.startsWith('eye.')
         || logical.startsWith('body.')
+        || logical.startsWith('tail.')
         || logical === 'mouth.form'
       const gain = (expressive ? this.parameterGain : 1)
-        * (logical.startsWith('body.') ? this.bodyMotionGain : 1)
+        * (logical.startsWith('body.') || logical.startsWith('tail.') ? this.bodyMotionGain : 1)
       const scale = typeof binding === 'string' ? 1 : binding?.scale ?? 1
       const sign = typeof binding !== 'string' && binding?.mode === 'subtract' ? -1 : 1
       result[id] = this.clampLogical(logical, value * gain * scale * sign)
@@ -147,6 +149,7 @@ export class AvatarParameterResolver {
     if (logical === 'mouth.form') return clamp(value, -1, 1)
     if (logical.startsWith('head.')) return clamp(value, -30, 30)
     if (logical.startsWith('body.')) return clamp(value, -15, 15)
+    if (logical.startsWith('tail.')) return clamp(value, -18, 18)
     return value
   }
 }

@@ -13,10 +13,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   close: () => ipcRenderer.invoke('window:close'),
   setAlwaysOnTop: (value) => ipcRenderer.invoke('window:setAlwaysOnTop', value),
   setPetMode: (enabled) => ipcRenderer.invoke('window:setPetMode', enabled),
+  setPetMousePassthrough: (passthrough) => ipcRenderer.send('pet:setMousePassthrough', passthrough),
   startWindowDrag: () => ipcRenderer.send('window:dragStart'),
   endWindowDrag: () => ipcRenderer.send('window:dragEnd'),
   getSettings: () => ipcRenderer.invoke('app:getSettings'),
   selectCharacterAsset: (kind) => ipcRenderer.invoke('character:selectAsset', kind),
+  selectWallpaper: (mode) => ipcRenderer.invoke('wallpaper:select', mode),
+  openWallpaperWorkshop: () => ipcRenderer.invoke('wallpaper:openWorkshop'),
 
   // ── ProcessManager / backend lifecycle ──
   getStatus: () => ipcRenderer.invoke('get-status'),
@@ -31,6 +34,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_event, snapshot) => callback(snapshot)
     ipcRenderer.on('lifecycle:snapshot', listener)
     return () => ipcRenderer.removeListener('lifecycle:snapshot', listener)
+  },
+  onPetExitRequest: (callback) => {
+    const listener = () => callback()
+    ipcRenderer.on('pet:exit-request', listener)
+    return () => ipcRenderer.removeListener('pet:exit-request', listener)
   },
   onLifecycleError: (callback) => {
     const listener = (_event, message) => callback(message)

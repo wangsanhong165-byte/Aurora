@@ -4,7 +4,7 @@ import test from 'node:test'
 import { isPerFrameGazeLoggingEnabled } from './performance-policy.ts'
 import { CharacterPerformancePolicy } from './CharacterPerformancePolicy.ts'
 import type { AvatarCapabilityProfile } from './AvatarCapabilityProfile.ts'
-import type { CharacterBehaviorConfig } from './CharacterBehaviorResolver.ts'
+import { CharacterBehaviorResolver, type CharacterBehaviorConfig } from './CharacterBehaviorResolver.ts'
 
 test('per-frame gaze logging is disabled unless diagnostics explicitly enable it', () => {
   assert.equal(isPerFrameGazeLoggingEnabled(undefined), false)
@@ -91,4 +91,46 @@ test('an intentional empty emotion mapping selects the built-in semantic preset'
     )
     assert.equal(plan.expression, emotion, `${emotion} must not collapse to neutral`)
   }
+})
+
+test('profile expression aliases survive capability filtering', () => {
+  const profile: AvatarCapabilityProfile = {
+    model: 'shirone',
+    expressions: ['neutral', 'happy'],
+    motions: [],
+    sequences: [],
+    parameters: {},
+    bindings: {},
+    expressionMap: {
+      playful: '星星眼',
+      embarrassed: '鸡爪眼',
+    },
+  }
+  const policy = new CharacterPerformancePolicy()
+
+  for (const emotion of ['playful', 'embarrassed']) {
+    const plan = policy.evaluate(
+      { emotion, behavior: 'speak', intensity: 0.7 },
+      { expression: emotion, expressionIntensity: 0.7, motionIntensity: 0.5, suppressIdle: false },
+      {},
+      profile,
+    )
+    assert.equal(plan.expression, emotion, `${emotion} must resolve through profile.expressionMap`)
+  }
+})
+
+test('an explicit segment emotion is not overwritten by a behavior default', () => {
+  const profile: AvatarCapabilityProfile = {
+    model: 'shirone',
+    expressions: ['neutral', 'happy', 'shy'],
+    motions: [], sequences: [], parameters: {}, bindings: {},
+    expressionMap: { shy: '鸡爪眼', happy: '心心眼' },
+  }
+  const intent = { emotion: 'shy', behavior: 'greet', intensity: 0.4 } as const
+  const resolver = new CharacterBehaviorResolver()
+  const base = resolver.resolve(intent)
+  const plan = new CharacterPerformancePolicy().evaluate(intent, base, {}, profile)
+
+  assert.equal(base.expression, 'shy')
+  assert.equal(plan.expression, 'shy')
 })

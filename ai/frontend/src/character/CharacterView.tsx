@@ -201,6 +201,8 @@ export const CharacterView = memo(function CharacterView() {
   const mountCount = useRef(0)
   // Drag and zoom state
   const dragRef = useRef({ isDragging: false, didMove: false, startX: 0, startY: 0, offsetX: 0, offsetY: 0, scale: 1 })
+  const petModeRef = useRef(settings.windowMode === 'pet')
+  petModeRef.current = settings.windowMode === 'pet'
   // Guards against duplicate event handlers and animation loops
   const petInitRef = useRef(false)
   const clickCountRef = useRef(0)          // total click events processed (debug)
@@ -287,7 +289,7 @@ export const CharacterView = memo(function CharacterView() {
       ctrl.attach(adapter, generation)
       _initComponents(compMgr, ctrl, expectedName)
       syncLive2dSettings(ctrl, settings)
-      ctrl.paramCtrl.applyExpression('neutral', 1, 0)
+      ctrl.exprCtrl.apply('neutral', 1, 0)
       attachedGeneration = generation
       return true
     }
@@ -409,6 +411,7 @@ export const CharacterView = memo(function CharacterView() {
 
     // ── Drag to pan ──
     const onMouseDown = (e: MouseEvent) => {
+      if (petModeRef.current) return
       const drag = dragRef.current
       drag.isDragging = true
       drag.didMove = false
@@ -433,6 +436,7 @@ export const CharacterView = memo(function CharacterView() {
     }
 
     const onDragMove = (e: MouseEvent) => {
+      if (petModeRef.current) return
       const drag = dragRef.current
       if (!drag.isDragging) return
       if (!drag.didMove && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) >= 4) {
@@ -448,6 +452,7 @@ export const CharacterView = memo(function CharacterView() {
     }
 
     const onWheel = (e: WheelEvent) => {
+      if (petModeRef.current) return
       e.preventDefault()
       const t = getViewTransform()
       const delta = e.deltaY > 0 ? 0.9 : 1.1

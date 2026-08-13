@@ -147,6 +147,17 @@ test('speech gets duration-aware local choreography when the LLM omits motion', 
   assert.ok(neutralIntent.motionPlan!.steps[0].intensity <= 0.55)
 })
 
+test('ordinary decoded speech receives a second conversational beat before it becomes a monologue', () => {
+  const director = new PerformanceDirector(() => 0)
+  director.stage({ ...base, turnId: 'turn-medium', emotion: 'neutral' })
+  director.onAudioStart('turn-medium', 2_600)
+
+  const cue = director.update()[0]
+  assert.equal(cue.motionPlan?.steps.length, 2)
+  assert.ok((cue.motionPlan?.steps[1].atMs ?? 0) >= 1_200)
+  assert.ok((cue.motionPlan?.steps[0].intensity ?? 0) >= 0.3)
+})
+
 test('decoded long speech distributes multiple expression-compatible body beats', () => {
   let now = 0
   const director = new PerformanceDirector(() => now)
@@ -158,4 +169,47 @@ test('decoded long speech distributes multiple expression-compatible body beats'
   assert.equal(cue.motionPlan?.durationMs, 9_000)
   assert.equal(cue.motionPlan?.steps.length, 3)
   assert.ok(cue.motionPlan!.steps.at(-1)!.atMs > 6_000)
+})
+
+test('sparse LLM choreography is completed through the later half of speech', () => {
+  let now = 0
+  const director = new PerformanceDirector(() => now)
+  director.stage({
+    ...base,
+    turnId: 'turn-sparse',
+    motionPlan: {
+      durationMs: 1_200,
+      steps: [{ atMs: 0, durationMs: 500, primitive: 'nod', intensity: 0.45 }],
+    },
+  })
+  director.onAudioStart('turn-sparse', 9_000)
+
+  const cue = director.update()[0]
+  assert.equal(cue.motionPlan?.durationMs, 9_000)
+  assert.ok((cue.motionPlan?.steps.length ?? 0) >= 2)
+  assert.ok(
+    (cue.motionPlan?.steps.at(-1)?.atMs ?? 0) >= 9_000 * 0.55,
+    'speech should retain a restrained semantic beat after the midpoint',
+  )
+})
+
+test('a fully populated but front-loaded LLM plan reserves a later speech beat', () => {
+  const director = new PerformanceDirector(() => 0)
+  director.stage({
+    ...base,
+    turnId: 'turn-front-loaded',
+    motionPlan: {
+      durationMs: 2_000,
+      steps: [
+        { atMs: 0, durationMs: 400, primitive: 'nod', intensity: 0.4 },
+        { atMs: 300, durationMs: 400, primitive: 'tilt_left', intensity: 0.4 },
+        { atMs: 700, durationMs: 400, primitive: 'lean_forward', intensity: 0.4 },
+      ],
+    },
+  })
+  director.onAudioStart('turn-front-loaded', 10_000)
+
+  const cue = director.update()[0]
+  assert.equal(cue.motionPlan?.steps.length, 3)
+  assert.ok((cue.motionPlan?.steps.at(-1)?.atMs ?? 0) >= 7_000)
 })

@@ -86,6 +86,28 @@ test('Design_genius_White routes body motion into its physical body inputs', () 
   )
 })
 
+test('shirone profile recruits torso rotation and its segmented cat-tail without controlling limbs', () => {
+  const profile = JSON.parse(readFileSync(
+    new URL('../../../config/avatar_profiles/shirone.json', import.meta.url),
+    'utf8',
+  )) as AvatarCapabilityProfile
+
+  assert.equal(profile.bindings['body.z'], 'ParamBodyAngleZ')
+  assert.equal(
+    typeof profile.bindings['tail.z'] === 'string'
+      ? profile.bindings['tail.z']
+      : profile.bindings['tail.z']?.target,
+    'Param_Angle_Rotation_1_ArtMesh572',
+  )
+  for (let index = 1; index <= 15; index += 1) {
+    const key = `tail.segment${String(index).padStart(2, '0')}`
+    const binding = profile.bindings[key]
+    assert.equal(typeof binding === 'string' ? binding : binding?.target,
+      `Param_Angle_Rotation_${index}_ArtMesh571`)
+  }
+  assert.equal(Object.keys(profile.bindings).some(key => key.startsWith('arm.')), false)
+})
+
 test('Design_genius_White does not advertise body rotation as an arm wave', () => {
   const profile = JSON.parse(readFileSync(
     new URL('../../../config/avatar_profiles/Design_genius_White.json', import.meta.url),

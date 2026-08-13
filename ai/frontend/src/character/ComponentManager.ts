@@ -6,7 +6,6 @@
 // ComponentManager does NOT hold CubismModelHandle. All parameter writes are
 // submitted to ParameterMixer → Live2DModelAdapter.
 
-import { getExpression } from './live2d/expression'
 import type { ParameterMixer } from './ParameterMixer'
 
 export interface ComponentInfo {
@@ -55,15 +54,9 @@ export class ComponentManager {
       return
     }
 
-    // Method 1: Expression preset
-    if (info.expression) {
-      const preset = getExpression(info.expression)
-      if (preset) {
-        for (const p of preset.params) {
-          this._submitParameter(p.id, enabled ? p.value : 0, `comp:${name}:expr`)
-        }
-      }
-    }
+    // Expression-backed components are submitted by CharacterController.
+    // Replaying the same preset here created two persistent owners for every
+    // toggle. ComponentManager only handles explicit param_ids below.
 
     // Method 2: Direct parameter control
     for (const paramId of info.paramIds) {

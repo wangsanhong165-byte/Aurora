@@ -192,7 +192,7 @@ function motionSignature(value: unknown): string {
 }
 
 function withLocalSemanticChoreography(intent: CharacterIntent): CharacterIntent {
-  if (intent.motionPlan || !intent.behavior || ['idle', 'listen'].includes(intent.behavior)) return intent
+  if (!intent.behavior || ['idle', 'listen'].includes(intent.behavior)) return intent
   const emotion = (intent.emotion || 'neutral').toLowerCase()
   const behavior = intent.behavior.toLowerCase()
   const behaviorRecipes: Record<string, MotionPrimitive[]> = {
@@ -226,21 +226,43 @@ function withLocalSemanticChoreography(intent: CharacterIntent): CharacterIntent
     .reduce((value, character) => ((value * 31) + character.charCodeAt(0)) >>> 0, 7)
   const ordered = candidates.map((_, index) => candidates[(index + hash) % candidates.length])
   const durationMs = Math.round(clamp(intent.durationMs ?? 1_800, 600, 30_000))
-  const beatCount = durationMs >= 5_500 ? 3 : durationMs >= 2_200 ? 2 : 1
+  const beatCount = durationMs >= 5_500 ? 3 : durationMs >= 1_800 ? 2 : 1
   const fractions = beatCount === 3 ? [0.06, 0.42, 0.72]
     : beatCount === 2 ? [0.08, 0.58] : [0.12]
   const baseIntensity = clamp(
     (intent.intensity ?? 0.5) * 0.46 + (intent.energy ?? 0.5) * 0.2,
-    0.22,
-    0.58,
+    0.3,
+    0.68,
   )
-  const steps = fractions.map((fraction, index) => {
+  let sourceSteps = [...(intent.motionPlan?.steps ?? [])]
+    .sort((left, right) => left.atMs - right.atMs)
+    .slice(0, 3)
+  const needsCompletion = sourceSteps.length < beatCount
+    || (sourceSteps.at(-1)?.atMs ?? 0) < durationMs * 0.48
+  if (intent.motionPlan && !needsCompletion) return intent
+  // A full three-step LLM plan can still be front-loaded. Keep its first two
+  // semantic choices and reserve one slot for a later conversational beat.
+  if (sourceSteps.length >= beatCount && (sourceSteps.at(-1)?.atMs ?? 0) < durationMs * 0.48) {
+    sourceSteps = sourceSteps.slice(0, Math.max(0, beatCount - 1))
+  }
+  const occupied = new Set(sourceSteps.map(step => step.primitive))
+  const missingCount = Math.max(0, beatCount - sourceSteps.length)
+  const supplementalFractions = fractions
+    .filter(fraction => !sourceSteps.some(step =>
+      Math.abs(step.atMs - durationMs * fraction) <= durationMs * 0.14))
+    .sort((left, right) => right - left)
+    .slice(0, missingCount)
+    .sort((left, right) => left - right)
+  const steps = supplementalFractions.map((fraction, index) => {
     const atMs = Math.round(durationMs * fraction)
     const available = Math.max(120, durationMs - atMs)
+    const primitive = ordered.find(candidate => !occupied.has(candidate))
+      ?? ordered[index % ordered.length]
+    occupied.add(primitive)
     return {
       atMs,
       durationMs: Math.round(Math.min(1_250, Math.max(520, durationMs * 0.13), available)),
-      primitive: ordered[index % ordered.length],
+      primitive,
       intensity: clamp(baseIntensity * (index === 0 ? 0.9 : index === 1 ? 1 : 0.82), 0, 1),
     }
   })
@@ -248,7 +270,9 @@ function withLocalSemanticChoreography(intent: CharacterIntent): CharacterIntent
     ...intent,
     motionPlan: {
       durationMs,
-      steps,
+      steps: [...sourceSteps, ...steps]
+        .sort((left, right) => left.atMs - right.atMs)
+        .slice(0, 3),
     },
   }
 }

@@ -11,6 +11,7 @@ __pycache__/
 .idea/
 .claude/settings.local.json
 .pytest_cache/
+.pytest-*/
 .uv_cache/
 .uv_tools/
 .vite/

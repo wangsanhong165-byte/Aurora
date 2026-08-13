@@ -124,3 +124,11 @@ test('bootstrap reads the lifecycle service status field returned by Python', ()
   assert.match(bootstrap, /svc\.status \|\| svc\.state/)
   assert.match(bootstrap, /serviceStatus\(s\) === 'failed'/)
 })
+
+test('pet mode uses a transparent full-work-area window with passthrough controls', () => {
+  assert.match(MAIN_SOURCE, /transparent: true/)
+  assert.match(MAIN_SOURCE, /backgroundColor: '#00000000'/)
+  assert.match(MAIN_SOURCE, /mainWindow\.setSkipTaskbar\(true\)/)
+  assert.match(MAIN_SOURCE, /mainWindow\.setIgnoreMouseEvents\(true, \{ forward: true \}\)/)
+  assert.match(MAIN_SOURCE, /ipcMain\.on\('pet:setMousePassthrough'/)
+})

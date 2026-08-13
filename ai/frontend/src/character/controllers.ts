@@ -7,6 +7,7 @@ import { isPerFrameGazeLoggingEnabled } from './performance-policy'
 import { getExpression } from './live2d/expression'
 import { ExpressionController } from './ExpressionController'
 import { MotionArbiter } from './MotionArbiter'
+import { resolveAccessoryParameterState } from './AccessoryState.ts'
 import { CharacterBehaviorResolver, type CharacterBehaviorConfig } from './CharacterBehaviorResolver'
 import { CharacterPerformancePolicy } from './CharacterPerformancePolicy'
 import { shouldStartAuthoredIdle, type AvatarCapabilityProfile } from './AvatarCapabilityProfile'
@@ -241,8 +242,6 @@ export class IdleController {
     this.breathMotionGain = Math.max(0.25, Math.min(3, gain))
   }
 
-  private _bodyBreathZ = 0
-
   attach(): void {
     this.time = 0
     this.nextBlink = IdleController.BASE_BLINK_INTERVAL
@@ -266,7 +265,7 @@ export class IdleController {
 
   setIdleEnabled(enabled: boolean): void {
     this.idleEnabled = enabled
-    if (!enabled) { this._bodyBreathZ = 0; this._eyeOpenValue = 1; this._blinkBreathValue = 0.5 }
+    if (!enabled) { this._eyeOpenValue = 1; this._blinkBreathValue = 0.5 }
   }
 
   getBlinkParams(externalEyeClose = 0): Record<string, number> {
@@ -276,11 +275,8 @@ export class IdleController {
 
   getBreathParams(): Record<string, number> {
     return this.parameters.values({
-      // ParamBreath is the actual physics input for the model's tail chain.
-      // Body X/Y are owned by AmbientPerformanceEngine; only a phase-related
-      // Z signal remains here to keep sleeve physics alive without a second
-      // competing body sway oscillator.
-      'body.z': this._bodyBreathZ,
+      // ParamBreath is the model's physical breathing input. Torso axes all
+      // belong to AmbientPerformanceEngine so there is only one body rhythm.
       breath: this._blinkBreathValue,
     })
   }
@@ -297,11 +293,6 @@ export class IdleController {
       // without scheduling a separate periodic motion that seizes ParamBreath.
       const breath = Math.sin(phase) * 0.86
         + Math.sin(phase * 0.43 + 1.1) * 0.14
-      const bodyBreath = Math.sin(phase * 0.72 + 0.45) * 0.75
-        + Math.sin(phase * 0.31 - 0.35) * 0.25
-      this._bodyBreathZ = bodyBreath
-        * Math.min(1.25, 0.65 * this.breathMotionGain)
-        * this.breathWeight
       const amplitude = Math.min(0.45, 0.18 * this.breathMotionGain)
       this._blinkBreathValue = 0.5 + breath * amplitude * this.breathWeight
     }
@@ -410,6 +401,7 @@ export class CharacterController {
   // Accessory state
   private _accessoryParts: Record<string, string> = {}
   private _accessoryState: Record<string, boolean> = {}
+  private _accessoryParameterIds = new Set<string>()
   private _onAccessoryChange: ((label: string, enabled: boolean) => void) | null = null
 
   setModelName(name: string, modelExpressionNames: string[] = []): void {
@@ -418,6 +410,7 @@ export class CharacterController {
     const config = configs?.[name]
     const profiles = (window as any).__INITIAL_MODEL_INFO__?.avatarProfiles as Record<string, AvatarCapabilityProfile> | undefined
     this._profile = profiles?.[name]
+    this.paramCtrl.configurePolicy(this._profile?.expressionParameterPolicy)
     this.parameterResolver.setProfile(this._profile)
     this.lipSync.configure(this.parameterResolver.getLipSyncConfig())
     this.performanceCoordinator.configure(
@@ -487,7 +480,7 @@ export class CharacterController {
     // Register mixer owners with priorities
     const ids = (...keys: string[]) => keys.map(key => this.parameterResolver.resolve(key)).filter((id): id is string => Boolean(id))
     this.mixer.registerOwner('blink', ids('blink.left', 'blink.right'), 40)
-    this.mixer.registerOwner('breath', ids('breath', 'body.x', 'body.y', 'body.z'), 20)
+    this.mixer.registerOwner('breath', ids('breath'), 20)
     // Lip-sync must beat the expression layer (75) on mouth.open, otherwise a
     // always-on expression preset pins the mouth shut while audio is playing.
     this.mixer.registerOwner('lip_sync', ids('mouth.open'), LIP_SYNC_PRIORITY)
@@ -766,7 +759,9 @@ export class CharacterController {
         break
       case 'listening':
         this.idleCtrl.setBreathing(true)
-        this.motionArbiter.stop()
+        // Listening only retires authored idle. Clearing the whole arbiter here
+        // made unrelated semantic gestures disappear in one frame.
+        this.motionArbiter.cancelOwner('idle:native')
         break
     }
   }
@@ -989,6 +984,10 @@ export class CharacterController {
         && expression !== '中指2'
       )))
       : parts
+    this.paramCtrl.setExcludedParameterIds(new Set(
+      Object.values(this._accessoryParts).flatMap(expression =>
+        (getExpression(expression)?.params ?? []).map(parameter => parameter.id)),
+    ))
     this._accessoryState = {}
     for (const label of Object.keys(this._accessoryParts)) {
       this._accessoryState[label] = true
@@ -997,12 +996,17 @@ export class CharacterController {
 
   clearAccessories(): void {
     this.removeAccessoryContributions()
+    this.paramCtrl.setExcludedParameterIds([])
     this._accessoryParts = {}
     this._accessoryState = {}
     this._onAccessoryChange = null
   }
 
   private removeAccessoryContributions(): void {
+    for (const parameterId of this._accessoryParameterIds) {
+      this.mixer.removeContribution(`accessory:state:${parameterId}`)
+    }
+    this._accessoryParameterIds.clear()
     for (const [label, expression] of Object.entries(this._accessoryParts)) {
       const preset = getExpression(expression)
       for (const parameter of preset?.params ?? []) {
@@ -1018,26 +1022,38 @@ export class CharacterController {
       return false
     }
     this._accessoryState[label] = enabled
-
-    // Submit accessory parameter contributions to mixer instead of direct write
-    const preset = getExpression(exprName)
-    if (preset) {
-      for (const p of preset.params) {
-        this.mixer.submit({
-          id: `accessory:${label}:${p.id}`,
-          parameterId: p.id,
-          source: `accessory:${label}`,
-          channel: 'accessory',
-          value: enabled ? p.value : 0,
-          mode: 'add',
-          priority: 60,
-          createdAt: performance.now(),
-          persistent: true,
-        })
-      }
-    }
+    this.refreshAccessoryContributions()
     this._onAccessoryChange?.(label, enabled)
     return true
+  }
+
+  private refreshAccessoryContributions(): void {
+    for (const parameterId of this._accessoryParameterIds) {
+      this.mixer.removeContribution(`accessory:state:${parameterId}`)
+    }
+    this._accessoryParameterIds.clear()
+    const merged = resolveAccessoryParameterState(
+      this._accessoryParts,
+      this._accessoryState,
+      getExpression,
+      parameterId => this.mixer.getBaseline(parameterId),
+    )
+    for (const [parameterId, state] of merged) {
+      this._accessoryParameterIds.add(parameterId)
+      this.mixer.submit({
+        id: `accessory:state:${parameterId}`,
+        parameterId,
+        source: state.labels.length
+          ? `accessory:${state.labels.join('+')}`
+          : 'accessory:baseline',
+        channel: 'accessory',
+        value: state.value,
+        mode: 'override',
+        priority: 60,
+        createdAt: performance.now(),
+        persistent: true,
+      })
+    }
   }
 
   toggleAccessory(label: string): boolean {
@@ -1270,27 +1286,23 @@ export class CharacterController {
       else if (step.type === 'behavior') this.applyIntent({ emotion: 'neutral', behavior: step.value, intensity: 0.5 })
     }
     const motionContribs = this.motionArbiter.update(dt)
-    const resolvedMotion = this.parameterResolver.resolveMotionDeltas(
-      Object.fromEntries(motionContribs.map(c => [c.logicalParameter, c.value])),
-    )
-    for (const [parameterId, value] of Object.entries(resolvedMotion)) {
-      const contributionPriority = motionContribs.find(item =>
-        this.parameterResolver.resolve(item.logicalParameter) === parameterId)?.priority ?? 50
-      this.mixer.submit({
-        id: `motion:${parameterId}`,
-        parameterId,
-        source: `motion:${this.motionArbiter.currentMotion ?? 'unknown'}`,
-        channel: 'motion',
-        value,
-        mode: motionContribs.find(item =>
-          this.parameterResolver.resolve(item.logicalParameter) === parameterId
-        )?.mode ?? 'add',
-        weight: motionContribs.find(item =>
-          this.parameterResolver.resolve(item.logicalParameter) === parameterId
-        )?.weight,
-        priority: contributionPriority,
-        createdAt: performance.now(),
+    for (const contribution of motionContribs) {
+      const resolved = this.parameterResolver.resolveMotionDeltas({
+        [contribution.logicalParameter]: contribution.value,
       })
+      for (const [parameterId, value] of Object.entries(resolved)) {
+        this.mixer.submit({
+          id: `${contribution.source}:${parameterId}`,
+          parameterId,
+          source: contribution.source,
+          channel: 'motion',
+          value,
+          mode: contribution.mode,
+          weight: contribution.weight,
+          priority: contribution.priority,
+          createdAt: performance.now(),
+        })
+      }
     }
     for (const contribution of this.motionArbiter.drainNativeContributions()) {
       if (contribution.target === 'parameter') {
@@ -1358,7 +1370,8 @@ export class CharacterController {
       this.lastDebugEmitAt = now
       const mixerFrame = this.mixer.debugFrame()
       const contestedParameters = Object.fromEntries(
-        Object.entries(mixerFrame.frameValues).filter(([, values]) => values.length > 1),
+        Object.entries(mixerFrame.frameValues).filter(([, values]) =>
+          values.filter(value => value.mode === 'override').length > 1),
       )
       const bindings = Object.entries(this.parameterResolver.getBindings())
       const missingBindings = bindings

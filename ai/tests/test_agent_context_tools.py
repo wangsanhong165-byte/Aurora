@@ -222,6 +222,21 @@ def test_response_validator_marks_malformed_structured_reply_invalid():
     assert result.valid is False
 
 
+def test_response_validator_recovers_sentence_level_semantics_when_segments_are_missing():
+    from app.runtime.response_validator import ResponseValidator
+
+    result = ResponseValidator().validate(
+        "你来啦，我有点紧张，先跟你说声好。今天我很开心，也乐意一直陪着你。"
+        "慢慢来，你已经做得很好了。",
+        [],
+    )
+
+    assert result.valid is False
+    assert [segment["emotion"] for segment in result.segments] == ["shy", "happy", "calm"]
+    assert [segment["behavior"] for segment in result.segments] == ["greet", "speak", "comfort"]
+    assert all(segment["contextTags"] == ["semantic_recovery"] for segment in result.segments)
+
+
 def test_decision_step_retries_malformed_output_once():
     from app.interfaces.llm import LLMResponse
     from app.runtime.steps.decision_step import DecisionStep

@@ -20,9 +20,10 @@ export type DrawerAction =
   | { type: 'toggle' }
   | { type: 'resize'; width: number }
 
-export const MIN_DRAWER_WIDTH = 300
-export const MAX_DRAWER_WIDTH = 520
-export const DEFAULT_DRAWER_WIDTH = 340
+// Settings needs enough room for labels and controls to breathe.
+export const MIN_DRAWER_WIDTH = 400
+export const MAX_DRAWER_WIDTH = 560
+export const DEFAULT_DRAWER_WIDTH = 420
 
 const DRAWER_SECTIONS: DrawerSection[] = [
   'history',

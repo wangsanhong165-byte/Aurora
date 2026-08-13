@@ -18,18 +18,34 @@ class Live2DStep(Step):
     """
 
     async def run(self, ctx: CharacterTurn) -> None:
-        segment = None
-        if ctx.segments:
-            last = ctx.segments[-1]
-            if isinstance(last, dict):
-                segment = last
-
-        if isinstance(segment, dict) and not segment.get("emotion"):
-            segment = {**segment, "emotion": ctx.emotion or "neutral"}
-
-        # The runtime owns intent, not delivery. V3 transport sends the
-        # semantic intent without renderer-specific parameters.
-        intent = CharacterIntent.from_llm_segment(segment or {"emotion": ctx.emotion or "neutral"}, ctx.emotion_intensity)
+        # DecisionStep/ResponseInterpreter has already selected the dominant
+        # semantic segment. Do not overwrite that plan with the final textual
+        # segment: a quiet closing sentence often has no motionPlan and used to
+        # erase the expressive beat chosen from an earlier sentence.
+        selected = ctx.output.performance
+        has_selected_plan = bool(
+            selected.behavior or selected.motion_plan or selected.natural_vad
+            or selected.context_tags or selected.duration_ms
+        )
+        if has_selected_plan:
+            intent = CharacterIntent(
+                emotion=selected.emotion or ctx.emotion or "neutral",
+                behavior=selected.behavior,
+                intensity=selected.intensity,
+                attention=selected.attention,
+                energy=selected.energy,
+                duration_ms=selected.duration_ms,
+                natural_vad=selected.natural_vad,
+                context_tags=tuple(selected.context_tags),
+                motion_plan=selected.motion_plan,
+            )
+        else:
+            # Compatibility for direct CharacterTurn callers that did not run
+            # DecisionStep/ResponseInterpreter before this pipeline step.
+            segment = ctx.segments[-1] if ctx.segments and isinstance(ctx.segments[-1], dict) else {}
+            if not segment.get("emotion"):
+                segment = {**segment, "emotion": ctx.emotion or "neutral"}
+            intent = CharacterIntent.from_llm_segment(segment, ctx.emotion_intensity)
         # Spoken output must retain a semantic presentation behavior even when
         # an older LLM response omits it or emits its former `idle` default.
         if ctx.reply_text and (not intent.behavior or intent.behavior == "idle"):

@@ -29,6 +29,46 @@ def _segment_rank(value: Any, fallback: float = 0.5) -> float:
     return max(0.0, min(1.0, number))
 
 
+_EXPLICIT_SHY_EVIDENCE = (
+    "害羞", "羞涩", "不好意思", "脸红", "心跳", "暧昧", "表白",
+    "喜欢我", "喜欢你", "爱我", "爱你",
+    "bashful", "blush", "embarrass", "romantic", "shy",
+)
+_PLAYFUL_MARKERS = (
+    "哎呀", "诶呀", "嘿嘿", "逗你", "开玩笑", "调皮", "俏皮",
+    "tease", "playful", "just kidding",
+)
+
+
+def _adapt_semantic_emotion(segment: dict[str, Any], user_text: str) -> tuple[str, str | None]:
+    """Reject a conspicuous expression when this turn provides no evidence.
+
+    This is semantic validation, not round-robin variety: genuine bashfulness
+    stays shy, while a persona's habitual coy wording cannot pin every turn to
+    the same replacement-eye asset.
+    """
+    emotion = str(segment.get("emotion", "neutral")).casefold()
+    if emotion not in {"shy", "embarrassed"}:
+        return emotion, None
+    text = f"{user_text}\n{segment.get('text', '')}".casefold()
+    if any(marker in text for marker in _EXPLICIT_SHY_EVIDENCE):
+        return emotion, None
+
+    vad = segment.get("naturalVAD")
+    vad = vad if isinstance(vad, dict) else {}
+    valence = _segment_rank(vad.get("valence"), 0.0)
+    arousal = _segment_rank(vad.get("arousal"), 0.35)
+    if any(marker in text for marker in _PLAYFUL_MARKERS):
+        adapted = "playful"
+    elif valence >= 0.62:
+        adapted = "smile"
+    elif arousal <= 0.3:
+        adapted = "calm"
+    else:
+        adapted = "neutral"
+    return adapted, f"emotion_semantically_adapted:{emotion}->{adapted}"
+
+
 @dataclass
 class InterpretedResponse:
     reply_text: str
@@ -66,6 +106,12 @@ class ResponseInterpreter:
                     cleaned.pop("motionPlan", None)
                 else:
                     cleaned["motionPlan"] = normalized.plan
+            adapted_emotion, adaptation_warning = _adapt_semantic_emotion(
+                cleaned, turn.user_text,
+            )
+            cleaned["emotion"] = adapted_emotion
+            if adaptation_warning:
+                warnings.append(adaptation_warning)
             segments.append(cleaned)
 
         dominant = max(

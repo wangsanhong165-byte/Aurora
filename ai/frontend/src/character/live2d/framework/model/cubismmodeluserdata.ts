@@ -8,8 +8,6 @@
 
 import { CubismIdHandle } from '../id/cubismid';
 import { CubismFramework } from '../live2dcubismframework';
-import { csmString } from '../type/csmstring';
-import { csmVector } from '../type/csmvector';
 import { CubismModelUserDataJson } from './cubismmodeluserdatajson';
 
 const ArtMesh = 'ArtMesh';
@@ -22,7 +20,7 @@ const ArtMesh = 'ArtMesh';
 export class CubismModelUserDataNode {
   targetType: CubismIdHandle; // ユーザーデータターゲットタイプ
   targetId: CubismIdHandle; // ユーザーデータターゲットのID
-  value: csmString; // ユーザーデータ
+  value: string; // ユーザーデータ
 }
 
 /**
@@ -63,7 +61,7 @@ export class CubismModelUserData {
    *
    * @return ユーザーデータリスト
    */
-  public getArtMeshUserDatas(): csmVector<CubismModelUserDataNode> {
+  public getArtMeshUserDatas(): Array<CubismModelUserDataNode> {
     return this._artMeshUserDataNode;
   }
 
@@ -87,6 +85,8 @@ export class CubismModelUserData {
     const typeOfArtMesh = CubismFramework.getIdManager().getId(ArtMesh);
     const nodeCount: number = json.getUserDataCount();
 
+    let dstIndex = this._userDataNodes.length;
+    this._userDataNodes.length = nodeCount;
     for (let i = 0; i < nodeCount; i++) {
       const addNode: CubismModelUserDataNode = new CubismModelUserDataNode();
 
@@ -94,11 +94,11 @@ export class CubismModelUserData {
       addNode.targetType = CubismFramework.getIdManager().getId(
         json.getUserDataTargetType(i)
       );
-      addNode.value = new csmString(json.getUserDataValue(i));
-      this._userDataNodes.pushBack(addNode);
+      addNode.value = json.getUserDataValue(i);
+      this._userDataNodes[dstIndex++] = addNode;
 
       if (addNode.targetType == typeOfArtMesh) {
-        this._artMeshUserDataNode.pushBack(addNode);
+        this._artMeshUserDataNode.push(addNode);
       }
     }
 
@@ -110,8 +110,8 @@ export class CubismModelUserData {
    * コンストラクタ
    */
   public constructor() {
-    this._userDataNodes = new csmVector<CubismModelUserDataNode>();
-    this._artMeshUserDataNode = new csmVector<CubismModelUserDataNode>();
+    this._userDataNodes = new Array<CubismModelUserDataNode>();
+    this._artMeshUserDataNode = new Array<CubismModelUserDataNode>();
   }
 
   /**
@@ -120,15 +120,15 @@ export class CubismModelUserData {
    * ユーザーデータ構造体配列を解放する
    */
   public release(): void {
-    for (let i = 0; i < this._userDataNodes.getSize(); ++i) {
-      this._userDataNodes.set(i, null);
+    for (let i = 0; i < this._userDataNodes.length; ++i) {
+      this._userDataNodes[i] = null;
     }
 
     this._userDataNodes = null;
   }
 
-  private _userDataNodes: csmVector<CubismModelUserDataNode>; // ユーザーデータ構造体配列
-  private _artMeshUserDataNode: csmVector<CubismModelUserDataNode>; // 閲覧リストの保持
+  private _userDataNodes: Array<CubismModelUserDataNode>; // ユーザーデータ構造体配列
+  private _artMeshUserDataNode: Array<CubismModelUserDataNode>; // 閲覧リストの保持
 }
 
 // Namespace definition for compatibility.

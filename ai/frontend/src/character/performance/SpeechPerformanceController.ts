@@ -6,6 +6,7 @@ export interface SpeechPerformanceSample {
   headZ: number
   bodyX: number
   bodyY: number
+  bodyZ: number
   weight: number
   state: 'idle' | 'speaking' | 'releasing'
 }
@@ -66,15 +67,16 @@ export class SpeechPerformanceController {
     const phraseDrift = Math.sin(this.elapsed * 0.72 + 0.35)
     const counterDrift = Math.sin(this.elapsed * 1.18 + 1.6)
     return {
-      headX: (Math.sin(this.elapsed * 1.92 + 0.7) * 1.05 + phraseDrift * 0.62)
+      headX: (Math.sin(this.elapsed * 1.92 + 0.7) * 1.28 + phraseDrift * 0.78)
         * voiceEnergy * weight,
-      headY: (Math.sin(this.elapsed * 3.45) * 0.72 + accentEnvelope * 1.85)
+      headY: (Math.sin(this.elapsed * 3.45) * 0.92 + accentEnvelope * 2.35)
         * weight,
-      headZ: (Math.sin(this.elapsed * 2.35 + 0.25) * 0.58 + counterDrift * 0.22)
+      headZ: (Math.sin(this.elapsed * 2.35 + 0.25) * 0.74 + counterDrift * 0.3)
         * voiceEnergy * weight,
-      bodyX: (-phraseDrift * 0.68 + counterDrift * 0.26) * voiceEnergy * weight,
-      bodyY: (Math.sin(this.elapsed * 1.12) * 0.38 + accentEnvelope * 0.52)
+      bodyX: (-phraseDrift * 0.92 + counterDrift * 0.36) * voiceEnergy * weight,
+      bodyY: (Math.sin(this.elapsed * 1.12) * 0.5 + accentEnvelope * 0.72)
         * weight,
+      bodyZ: (-phraseDrift * 0.58 + counterDrift * 0.25) * voiceEnergy * weight,
       weight,
       state: this.state,
     }

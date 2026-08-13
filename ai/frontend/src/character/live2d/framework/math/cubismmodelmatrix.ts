@@ -6,7 +6,6 @@
  * that can be found at https://www.live2d.com/eula/live2d-open-software-license-agreement_en.html.
  */
 
-import { csmMap, iterator } from '../type/csmmap';
 import { CubismMatrix44 } from './cubismmatrix44';
 
 /**
@@ -159,7 +158,7 @@ export class CubismModelMatrix extends CubismMatrix44 {
    *
    * @param layout レイアウト情報
    */
-  public setupFromLayout(layout: csmMap<string, number>): void {
+  public setupFromLayout(layout: Map<string, number>): void {
     const keyWidth = 'width';
     const keyHeight = 'height';
     const keyX = 'x';
@@ -171,13 +170,9 @@ export class CubismModelMatrix extends CubismMatrix44 {
     const keyLeft = 'left';
     const keyRight = 'right';
 
-    for (
-      const ite: iterator<string, number> = layout.begin();
-      ite.notEqual(layout.end());
-      ite.preIncrement()
-    ) {
-      const key: string = ite.ptr().first;
-      const value: number = ite.ptr().second;
+    for (const item of layout) {
+      const key: string = item[0];
+      const value: number = item[1];
 
       if (key == keyWidth) {
         this.setWidth(value);
@@ -186,13 +181,9 @@ export class CubismModelMatrix extends CubismMatrix44 {
       }
     }
 
-    for (
-      const ite: iterator<string, number> = layout.begin();
-      ite.notEqual(layout.end());
-      ite.preIncrement()
-    ) {
-      const key: string = ite.ptr().first;
-      const value: number = ite.ptr().second;
+    for (const item of layout) {
+      const key: string = item[0];
+      const value: number = item[1];
 
       if (key == keyX) {
         this.setX(value);

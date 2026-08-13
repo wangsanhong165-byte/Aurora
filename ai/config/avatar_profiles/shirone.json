@@ -1,0 +1,126 @@
+{
+  "model": "shirone",
+  "expressions": [
+    "neutral",
+    "happy",
+    "sad",
+    "angry",
+    "surprised",
+    "shy",
+    "love"
+  ],
+  "motions": [],
+  "sequences": [],
+  "parameters": {
+    "eye": {
+      "x": "ParamEyeBallX",
+      "y": "ParamEyeBallY"
+    },
+    "mouth": {
+      "open": "ParamMouthOpenY",
+      "form": "ParamMouthForm"
+    },
+    "face": {
+      "angleX": "ParamAngleX",
+      "angleY": "ParamAngleY"
+    }
+  },
+  "bindings": {
+    "eye.x": "ParamEyeBallX",
+    "eye.y": "ParamEyeBallY",
+    "head.x": "ParamAngleX",
+    "head.y": "ParamAngleY",
+    "head.z": "ParamAngleZ",
+    "body.x": "ParamBodyAngleX",
+    "body.y": "ParamBodyAngleY",
+    "body.z": "ParamBodyAngleZ",
+    "tail.z": {
+      "target": "Param_Angle_Rotation_1_ArtMesh572",
+      "scale": 0.3,
+      "min": -3,
+      "max": 3
+    },
+    "tail.segment01": { "target": "Param_Angle_Rotation_1_ArtMesh571", "scale": 0.56 },
+    "tail.segment02": { "target": "Param_Angle_Rotation_2_ArtMesh571", "scale": 0.58 },
+    "tail.segment03": { "target": "Param_Angle_Rotation_3_ArtMesh571", "scale": 0.60 },
+    "tail.segment04": { "target": "Param_Angle_Rotation_4_ArtMesh571", "scale": 0.62 },
+    "tail.segment05": { "target": "Param_Angle_Rotation_5_ArtMesh571", "scale": 0.64 },
+    "tail.segment06": { "target": "Param_Angle_Rotation_6_ArtMesh571", "scale": 0.66 },
+    "tail.segment07": { "target": "Param_Angle_Rotation_7_ArtMesh571", "scale": 0.68 },
+    "tail.segment08": { "target": "Param_Angle_Rotation_8_ArtMesh571", "scale": 0.70 },
+    "tail.segment09": { "target": "Param_Angle_Rotation_9_ArtMesh571", "scale": 0.72 },
+    "tail.segment10": { "target": "Param_Angle_Rotation_10_ArtMesh571", "scale": 0.74 },
+    "tail.segment11": { "target": "Param_Angle_Rotation_11_ArtMesh571", "scale": 0.76 },
+    "tail.segment12": { "target": "Param_Angle_Rotation_12_ArtMesh571", "scale": 0.78 },
+    "tail.segment13": { "target": "Param_Angle_Rotation_13_ArtMesh571", "scale": 0.80 },
+    "tail.segment14": { "target": "Param_Angle_Rotation_14_ArtMesh571", "scale": 0.82 },
+    "tail.segment15": { "target": "Param_Angle_Rotation_15_ArtMesh571", "scale": 0.84 },
+    "mouth.open": "ParamMouthOpenY",
+    "mouth.form": "ParamMouthForm",
+    "breath": "ParamBreath",
+    "blink.left": "ParamEyeLOpen",
+    "blink.right": "ParamEyeROpen"
+  },
+  "motionStyle": {
+    "preset": "natural",
+    "microMotionGain": 1.0,
+    "idleActionGain": 1.0,
+    "gestureFrequency": 1.0,
+    "speechAccentGain": 1.22
+  },
+  "personality": {
+    "expressiveness": 0.88,
+    "softness": 0.7,
+    "shyness": 0.36
+  },
+  "capabilities": {
+    "headControl": true,
+    "bodyControl": true,
+    "gazeControl": true,
+    "eyeBlink": true,
+    "mouthControl": true,
+    "mouthForm": true,
+    "breathControl": true
+  },
+  "performanceMode": "enhanced",
+  "expressionParameterPolicy": {
+    "discreteSwitchDelayMs": 220,
+    "minimumBlendDurationMs": 520,
+    "discreteParameterIds": [
+      "Param37", "Param39", "Param40", "Param194", "Param195", "Param196",
+      "Param197", "Param210", "Param211", "Param212", "Param213", "Param216",
+      "Param217", "Param219"
+    ],
+    "exclusiveParameterGroups": [[
+      "Param37", "Param39", "Param40", "Param194", "Param195", "Param196",
+      "Param197", "Param210", "Param211", "Param212", "Param213", "Param216",
+      "Param217", "Param219"
+    ]]
+  },
+  "parameterGain": 1.3,
+  "bodyMotionGain": 1.2,
+  "motionMap": {
+    "idle": "Idle"
+  },
+  "expressionMap": {
+    "happy": "心心眼",
+    "joyful": "心心眼",
+    "smile": "心心眼",
+    "cheerful": "星星眼",
+    "laughing": "星星眼",
+    "playful": "星星眼",
+    "love": "心心眼",
+    "sad": "悲伤表情",
+    "cry": "悲伤表情",
+    "worried": "悲伤表情",
+    "angry": "生气表情",
+    "pout": "生气表情",
+    "surprised": "圈圈眼",
+    "confused": "圈圈眼",
+    "shy": "鸡爪眼",
+    "embarrassed": "鸡爪眼",
+    "calm": "重置",
+    "blank": "重置",
+    "neutral": "重置"
+  }
+}

@@ -5,6 +5,8 @@ import './character-catalog.test.ts'
 import {
   clampDrawerWidth,
   createInitialDrawerState,
+  MAX_DRAWER_WIDTH,
+  MIN_DRAWER_WIDTH,
   reduceDrawerState,
   type DrawerState,
 } from './workspace-state.ts'
@@ -37,16 +39,16 @@ test('navigation selects content without closing the drawer', () => {
 })
 
 test('prompt is a valid drawer section', () => {
-  assert.deepEqual(createInitialDrawerState('prompt', 380), {
+  assert.deepEqual(createInitialDrawerState('prompt', MIN_DRAWER_WIDTH), {
     section: 'prompt',
     expanded: true,
-    width: 380,
+    width: MIN_DRAWER_WIDTH,
   })
 })
 
 test('character library is a valid drawer section', () => {
-  assert.deepEqual(createInitialDrawerState('characters', 380), {
-    section: 'characters', expanded: true, width: 380,
+  assert.deepEqual(createInitialDrawerState('characters', MIN_DRAWER_WIDTH), {
+    section: 'characters', expanded: true, width: MIN_DRAWER_WIDTH,
   })
 })
 
@@ -65,24 +67,24 @@ test('drawer expansion changes only through the dedicated toggle action', () => 
 })
 
 test('drawer width stays inside the supported stage-safe range', () => {
-  assert.equal(clampDrawerWidth(240), 300)
+  assert.equal(clampDrawerWidth(240), MIN_DRAWER_WIDTH)
   assert.equal(clampDrawerWidth(420), 420)
-  assert.equal(clampDrawerWidth(700), 520)
+  assert.equal(clampDrawerWidth(700), MAX_DRAWER_WIDTH)
 })
 
 test('invalid persisted drawer preferences fall back to safe defaults', () => {
   assert.deepEqual(createInitialDrawerState('unknown', 900), {
     section: 'history',
     expanded: true,
-    width: 520,
+    width: MAX_DRAWER_WIDTH,
   })
 })
 
 test('persisted closed drawer restores as closed', () => {
-  assert.deepEqual(createInitialDrawerState('closed', 380), {
+  assert.deepEqual(createInitialDrawerState('closed', MIN_DRAWER_WIDTH), {
     section: 'history',
     expanded: false,
-    width: 380,
+    width: MIN_DRAWER_WIDTH,
   })
 })
 

@@ -99,7 +99,7 @@
 | 子进程回收 | CODE_ONLY | lifecycle supervisor 代码存在 |
 | GPU 模型卸载 | DOC_ONLY | warmup 配置 |
 | 崩溃恢复 | CODE_ONLY | supervisor 重启逻辑 |
-| 日志文件写入 | VERIFIED | `logs/` 目录 + `logging_config.py` |
+| 日志输出 | VERIFIED | 各运行时模块使用标准库 `logging` 输出；日志目录由启动/运行配置管理 |
 
 ### B. 前端和 Electron
 

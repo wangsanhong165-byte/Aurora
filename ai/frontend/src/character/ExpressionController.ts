@@ -36,6 +36,10 @@ export class ExpressionController {
   setModelConfig(emotionMap: Record<string, string>, modelExpressionNames: string[]): void {
     this.emotionMap = emotionMap || {}
     this.modelExpressionNames = modelExpressionNames || []
+    // A newly attached model still needs its first expression applied when its
+    // semantic name matches the previous model's last expression.
+    this.currentExpression = ''
+    this.currentIntensity = -1
     console.log('[EXPRESSION] setModelConfig: map=%s, exprs=%s',
       Object.keys(this.emotionMap).length, this.modelExpressionNames.length)
   }

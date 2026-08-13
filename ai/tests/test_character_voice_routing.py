@@ -168,3 +168,25 @@ def test_cantonese_reply_language_is_not_silently_changed_to_english(tmp_path: P
     )
     assert "native language is Cantonese Chinese" in system_text
     assert "Write ALL output text in Cantonese Chinese ONLY" in system_text
+
+
+def test_previous_emotion_is_context_not_a_default_for_the_next_turn(tmp_path: Path):
+    character = Character({
+        "id": "lantern", "name": {"en": "Lantern"},
+        "character_setting": "A concise persona.", "reply_language": "zh",
+    })
+    character.emotion.current = "shy"
+    turn = CharacterTurn(TurnInput(text="介绍一下今天的安排"))
+    turn.character = character
+
+    messages = DefaultPlanner(
+        prompt_store=PromptOverrideStore(tmp_path / "prompts"),
+        prompt_config_store=PromptConfigStore(tmp_path / "prompts"),
+    ).plan(turn).messages
+    system_text = "\n".join(
+        message["content"] for message in messages if message["role"] == "system"
+    )
+
+    assert "Previous expression state: shy" in system_text
+    assert "do not reuse it by default" in system_text
+    assert "shy and embarrassed require explicit evidence" in system_text

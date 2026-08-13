@@ -93,6 +93,10 @@ function _loadModelFromBufferUnsafe(buffer: ArrayBuffer): CubismModelHandle | nu
     console.error('[Cubism] Core not initialized')
     return null
   }
+  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength === 0) {
+    console.error('[Cubism] Refusing to load an empty or invalid MOC3 buffer')
+    return null
+  }
 
   try {
     // --- Direct Core Moc creation (bypass CubismMoc.create wrapper) ---
@@ -104,6 +108,20 @@ function _loadModelFromBufferUnsafe(buffer: ArrayBuffer): CubismModelHandle | nu
       return null
     }
     console.log('[Cubism] Core Moc created OK:', typeof coreMoc, !!coreMoc)
+
+    // Validate the exact buffer against the Core-created MOC before asking
+    // Core to allocate a model. The official SDK performs this check as part
+    // of its CubismMoc creation path; keeping it here preserves the direct
+    // Core path while preventing malformed/stale assets from reaching the
+    // Framework renderer.
+    const consistencyCheck = (coreMoc as unknown as {
+      hasMocConsistency?: (candidate: ArrayBuffer) => number
+    }).hasMocConsistency
+    if (typeof consistencyCheck === 'function' && consistencyCheck.call(coreMoc, buffer) !== 1) {
+      console.error('[Cubism] MOC3 consistency check failed')
+      coreMoc._release()
+      return null
+    }
 
     // Wrap in Framework's CubismMoc (private constructor 閳?cast bypass)
     const CubismMocCtor = CubismMoc as unknown as new (moc: Live2DCubismCore.Moc) => CubismMoc
@@ -122,6 +140,46 @@ function _loadModelFromBufferUnsafe(buffer: ArrayBuffer): CubismModelHandle | nu
     console.log('[Cubism] drawables:', typeof coreModel.drawables, coreModel.drawables ? 'count ' + coreModel.drawables.count : 'MISSING')
     console.log('[Cubism] parameters:', typeof coreModel.parameters, coreModel.parameters ? 'count ' + coreModel.parameters.count : 'MISSING')
     console.log('[Cubism] parts:', typeof coreModel.parts, coreModel.parts ? 'count ' + coreModel.parts.count : 'MISSING')
+
+    // ── Core 5.0 → r.5 framework compatibility shim ──
+    // The r.5 CubismWebFramework expects a Cubism Core 5.3 model interface
+    // (offscreens, drawables.blendModes, getRenderOrders()). Our core is 5.0.
+    // Provide the 5.3 accessors backed by 5.0 data; offscreen/blend features
+    // are unused by our models, so the shim exposes empty values.
+    const cm = coreModel as Live2DCubismCore.Model & {
+      getRenderOrders: () => Int32Array
+      offscreens: Record<string, unknown> & { count: number }
+    }
+    if (typeof cm.getRenderOrders !== 'function') {
+      cm.getRenderOrders = () => cm.drawables.renderOrders
+    }
+    if (!cm.offscreens) {
+      cm.offscreens = {
+        count: 0,
+        constantFlags: new Uint8Array(0),
+        dynamicFlags: new Uint8Array(0),
+        drawOrders: new Int32Array(0),
+        renderOrders: new Int32Array(0),
+        opacities: new Float32Array(0),
+        multiplyColors: new Float32Array(0),
+        screenColors: new Float32Array(0),
+        maskCounts: new Int32Array(0),
+        masks: [],
+        blendModes: new Int32Array(0),
+        ownerIndices: new Int32Array(0),
+        vertexCounts: new Int32Array(0),
+        vertexPositions: [],
+        vertexUvs: [],
+        indexCounts: new Int32Array(0),
+        indices: [],
+        parentPartIndices: new Int32Array(0),
+      }
+    }
+    const drawables = coreModel.drawables as { blendModes?: Int32Array }
+    if (!drawables.blendModes) {
+      drawables.blendModes = new Int32Array(coreModel.drawables.count).fill(0)
+    }
+
     // Wrap in Framework's CubismModel
     console.log('[Cubism] Creating CubismModel...')
     const CubismModelCtor = CubismModel as unknown as new (m: Live2DCubismCore.Model) => CubismModel
@@ -138,10 +196,8 @@ function _loadModelFromBufferUnsafe(buffer: ArrayBuffer): CubismModelHandle | nu
     const paramNames: string[] = []
     for (let i = 0; i < paramCount; i++) {
       const idObj = frameworkModel.getParameterId(i)
-      // Use getString() 閳?CubismId has NO toString() override, so
-      // idObj.toString() returns "[object Object]" and all 407+ params
-      // collapse to the same key, making every setParameter() a no-op.
-      const name = idObj.getString().s
+      // CubismId.getString() returns the raw parameter id string (r.5).
+      const name = idObj.getString()
       paramIndexMap[name] = i
       paramNames.push(name)
     }
@@ -159,7 +215,7 @@ function _loadModelFromBufferUnsafe(buffer: ArrayBuffer): CubismModelHandle | nu
     const partMetadata: ModelPartMetadata[] = []
     for (let i = 0; i < partCount; i++) {
       const idObj = frameworkModel.getPartId(i)
-      const name = idObj.getString().s
+      const name = idObj.getString()
       partIndexMap[name] = i
       partMetadata.push({
         id: name,

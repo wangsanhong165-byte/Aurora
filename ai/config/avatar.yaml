@@ -526,3 +526,97 @@ ariu:
     expression:
       owns: ["ParamBrowLY", "ParamBrowRY", "ParamMouthForm", "ParamCheek"]
       priority: 30
+
+# ── shirone (真夜白音) ─────────────────────────────────────────────────────
+
+shirone:
+  components:
+    丸子头:
+      display_name: "丸子头"
+      expression: "丸子头"
+      default_state: false
+      category: "hairstyle"
+    猫耳:
+      display_name: "猫耳"
+      expression: "猫耳"
+      default_state: true
+      category: "headwear"
+    拿麦克风:
+      display_name: "拿麦克风"
+      expression: "拿麦克风"
+      default_state: false
+      category: "accessory"
+    白丝:
+      display_name: "白丝"
+      expression: "白丝"
+      default_state: false
+      category: "clothing"
+    衣领:
+      display_name: "衣领"
+      expression: "衣领"
+      default_state: false
+      category: "clothing"
+
+  expressions:
+    neutral:
+      preset: "重置"
+      params: {}
+      default: true
+    happy:
+      preset: "心心眼"
+      params: {}
+      default: false
+    joyful:
+      preset: "心心眼"
+      params: {}
+      default: false
+    cheerful:
+      preset: "星星眼"
+      params: {}
+      default: false
+    love:
+      preset: "心心眼"
+      params: {}
+      default: false
+    surprised:
+      preset: "圈圈眼"
+      params: {}
+      default: false
+    shy:
+      preset: "鸡爪眼"
+      params: {}
+      default: false
+    angry:
+      preset: "生气表情"
+      params: {}
+      default: false
+    sad:
+      preset: "悲伤表情"
+      params: {}
+      default: false
+    worried:
+      preset: "悲伤表情"
+      params: {}
+      default: false
+
+  motions:
+    idle:
+      priority: 10
+      duration_ms: 0
+      loop: true
+      category: "idle"
+      motion_file: "Idle.motion3.json"
+
+  parameters:
+    lip_sync:
+      owns: ["ParamMouthOpenY"]
+      priority: 60
+    blink:
+      owns: ["ParamEyeLOpen", "ParamEyeROpen"]
+      priority: 40
+    breath:
+      owns: ["ParamBreath"]
+      priority: 20
+    expression:
+      owns: ["ParamBrowLY", "ParamBrowRY", "ParamMouthForm", "ParamEyeLSmile"]
+      priority: 30

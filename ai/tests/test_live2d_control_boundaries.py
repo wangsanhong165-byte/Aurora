@@ -152,7 +152,7 @@ def test_motion_arbiter_outputs_logical_contributions_only():
 
     assert "PARAM_IDS" not in arbiter
     assert "logicalParameter" in arbiter
-    assert "resolveMotionParameters" in controller
+    assert "resolveMotionDeltas" in controller
 
 
 def test_sequence_metadata_cannot_bypass_executable_motion_gating():
@@ -351,6 +351,16 @@ def test_avatar_profiles_can_override_motion_style_and_personality():
         assert 0 <= profile["personality"]["expressiveness"] <= 1
         assert 0 <= profile["personality"]["softness"] <= 1
         assert 0 <= profile["personality"]["shyness"] <= 1
+
+
+def test_shirone_cat_ears_and_tail_are_enabled_by_default():
+    import yaml
+
+    avatar = yaml.safe_load((ROOT / "config/avatar.yaml").read_text(encoding="utf-8"))
+    cat_ears = avatar["shirone"]["components"]["猫耳"]
+
+    assert cat_ears["expression"] == "猫耳"
+    assert cat_ears["default_state"] is True
 
 
 def test_body_sway_uses_targets_holds_and_focus_recentring():

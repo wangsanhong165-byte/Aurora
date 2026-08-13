@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
-from .control import send_request
+from .control import ControlUnavailable, send_request
 from .protocol import SCHEMA_VERSION
 
 
@@ -22,16 +22,27 @@ def main() -> int:
     parser.add_argument("--after-sequence", type=int, default=0)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
     args = parser.parse_args()
-    response = send_request(args.root, {
-        "schema_version": SCHEMA_VERSION,
-        "command": args.command,
-        "profile": args.profile,
-        "launch_id": args.launch_id,
-        "owner_id": args.owner_id,
-        "request_id": uuid4().hex,
-        "all": args.all,
-        "after_sequence": args.after_sequence,
-    })
+    try:
+        response = send_request(args.root, {
+            "schema_version": SCHEMA_VERSION,
+            "command": args.command,
+            "profile": args.profile,
+            "launch_id": args.launch_id,
+            "owner_id": args.owner_id,
+            "request_id": uuid4().hex,
+            "all": args.all,
+            "after_sequence": args.after_sequence,
+        })
+    except (ControlUnavailable, OSError, EOFError) as exc:
+        # A cold-start race or a Supervisor that died between reads is a clean,
+        # retryable failure — not a crash. Report it as a structured response so
+        # bounded callers (soulctl, Electron) can poll again.
+        print(json.dumps({
+            "ok": False,
+            "error": f"lifecycle control unavailable: {exc}",
+            "recoverable": True,
+        }, ensure_ascii=False))
+        return 1
     print(json.dumps(response, ensure_ascii=False))
     return 0 if response.get("ok") else 1
 

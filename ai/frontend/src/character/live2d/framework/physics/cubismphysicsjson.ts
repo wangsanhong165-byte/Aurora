@@ -301,8 +301,7 @@ export class CubismPhysicsJson {
       .getValueByString(PhysicsSettings)
       .getValueByIndex(physicsSettingIndex)
       .getValueByString(Input)
-      .getVector()
-      .getSize();
+      .getVector().length;
   }
 
   /**
@@ -396,8 +395,7 @@ export class CubismPhysicsJson {
       .getValueByString(PhysicsSettings)
       .getValueByIndex(physicsSettingIndex)
       .getValueByString(Output)
-      .getVector()
-      .getSize();
+      .getVector().length;
   }
 
   /**
@@ -534,8 +532,7 @@ export class CubismPhysicsJson {
       .getValueByString(PhysicsSettings)
       .getValueByIndex(physicsSettingIndex)
       .getValueByString(Vertices)
-      .getVector()
-      .getSize();
+      .getVector().length;
   }
 
   /**

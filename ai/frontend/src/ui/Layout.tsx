@@ -1,5 +1,5 @@
 import { ChevronRight } from 'lucide-react'
-import { useEffect, useReducer, useRef, type PointerEvent, type ReactNode } from 'react'
+import { useEffect, useReducer, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from 'react'
 
 import {
   DEFAULT_DRAWER_WIDTH,
@@ -8,6 +8,14 @@ import {
   type DrawerSection,
 } from './workspace-state'
 import { createFrameCoalescer, type FrameCoalescer } from './frame-coalescer'
+import {
+  clampPetPosition,
+  DEFAULT_PET_SIZE,
+  readPetPosition,
+  writePetPosition,
+  type PetPosition,
+} from './pet-position'
+import { electronWindowBridge } from '../session/electron-window-bridge'
 
 export interface DrawerItem {
   id: DrawerSection
@@ -18,6 +26,7 @@ export interface DrawerItem {
 
 export interface LayoutProps {
   characterArea: ReactNode
+  background?: ReactNode
   subtitle: ReactNode
   conversationArea: ReactNode
   drawerItems: DrawerItem[]
@@ -37,6 +46,7 @@ function initialDrawerState() {
 
 export function Layout({
   characterArea,
+  background,
   subtitle,
   conversationArea,
   drawerItems,
@@ -47,6 +57,25 @@ export function Layout({
   const [drawer, dispatch] = useReducer(reduceDrawerState, undefined, initialDrawerState)
   const stopResizeRef = useRef<(() => void) | null>(null)
   const resizeCoalescerRef = useRef<FrameCoalescer<number> | null>(null)
+  const characterRef = useRef<HTMLDivElement>(null)
+  const conversationRef = useRef<HTMLDivElement>(null)
+  const controlsRef = useRef<HTMLDivElement>(null)
+  const dragRef = useRef<{ active: boolean; didMove: boolean; startX: number; startY: number; offsetX: number; offsetY: number }>({
+    active: false,
+    didMove: false,
+    startX: 0,
+    startY: 0,
+    offsetX: 0,
+    offsetY: 0,
+  })
+  const petPositionRef = useRef<PetPosition>({ x: 0, y: 0 })
+  const passthroughTimerRef = useRef<number | null>(null)
+  const [petPosition, setPetPosition] = useState<PetPosition>(() => (
+    petMode
+      ? readPetPosition(window.localStorage, { width: window.innerWidth, height: window.innerHeight })
+      : { x: 0, y: 0 }
+  ))
+  petPositionRef.current = petPosition
 
   if (!resizeCoalescerRef.current) {
     resizeCoalescerRef.current = createFrameCoalescer(
@@ -63,6 +92,115 @@ export function Layout({
     stopResizeRef.current?.()
     resizeCoalescerRef.current?.cancel()
   }, [])
+
+  useEffect(() => {
+    if (!petMode) {
+      dragRef.current.active = false
+      electronWindowBridge.setPetMousePassthrough(false)
+      return
+    }
+
+    setPetPosition(readPetPosition(
+      window.localStorage,
+      { width: window.innerWidth, height: window.innerHeight },
+    ))
+
+    const updatePetPosition = () => {
+      setPetPosition(current => clampPetPosition(
+        current,
+        { width: window.innerWidth, height: window.innerHeight },
+      ))
+    }
+    const setPassthroughFromPoint = (clientX: number, clientY: number) => {
+      if (dragRef.current.active) return
+      const regions = [characterRef.current, conversationRef.current, controlsRef.current]
+        .filter((element): element is HTMLDivElement => Boolean(element))
+      const interactive = regions.some(element => {
+        const rect = element.getBoundingClientRect()
+        return clientX >= rect.left && clientX <= rect.right
+          && clientY >= rect.top && clientY <= rect.bottom
+      })
+      electronWindowBridge.setPetMousePassthrough(!interactive)
+    }
+    const onMouseMove = (event: globalThis.MouseEvent) => {
+      if (dragRef.current.active) {
+        if (!dragRef.current.didMove) {
+          dragRef.current.didMove = Math.hypot(
+            event.clientX - dragRef.current.startX,
+            event.clientY - dragRef.current.startY,
+          ) >= 4
+        }
+        if (!dragRef.current.didMove) return
+        const next = clampPetPosition(
+          {
+            x: event.clientX - dragRef.current.offsetX,
+            y: event.clientY - dragRef.current.offsetY,
+          },
+          { width: window.innerWidth, height: window.innerHeight },
+        )
+        setPetPosition(next)
+        return
+      }
+      setPassthroughFromPoint(event.clientX, event.clientY)
+    }
+    const onMouseUp = () => {
+      if (!dragRef.current.active) return
+      dragRef.current.active = false
+      writePetPosition(window.localStorage, petPositionRef.current)
+      if (dragRef.current.didMove) {
+        electronWindowBridge.setPetMousePassthrough(true)
+      } else {
+        passthroughTimerRef.current = window.setTimeout(() => {
+          passthroughTimerRef.current = null
+          electronWindowBridge.setPetMousePassthrough(true)
+        }, 120)
+      }
+    }
+    updatePetPosition()
+    window.addEventListener('resize', updatePetPosition)
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+    electronWindowBridge.setPetMousePassthrough(true)
+    return () => {
+      window.removeEventListener('resize', updatePetPosition)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+      if (passthroughTimerRef.current !== null) {
+        window.clearTimeout(passthroughTimerRef.current)
+        passthroughTimerRef.current = null
+      }
+      electronWindowBridge.setPetMousePassthrough(false)
+    }
+  }, [petMode])
+
+  const beginPetDrag = (event: MouseEvent<HTMLDivElement>) => {
+    if (!petMode || event.button !== 0) return
+    const rect = characterRef.current?.getBoundingClientRect()
+    if (!rect) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (passthroughTimerRef.current !== null) {
+      window.clearTimeout(passthroughTimerRef.current)
+      passthroughTimerRef.current = null
+    }
+    dragRef.current = {
+      active: true,
+      didMove: false,
+      startX: event.clientX,
+      startY: event.clientY,
+      offsetX: event.clientX - rect.left,
+      offsetY: event.clientY - rect.top,
+    }
+    electronWindowBridge.setPetMousePassthrough(false)
+  }
+
+  const suppressPetDragClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (!petMode || !dragRef.current.didMove) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragRef.current.didMove = false
+    electronWindowBridge.setPetMousePassthrough(true)
+  }
 
   const beginResize = (event: PointerEvent<HTMLDivElement>) => {
     stopResizeRef.current?.()
@@ -113,15 +251,46 @@ export function Layout({
 
       <main
         className="companion-stage"
-        onDoubleClick={petMode ? onExitPetMode : undefined}
-        title={petMode ? '双击返回舞台模式' : undefined}
       >
-        <div className="character-stage">{characterArea}</div>
+        {background}
+        <div
+          ref={characterRef}
+          className="character-stage"
+          style={petMode ? {
+            left: petPosition.x,
+            top: petPosition.y,
+            width: DEFAULT_PET_SIZE.width,
+            height: DEFAULT_PET_SIZE.height,
+          } : undefined}
+          onMouseDownCapture={petMode ? beginPetDrag : undefined}
+          onClickCapture={petMode ? suppressPetDragClick : undefined}
+        >
+          {characterArea}
+        </div>
         {subtitle}
         {!petMode && <div className="stage-conversation">{conversationArea}</div>}
         {petMode && (
-          <div className="pet-window-controls">
-            <span className="pet-drag-handle" title="拖动桌宠窗口">拖动</span>
+          <div
+            ref={conversationRef}
+            className="pet-conversation-layer"
+            style={{
+              left: petPosition.x,
+              top: petPosition.y > 252
+                ? Math.max(12, petPosition.y - 228)
+                : Math.min(window.innerHeight - 236, petPosition.y + DEFAULT_PET_SIZE.height + 12),
+              width: DEFAULT_PET_SIZE.width,
+            }}
+          >
+            {conversationArea}
+          </div>
+        )}
+        {petMode && (
+          <div
+            ref={controlsRef}
+            className="pet-window-controls"
+            style={{ left: petPosition.x + 10, top: petPosition.y + 10 }}
+          >
+            <span className="pet-drag-handle" title="拖动桌宠">拖动桌宠</span>
             <button type="button" onClick={onExitPetMode}>返回舞台</button>
           </div>
         )}

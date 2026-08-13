@@ -144,3 +144,41 @@ def test_response_interpreter_tolerates_malformed_segment_ranking_values():
 
     assert performance.emotion == "happy"
     assert performance.intensity == 0.7
+
+
+def test_response_interpreter_does_not_keep_shy_without_current_semantic_evidence():
+    turn = CharacterTurn(input=TurnInput(text="现在说话是怎么回事，看一下"))
+    response = LLMResponse(
+        reply="哎呀，刚才只是有一点卡住了，现在继续看吧。",
+        segments=[{
+            "text": "哎呀，刚才只是有一点卡住了，现在继续看吧。",
+            "emotion": "shy",
+            "behavior": "speak",
+            "energy": 0.45,
+            "intensity": 0.5,
+            "naturalVAD": {"valence": 0.3, "arousal": 0.35, "dominance": 0.1},
+        }],
+    )
+
+    interpreted = ResponseInterpreter().interpret(response, turn)
+
+    assert interpreted.segments[0]["emotion"] == "playful"
+    assert interpreted.performance.emotion == "playful"
+    assert "emotion_semantically_adapted:shy->playful" in interpreted.warnings
+
+
+def test_response_interpreter_preserves_shy_when_bashfulness_is_explicit():
+    turn = CharacterTurn(input=TurnInput(text="你现在是不是害羞了？"))
+    response = LLMResponse(
+        reply="被你看出来了，确实有点不好意思。",
+        segments=[{
+            "text": "被你看出来了，确实有点不好意思。",
+            "emotion": "shy",
+            "behavior": "speak",
+        }],
+    )
+
+    interpreted = ResponseInterpreter().interpret(response, turn)
+
+    assert interpreted.performance.emotion == "shy"
+    assert not any(item.startswith("emotion_semantically_adapted") for item in interpreted.warnings)

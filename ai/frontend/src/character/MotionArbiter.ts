@@ -61,6 +61,14 @@ interface ActiveMotion {
   executedSteps: Set<number>
 }
 
+interface ReleasingMotion {
+  request: ActiveMotion['request']
+  values: Record<string, number>
+  startedAt: number
+  durationMs: number
+  source: string
+}
+
 export function smoothstep(value: number): number {
   const t = clamp(value, 0, 1)
   return t * t * (3 - 2 * t)
@@ -92,6 +100,7 @@ export class MotionArbiter {
   private presets: Record<string, MotionPreset> = {}
   private queue: Array<{ name: string; source: MotionSource; intensity: number }> = []
   private active = new Map<string, ActiveMotion>()
+  private releasing = new Map<string, ReleasingMotion>()
   private nativePlayer: NativeMotionPlayer | null = null
   private motionMap: Record<string, string> = {}
   private nativeFrame: NativeMotionContribution[] = []
@@ -160,8 +169,8 @@ export class MotionArbiter {
       && channelsOverlap(active.request.channels, request.channels))
     if (conflicts.some(active => active.request.priority > request.priority)) return false
 
-    this.cancelOwner(request.owner)
-    for (const conflict of conflicts) this.cancelOwner(conflict.request.owner)
+    this.releaseOwner(request.owner)
+    for (const conflict of conflicts) this.releaseOwner(conflict.request.owner)
 
     if (nativeAvailable && !this.nativePlayer!.play(nativeName, request.intensity)) {
       this.nativeFallbackReason = `native motion '${nativeName}' failed to start`
@@ -217,6 +226,7 @@ export class MotionArbiter {
     this.nativePlayer?.stop()
     this.nativeFrame = []
     this.active.clear()
+    this.releasing.clear()
     this.queue = []
   }
 
@@ -231,9 +241,62 @@ export class MotionArbiter {
     return true
   }
 
+  /** Let a logical gesture hand its current pose back without a one-frame snap. */
+  releaseOwner(owner: string, durationMs = 280): boolean {
+    const active = this.active.get(owner)
+    if (!active) return false
+    if (active.nativeName || !active.preset) return this.cancelOwner(owner)
+    const now = this.clock()
+    const sampled = this.sampleLogicalMotion(active, now)
+    // Capture the contribution that was actually visible, including intensity,
+    // fade-in and recovery. Capturing the raw keyframe pose would make an early
+    // pre-emption jump up to full strength for one frame before fading out.
+    const values = Object.fromEntries(
+      Object.entries(sampled.values).map(([parameter, value]) => [
+        parameter,
+        value * sampled.weight,
+      ]),
+    )
+    this.active.delete(owner)
+    this.releasing.set(owner, {
+      request: active.request,
+      values,
+      startedAt: now,
+      durationMs: clamp(durationMs, 180, 420),
+      source: `motion:${active.preset.name}:${active.request.owner}`,
+    })
+    return true
+  }
+
+  private sampleLogicalMotion(
+    active: ActiveMotion,
+    now: number,
+  ): { values: Record<string, number>; weight: number } {
+    const preset = active.preset
+    if (!preset) return { values: {}, weight: 0 }
+    const elapsed = Math.max(0, now - active.startedAt)
+    const recoveryMs = Math.max(300, Math.min(600, preset.recoveryMs ?? 420))
+    const current = sampleMotionKeyframes(
+      preset.keyframes,
+      Math.min(elapsed, active.duration),
+    )
+    const fadeInMs = Math.max(0, Math.min(500, preset.fadeInMs ?? 180))
+    const fadeInWeight = fadeInMs === 0 ? 1 : smoothstep(elapsed / fadeInMs)
+    const recoveryWeight = elapsed <= active.duration || recoveryMs === 0
+      ? 1
+      : 1 - smoothstep((elapsed - active.duration) / recoveryMs)
+    const values = Object.fromEntries(Object.entries(current).map(([parameter, value]) => [
+      parameter,
+      parameter === 'breath'
+        ? 0.5 + (value - 0.5) * active.request.intensity
+        : value * active.request.intensity,
+    ]))
+    return { values, weight: Math.min(fadeInWeight, recoveryWeight) }
+  }
+
   releaseState(turnId: string): boolean {
     if (!turnId) return false
-    return this.cancelOwner(`state:${turnId}`)
+    return this.releaseOwner(`state:${turnId}`)
   }
 
   cancelTurn(turnId: string): number {
@@ -273,6 +336,24 @@ export class MotionArbiter {
   update(dt: number): LogicalParameterContribution[] {
     const now = this.clock()
     const contributions: LogicalParameterContribution[] = []
+    for (const [owner, release] of this.releasing) {
+      const progress = (now - release.startedAt) / release.durationMs
+      if (progress >= 1) {
+        this.releasing.delete(owner)
+        continue
+      }
+      const weight = 1 - smoothstep(progress)
+      for (const [logicalParameter, value] of Object.entries(release.values)) {
+        contributions.push({
+          logicalParameter,
+          value,
+          source: release.source,
+          priority: release.request.priority,
+          weight,
+          mode: 'add',
+        })
+      }
+    }
     for (const active of [...this.active.values()]) {
       if (now >= active.expiresAt) {
         this.cancelOwner(active.request.owner)
@@ -295,31 +376,14 @@ export class MotionArbiter {
         this.cancelOwner(active.request.owner)
         continue
       }
-      const current = sampleMotionKeyframes(
-        preset.keyframes,
-        Math.min(elapsed, active.duration),
-      )
-      const fadeInMs = Math.max(0, Math.min(500, preset.fadeInMs ?? 180))
-      const fadeInWeight = fadeInMs === 0
-        ? 1
-        : smoothstep(elapsed / fadeInMs)
-      const recoveryWeight = elapsed <= active.duration || recoveryMs === 0
-        ? 1
-        : 1 - smoothstep((elapsed - active.duration) / recoveryMs)
-      const motionWeight = Math.min(fadeInWeight, recoveryWeight)
-      for (const [logicalParameter, value] of Object.entries(current)) {
-        // Breath is a centered physical input (0.5 is neutral). Scale its
-        // excursion around the neutral point so a low-intensity tail gesture
-        // does not collapse the parameter toward zero.
-        const scaledValue = logicalParameter === 'breath'
-          ? 0.5 + (value - 0.5) * active.request.intensity
-          : value * active.request.intensity
+      const sampled = this.sampleLogicalMotion(active, now)
+      for (const [logicalParameter, value] of Object.entries(sampled.values)) {
         contributions.push({
           logicalParameter,
-          value: scaledValue,
+          value,
           source: `motion:${preset.name}:${active.request.owner}`,
           priority: active.request.priority,
-          weight: motionWeight,
+          weight: sampled.weight,
           mode: 'add',
         })
       }
@@ -353,6 +417,12 @@ export class MotionArbiter {
         remainingMs: Number.isFinite(active.expiresAt)
           ? Math.max(0, Math.round(active.expiresAt - now))
           : null,
+      })),
+      releasingRequests: [...this.releasing.entries()].map(([owner, release]) => ({
+        owner,
+        source: release.request.source,
+        channels: [...release.request.channels],
+        remainingMs: Math.max(0, Math.round(release.durationMs - (now - release.startedAt))),
       })),
       native: this.nativePlayer?.getDebugState() ?? null,
       nativeFallbackReason: this.nativeFallbackReason,
@@ -388,6 +458,7 @@ function inferChannels(preset: MotionPreset): MotionChannel[] {
   for (const frame of preset.keyframes) {
     if (frame.parameter.startsWith('head.')) channels.add('head')
     else if (frame.parameter.startsWith('body.')) channels.add('body')
+    else if (frame.parameter.startsWith('tail.')) channels.add('body')
     else if (frame.parameter.startsWith('eye.')) channels.add('gaze')
     else if (frame.parameter.startsWith('mouth.')) channels.add('mouth')
     else if (frame.parameter.startsWith('blink.')) channels.add('expression')

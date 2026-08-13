@@ -127,6 +127,7 @@ export interface EventMap {
   'runtime:turn.failed': { turnId: string; code: string; message: string }
   'runtime:turn.cancelled': { turnId: string; reason: string }
   'runtime:service.status': { service: string; state: string; detail: string }
+  'background:status': { state: 'loading' | 'ready' | 'error'; message?: string }
   'runtime:configuration.updated': { config: Record<string, unknown> }
   'character:runtime-telemetry': {
     type: string

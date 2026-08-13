@@ -9,11 +9,16 @@
 import { CubismBreath } from '../effect/cubismbreath';
 import { CubismEyeBlink } from '../effect/cubismeyeblink';
 import { CubismPose } from '../effect/cubismpose';
+import { ICubismModelSetting } from '../icubismmodelsetting';
 import { CubismIdHandle } from '../id/cubismid';
 import { Constant } from '../live2dcubismframework';
 import { CubismModelMatrix } from '../math/cubismmodelmatrix';
 import { CubismTargetPoint } from '../math/cubismtargetpoint';
-import { ACubismMotion, FinishedMotionCallback } from '../motion/acubismmotion';
+import {
+  ACubismMotion,
+  BeganMotionCallback,
+  FinishedMotionCallback
+} from '../motion/acubismmotion';
 import { CubismExpressionMotion } from '../motion/cubismexpressionmotion';
 import { CubismExpressionMotionManager } from '../motion/cubismexpressionmotionmanager';
 import { CubismMotion } from '../motion/cubismmotion';
@@ -21,7 +26,6 @@ import { CubismMotionManager } from '../motion/cubismmotionmanager';
 import { CubismMotionQueueManager } from '../motion/cubismmotionqueuemanager';
 import { CubismPhysics } from '../physics/cubismphysics';
 import { CubismRenderer_WebGL } from '../rendering/cubismrenderer_webgl';
-import { csmString } from '../type/csmstring';
 import { CubismLogError, CubismLogInfo } from '../utils/cubismdebug';
 import { CubismMoc } from './cubismmoc';
 import { CubismModel } from './cubismmodel';
@@ -81,23 +85,12 @@ export class CubismUserModel {
 
   /**
    * マウスドラッグ情報の設定
+   *
    * @param ドラッグしているカーソルのX位置
    * @param ドラッグしているカーソルのY位置
    */
   public setDragging(x: number, y: number): void {
     this._dragManager.set(x, y);
-  }
-
-  /**
-   * 加速度の情報を設定する
-   * @param x X軸方向の加速度
-   * @param y Y軸方向の加速度
-   * @param z Z軸方向の加速度
-   */
-  public setAcceleration(x: number, y: number, z: number): void {
-    this._accelerationX = x;
-    this._accelerationY = y;
-    this._accelerationZ = z;
   }
 
   /**
@@ -109,7 +102,20 @@ export class CubismUserModel {
   }
 
   /**
+   * モデルを描画したバッファを設定する
+   *
+   * @param width モデルを描画したバッファの幅
+   * @param height モデルを描画したバッファの高さ
+   */
+  public setRenderTargetSize(width: number, height: number): void {
+    if (this._renderer) {
+      this._renderer.setRenderTargetSize(width, height);
+    }
+  }
+
+  /**
    * 不透明度の設定
+   *
    * @param a 不透明度
    */
   public setOpacity(a: number): void {
@@ -118,6 +124,7 @@ export class CubismUserModel {
 
   /**
    * 不透明度の取得
+   *
    * @return 不透明度
    */
   public getOpacity(): number {
@@ -129,7 +136,7 @@ export class CubismUserModel {
    *
    * @param buffer    moc3ファイルが読み込まれているバッファ
    */
-  public loadModel(buffer: ArrayBuffer, shouldCheckMocConsistency = false, kScale: number = 1.0) {
+  public loadModel(buffer: ArrayBuffer, shouldCheckMocConsistency = false) {
     this._moc = CubismMoc.create(buffer, shouldCheckMocConsistency);
 
     if (this._moc == null) {
@@ -149,7 +156,6 @@ export class CubismUserModel {
       this._model.getCanvasWidth(),
       this._model.getCanvasHeight()
     );
-    this._modelMatrix.scale(kScale, kScale);
   }
 
   /**
@@ -158,19 +164,59 @@ export class CubismUserModel {
    * @param size バッファのサイズ
    * @param name モーションの名前
    * @param onFinishedMotionHandler モーション再生終了時に呼び出されるコールバック関数
+   * @param onBeganMotionHandler モーション再生開始時に呼び出されるコールバック関数
+   * @param modelSetting モデル設定
+   * @param group モーショングループ名
+   * @param index モーションインデックス
+   * @param shouldCheckMotionConsistency motion3.json整合性チェックするかどうか
    * @return モーションクラス
    */
   public loadMotion(
     buffer: ArrayBuffer,
     size: number,
     name: string,
-    onFinishedMotionHandler?: FinishedMotionCallback
+    onFinishedMotionHandler?: FinishedMotionCallback,
+    onBeganMotionHandler?: BeganMotionCallback,
+    modelSetting?: ICubismModelSetting,
+    group?: string,
+    index?: number,
+    shouldCheckMotionConsistency: boolean = false
   ): CubismMotion {
     if (buffer == null || size == 0) {
       CubismLogError('Failed to loadMotion().');
       return null;
     }
-    return CubismMotion.create(buffer, size, onFinishedMotionHandler);
+
+    const motion: CubismMotion = CubismMotion.create(
+      buffer,
+      size,
+      onFinishedMotionHandler,
+      onBeganMotionHandler,
+      shouldCheckMotionConsistency
+    );
+
+    if (motion == null) {
+      CubismLogError(`Failed to create motion from buffer in LoadMotion()`);
+      return null;
+    }
+
+    // 必要であればモーションフェード値を上書き
+    if (modelSetting) {
+      const fadeInTime: number = modelSetting.getMotionFadeInTimeValue(
+        group,
+        index
+      );
+      if (fadeInTime >= 0.0) {
+        motion.setFadeInTime(fadeInTime);
+      }
+
+      const fadeOutTime = modelSetting.getMotionFadeOutTimeValue(group, index);
+      if (fadeOutTime >= 0.0) {
+        motion.setFadeOutTime(fadeOutTime);
+      }
+    }
+
+    return motion;
   }
 
   /**
@@ -293,6 +339,15 @@ export class CubismUserModel {
   }
 
   /**
+   * 読み込めないMocファイルの.moc3 Versionを取得
+   * @param mocBytes 読み込めないMocファイルのバイト配列
+   * @returns .moc3 Version番号
+   */
+  public getMocVersionFromBuffer(mocBytes: ArrayBuffer): number {
+    return CubismMoc.getMocVersionFromBuffer(mocBytes);
+  }
+
+  /**
    * レンダラの取得
    * @return レンダラ
    */
@@ -302,14 +357,20 @@ export class CubismUserModel {
 
   /**
    * レンダラを作成して初期化を実行する
+   * @param width レンダリングする幅
+   * @param height レンダリングする高さ
    * @param maskBufferCount バッファの生成数
    */
-  public createRenderer(maskBufferCount = 1): void {
+  public createRenderer(
+    width: number,
+    height: number,
+    maskBufferCount = 1
+  ): void {
     if (this._renderer) {
       this.deleteRenderer();
     }
 
-    this._renderer = new CubismRenderer_WebGL();
+    this._renderer = new CubismRenderer_WebGL(width, height);
     this._renderer.initialize(this._model, maskBufferCount);
   }
 
@@ -332,8 +393,8 @@ export class CubismUserModel {
    *
    * @param eventValue 発火したイベントの文字列データ
    */
-  public motionEventFired(eventValue: csmString): void {
-    CubismLogInfo('{0}', eventValue.s);
+  public motionEventFired(eventValue: string): void {
+    CubismLogInfo('{0}', eventValue);
   }
 
   /**
@@ -348,7 +409,7 @@ export class CubismUserModel {
    */
   public static cubismDefaultMotionEventCallback(
     caller: CubismMotionQueueManager,
-    eventValue: csmString,
+    eventValue: string,
     customData: CubismUserModel
   ): void {
     const model: CubismUserModel = customData;
@@ -377,13 +438,6 @@ export class CubismUserModel {
     this._initialized = false;
     this._updating = false;
     this._opacity = 1.0;
-    this._lipsync = true;
-    this._lastLipSyncValue = 0.0;
-    this._dragX = 0.0;
-    this._dragY = 0.0;
-    this._accelerationX = 0.0;
-    this._accelerationY = 0.0;
-    this._accelerationZ = 0.0;
     this._mocConsistency = false;
     this._debugMode = false;
     this._renderer = null;
@@ -452,14 +506,8 @@ export class CubismUserModel {
   protected _initialized: boolean; // 初期化されたかどうか
   protected _updating: boolean; // 更新されたかどうか
   protected _opacity: number; // 不透明度
-  protected _lipsync: boolean; // リップシンクするかどうか
-  protected _lastLipSyncValue: number; // 最後のリップシンクの制御地
-  protected _dragX: number; // マウスドラッグのX位置
-  protected _dragY: number; // マウスドラッグのY位置
-  protected _accelerationX: number; // X軸方向の加速度
-  protected _accelerationY: number; // Y軸方向の加速度
-  protected _accelerationZ: number; // Z軸方向の加速度
-  protected _mocConsistency: boolean; // MOC3一貫性検証するかどうか
+  protected _mocConsistency: boolean; // MOC3整合性検証するかどうか
+  protected _motionConsistency: boolean; // motion3.json整合性検証するかどうか
   protected _debugMode: boolean; // デバッグモードかどうか
 
   private _renderer: CubismRenderer_WebGL; // レンダラ

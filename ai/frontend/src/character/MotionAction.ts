@@ -244,14 +244,29 @@ export function compileMotionPlanForModel(
   name = 'AI 动作',
 ): MotionPreset | null {
   const preset = compileMotionPlan(plan, id, name)
-  if (!preset || modelName.toLowerCase() !== 'design_genius_white') return preset
+  if (!preset) return null
+  const normalizedModel = modelName.toLowerCase()
+  if (!['design_genius_white', 'shirone'].includes(normalizedModel)) return preset
 
   const frames = preset.keyframes.map(frame => ({ ...frame }))
   const occupied = new Set(frames.map(frame => `${frame.time}:${frame.parameter}`))
   const couplings: Record<string, { parameter: string; scale: number }> = {
-    'head.x': { parameter: 'body.x', scale: -0.1 },
-    'head.y': { parameter: 'body.y', scale: -0.16 },
-    'head.z': { parameter: 'body.z', scale: -0.18 },
+    'head.x': { parameter: 'body.x', scale: normalizedModel === 'shirone' ? -0.14 : -0.1 },
+    'head.y': { parameter: 'body.y', scale: normalizedModel === 'shirone' ? -0.2 : -0.16 },
+    'head.z': { parameter: 'body.z', scale: normalizedModel === 'shirone' ? -0.24 : -0.18 },
+  }
+  if (normalizedModel === 'shirone') {
+    for (const frame of preset.keyframes) {
+      if (!['body.x', 'body.y', 'body.z', 'head.z'].includes(frame.parameter)) continue
+      const key = `${frame.time}:tail.z`
+      if (occupied.has(key)) continue
+      occupied.add(key)
+      frames.push({
+        time: frame.time,
+        parameter: 'tail.z',
+        value: frame.value * (frame.parameter === 'head.z' ? -0.22 : 0.16),
+      })
+    }
   }
   for (const frame of preset.keyframes) {
     const coupling = couplings[frame.parameter]

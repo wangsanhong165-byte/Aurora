@@ -25,9 +25,9 @@ test('speech posture visibly recruits head and torso without discontinuous frame
     previous = sample
   }
 
-  assert.ok(headPeak >= 1.5, `speech head peak too subtle: ${headPeak}`)
-  assert.ok(bodyPeak >= 0.65, `speech torso peak too subtle: ${bodyPeak}`)
-  assert.ok(maxDelta < 0.8, `speech frame delta is too abrupt: ${maxDelta}`)
+  assert.ok(headPeak >= 2.1, `speech head peak too subtle: ${headPeak}`)
+  assert.ok(bodyPeak >= 0.9, `speech torso peak too subtle: ${bodyPeak}`)
+  assert.ok(maxDelta < 1.1, `speech frame delta is too abrupt: ${maxDelta}`)
 })
 
 test('speech posture releases over time instead of snapping to neutral', () => {

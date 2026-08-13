@@ -57,8 +57,8 @@ test('Windows npm commands use ComSpec instead of spawning npm.cmd directly', ()
 
 test('lifecycle control commands always have bounded timeouts', () => {
   assert.equal(controlTimeoutFor('status'), 5_000)
-  assert.equal(controlTimeoutFor('stop'), 30_000)
-  assert.equal(controlTimeoutFor('shutdown'), 5_000)
+  assert.equal(controlTimeoutFor('stop'), 60_000)
+  assert.equal(controlTimeoutFor('shutdown'), 60_000)
   assert.equal(controlTimeoutFor('start'), 480_000)
 })
 

@@ -187,3 +187,53 @@ test('active motion ownership is exposed per channel instead of suppressing all 
   assert.equal(arbiter.ownsChannel('gaze'), false)
   assert.deepEqual(arbiter.getActiveChannels(), ['body'])
 })
+
+test('preempted logical motion crossfades out instead of disappearing in one frame', () => {
+  let now = 0
+  const arbiter = new MotionArbiter(() => now)
+  arbiter.setPresets(presets)
+  arbiter.request({
+    name: 'sway', owner: 'state:body', source: 'system', priority: 20,
+    channels: ['body'], turnId: 'turn-1',
+  })
+  now = 400
+  const before = arbiter.update(0).find(item => item.logicalParameter === 'body.x')
+  assert.ok(before && before.value > 2.5)
+
+  assert.equal(arbiter.request({
+    name: 'sway', owner: 'intent:body', source: 'ai', priority: 50,
+    channels: ['body'], turnId: 'turn-1',
+  }), true)
+  const handoff = arbiter.update(0).filter(item => item.logicalParameter === 'body.x')
+  assert.ok(handoff.some(item => item.source.includes('state:body') && (item.weight ?? 0) > 0.9))
+
+  now += 140
+  const releasing = arbiter.update(0).filter(item => item.logicalParameter === 'body.x')
+  assert.ok(releasing.some(item => item.source.includes('state:body') && (item.weight ?? 0) > 0))
+  now += 220
+  assert.equal(
+    arbiter.update(0).some(item => item.source.includes('state:body')),
+    false,
+  )
+})
+
+test('preemption preserves the currently faded-in strength instead of jumping to full pose', () => {
+  let now = 0
+  const arbiter = new MotionArbiter(() => now)
+  arbiter.setPresets(presets)
+  arbiter.request({
+    name: 'sway', owner: 'state:body', source: 'system', priority: 20,
+    channels: ['body'], turnId: 'turn-1', intensity: 0.5,
+  })
+  now = 90
+  const before = arbiter.update(0).find(item => item.logicalParameter === 'body.x')!
+
+  arbiter.request({
+    name: 'sway', owner: 'intent:body', source: 'ai', priority: 50,
+    channels: ['body'], turnId: 'turn-1',
+  })
+  const released = arbiter.update(0).find(item =>
+    item.logicalParameter === 'body.x' && item.source.includes('state:body'))!
+
+  assert.ok(Math.abs(before.value * (before.weight ?? 1) - released.value * (released.weight ?? 1)) < 0.0001)
+})

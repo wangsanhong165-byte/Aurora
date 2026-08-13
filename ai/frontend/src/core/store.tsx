@@ -42,6 +42,13 @@ export interface AppSettings {
   live2dClickFeedback: boolean
   live2dPerformanceProfiles: Live2DPerformanceProfileOverrides
   live2dActions: Live2DActionsByModel
+  backgroundType: 'none' | 'image' | 'video'
+  backgroundUrl: string
+  backgroundPath: string
+  backgroundLabel: string
+  backgroundFit: 'cover' | 'contain' | 'fill'
+  backgroundOpacity: number
+  backgroundShowInPetMode: boolean
 }
 
 // ── Conversation State ──
@@ -94,6 +101,14 @@ const INITIAL_SETTINGS: AppSettings = {
   live2dClickFeedback: true,
   live2dPerformanceProfiles: {},
   live2dActions: {},
+  backgroundType: 'none',
+  backgroundUrl: '',
+  backgroundPath: '',
+  backgroundLabel: '',
+  // Preserve the source ratio and avoid enlarging small background assets.
+  backgroundFit: 'contain',
+  backgroundOpacity: 1,
+  backgroundShowInPetMode: false,
 }
 
 export const INITIAL_STATE: AppState = {

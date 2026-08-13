@@ -6,7 +6,6 @@ from app.config_manager.service_config import service_config
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 MODELS_DIR = BASE_DIR / "models"
-DEFAULT_AUDIO_PATH = BASE_DIR / "data" / "recordings" / "last_recording.wav"
 DEFAULT_MODEL_DIR = MODELS_DIR / "asr" / "Qwen3-ASR-1.7B"
 DEFAULT_ENV_PATH = BASE_DIR / "config" / ".env"
 
@@ -20,7 +19,6 @@ TTS_URL = os.environ.get("TTS_URL", service_config.url("tts"))
 GSVI_DIR = MODELS_DIR / "tts" / "GPT-SoVITS-v2pro-20250604-nvidia50"
 GSVI_PYTHON = GSVI_DIR / "runtime" / "python.exe"
 GSVI_SCRIPT = GSVI_DIR / "api_v2.py"
-GSVI_HEADLESS = BASE_DIR / "scripts" / "run_gsvi_headless.py"
 GSVI_CONFIG_PATH = GSVI_DIR / "GPT_SoVITS" / "configs" / "tts_infer.yaml"
 GSVI_URL = os.environ.get("GSVI_URL", service_config.url("gsvi"))
 
@@ -55,7 +53,6 @@ UVICORN_LOG_CONFIG = {
 }
 
 DEFAULT_TTS_ENGINE = os.environ.get("TTS_ENGINE", "gsvi-v2pro").lower()
-DEFAULT_TTS_OUTPUT_DIR = BASE_DIR / "data" / "tts_outputs"
 DEFAULT_ASR_ENGINE = os.environ.get("ASR_ENGINE", "qwen3-asr").lower()
 
 

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Info, Settings2, type LucideIcon } from 'lucide-react'
+import { AlertCircle, CheckCircle2, ExternalLink, FileImage, FolderOpen, Info, LoaderCircle, Palette, RotateCcw, Settings2, type LucideIcon } from 'lucide-react'
 import { theme } from '../core/theme'
 import type { AppSettings } from '../core/store'
-import { electronWindowBridge } from '../session/electron-window-bridge'
+import { electronWindowBridge, type WallpaperResourceResult } from '../session/electron-window-bridge'
 import { eventBus, type EventMap } from '../core/event-bus'
 import {
   normalizeLive2DPerformanceSettings,
@@ -41,7 +41,7 @@ const CALIBRATION_CONTROLS = [
   { logical: 'mouth.form', label: '嘴型变化', min: -1, max: 1, step: .05 },
 ] as const
 
-type TabId = 'general' | 'about'
+type TabId = 'general' | 'appearance' | 'about'
 
 interface TabDef {
   id: TabId
@@ -51,11 +51,13 @@ interface TabDef {
 
 const TABS: TabDef[] = [
   { id: 'general', label: 'General', icon: Settings2 },
+  { id: 'appearance', label: 'Appearance', icon: Palette },
   { id: 'about', label: 'About', icon: Info },
 ]
 
 const TAB_LABELS: Record<TabId, string> = {
   general: '常规',
+  appearance: '外观',
   about: '关于',
 }
 
@@ -114,6 +116,9 @@ export function SettingsPanel({
             {activeTab === 'general' && (
               <GeneralTab settings={settings} onSettingChange={onSettingChange} />
             )}
+            {activeTab === 'appearance' && (
+              <AppearanceTab settings={settings} onSettingChange={onSettingChange} />
+            )}
             {activeTab === 'about' && <AboutTab />}
           </div>
         </div>
@@ -138,7 +143,7 @@ export function Live2DWorkbench({
 }: Pick<SettingsPanelProps, 'settings' | 'onSettingChange'> & {
   accessoryParts?: Record<string, string>
   accessoryState?: Record<string, boolean>
-  onAccessoryToggle?: (label: string) => void
+  onAccessoryToggle?: (label: string, enabled: boolean) => void
 }) {
   return (
     <div style={{ ...styles.content, height: '100%', boxSizing: 'border-box' }}>
@@ -149,6 +154,170 @@ export function Live2DWorkbench({
         accessoryState={accessoryState}
         onAccessoryToggle={onAccessoryToggle}
       />
+    </div>
+  )
+}
+
+function AppearanceTab({ settings, onSettingChange }: {
+  settings: AppSettings
+  onSettingChange: (key: string, value: unknown) => void
+}) {
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [mediaState, setMediaState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+
+  useEffect(() => eventBus.on('background:status', ({ state, message: statusMessage }) => {
+    setMediaState(state)
+    if (state === 'error') setMessage(statusMessage || '背景资源加载失败，请重新选择。')
+  }), [])
+
+  const applyResult = (result: WallpaperResourceResult) => {
+    if (!result.ok || !result.url || !result.type) {
+      if (result.code !== 'canceled') setMessage(result.message || '无法读取这个壁纸项目。')
+      return
+    }
+    onSettingChange('backgroundType', result.type)
+    onSettingChange('backgroundUrl', result.url)
+    onSettingChange('backgroundPath', result.path || '')
+    onSettingChange('backgroundLabel', result.label || result.path || '')
+    setMediaState('loading')
+    setMessage(result.warning || (result.type === 'video' ? '已加载 Wallpaper Engine 视频壁纸。' : '已加载壁纸。'))
+  }
+
+  const selectWallpaper = async (mode: 'file' | 'directory') => {
+    setBusy(true)
+    try {
+      applyResult(await electronWindowBridge.selectWallpaper(mode))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const clearWallpaper = () => {
+    onSettingChange('backgroundType', 'none')
+    onSettingChange('backgroundUrl', '')
+    onSettingChange('backgroundPath', '')
+    onSettingChange('backgroundLabel', '')
+    setMediaState('idle')
+    setMessage('已恢复默认背景。')
+  }
+
+  const resourceSelected = settings.backgroundType !== 'none' && Boolean(settings.backgroundUrl)
+  const fitLabel = settings.backgroundFit === 'cover'
+    ? '铺满裁切'
+    : settings.backgroundFit === 'fill'
+      ? '拉伸填充'
+      : '完整显示 · 不放大'
+  const statusLabel = !resourceSelected
+    ? '未选择'
+    : mediaState === 'loading'
+      ? '加载中'
+      : mediaState === 'error'
+        ? '加载失败'
+        : '已就绪'
+  const StatusIcon = !resourceSelected
+    ? FileImage
+    : mediaState === 'loading'
+      ? LoaderCircle
+      : mediaState === 'error'
+        ? AlertCircle
+        : CheckCircle2
+
+  return (
+    <div style={styles.tabContent}>
+      <div style={styles.backgroundCard}>
+        <div style={styles.backgroundHeader}>
+          <div style={styles.backgroundHeading}>
+            <div style={styles.sectionLabel}>舞台背景</div>
+            <div style={styles.sectionDesc}>图片和视频会保持原比例；小图不会被强制放大。</div>
+          </div>
+          <div style={{ ...styles.backgroundStatus, ...(mediaState === 'error' ? styles.backgroundStatusError : {}), ...(!resourceSelected ? styles.backgroundStatusIdle : {}) }}>
+            <StatusIcon size={13} className={mediaState === 'loading' ? 'is-spinning' : undefined} />
+            {statusLabel}
+          </div>
+        </div>
+
+        <div style={styles.backgroundPreview}>
+          {resourceSelected ? (
+            settings.backgroundType === 'video' ? (
+              <video
+                src={settings.backgroundUrl}
+                muted
+                autoPlay
+                loop
+                playsInline
+                preload="metadata"
+                style={styles.backgroundPreviewMedia}
+                onCanPlay={() => setMediaState('ready')}
+                onError={() => setMediaState('error')}
+              />
+            ) : (
+              <img
+                src={settings.backgroundUrl}
+                alt="背景预览"
+                style={styles.backgroundPreviewMedia}
+                onLoad={() => setMediaState('ready')}
+                onError={() => setMediaState('error')}
+              />
+            )
+          ) : (
+            <div style={styles.backgroundEmpty}>
+              <FileImage size={20} />
+              <span>选择一张图片或视频作为舞台背景</span>
+            </div>
+          )}
+        </div>
+
+        <div style={styles.backgroundResourceRow}>
+          <div style={{ minWidth: 0 }}>
+            <div style={styles.cardTitle}>{settings.backgroundLabel || '未选择背景'}</div>
+            <div style={styles.cardDesc}>{resourceSelected ? `${settings.backgroundType === 'video' ? '视频' : '图片'} · ${fitLabel}` : '当前使用默认舞台背景'}</div>
+          </div>
+          {resourceSelected && (
+            <button type="button" style={styles.iconButton} onClick={clearWallpaper} title="恢复默认背景" aria-label="恢复默认背景">
+              <RotateCcw size={14} />
+            </button>
+          )}
+        </div>
+
+        <div style={styles.backgroundActions}>
+          <button type="button" style={styles.primaryButton} disabled={busy || !electronWindowBridge.available} onClick={() => void selectWallpaper('directory')}>
+            <FolderOpen size={14} /> 选择 Wallpaper Engine 文件夹
+          </button>
+          <button type="button" style={styles.secondaryButton} disabled={busy || !electronWindowBridge.available} onClick={() => void selectWallpaper('file')}>
+            <FileImage size={14} /> 选择图片 / 视频
+          </button>
+          <button type="button" style={styles.secondaryButton} disabled={!electronWindowBridge.available} onClick={() => void electronWindowBridge.openWallpaperWorkshop().then(result => {
+            if (!result.ok) setMessage(result.message || '没有找到 Wallpaper Engine 创意工坊目录。')
+          })}>
+            <ExternalLink size={14} /> 打开创意工坊目录
+          </button>
+        </div>
+
+        <div style={styles.backgroundSettings}>
+        <SettingRow label="显示方式" desc="完整显示不放大；铺满会裁切边缘">
+          <select style={styles.select} value={settings.backgroundFit} onChange={event => onSettingChange('backgroundFit', event.target.value)}>
+            <option value="contain">完整显示 · 不放大</option>
+            <option value="cover">铺满裁切</option>
+            <option value="fill">拉伸填充</option>
+          </select>
+        </SettingRow>
+        <RangeSetting
+          label="背景透明度"
+          value={settings.backgroundOpacity}
+          min={0.15}
+          max={1}
+          step={0.05}
+          onChange={value => onSettingChange('backgroundOpacity', value)}
+        />
+        <SettingRow label="宠物模式显示背景" desc="开启后会取消桌面透明效果">
+          <Toggle checked={settings.backgroundShowInPetMode} onChange={value => onSettingChange('backgroundShowInPetMode', value)} />
+        </SettingRow>
+        </div>
+      </div>
+
+      {!electronWindowBridge.available && <div style={styles.backgroundHint}>请在 Electron 桌面版中选择本地 Wallpaper Engine 资源。</div>}
+      {message && <div style={styles.backgroundMessage}>{message}</div>}
     </div>
   )
 }
@@ -187,7 +356,7 @@ function GeneralTab({ settings, onSettingChange }: {
   return (
     <div style={styles.tabContent}>
 
-      <div style={styles.divider} />
+      <div style={styles.settingGroup}>
       <div style={styles.sectionLabel}>Window</div>
 
       <SettingRow label="Window Mode" desc="Pet mode removes window frame">
@@ -209,7 +378,9 @@ function GeneralTab({ settings, onSettingChange }: {
         />
       </SettingRow>
 
-      <div style={styles.divider} />
+      </div>
+
+      <div style={styles.settingGroup}>
       <div style={styles.sectionLabel}>Interaction</div>
 
       <SettingRow label="Proactive Mode" desc="AI initiates conversation">
@@ -231,16 +402,7 @@ function GeneralTab({ settings, onSettingChange }: {
               const v = parseInt(e.target.value, 10)
               if (!isNaN(v) && v >= 10) onSettingChange('proactiveIdleTime', v)
             }}
-            style={{
-              width: 72,
-              padding: '3px 8px',
-              borderRadius: 4,
-              border: `1px solid ${theme.colors.border}`,
-              backgroundColor: theme.colors.bg.surface,
-              color: theme.colors.text.primary,
-              fontSize: '0.75rem',
-              outline: 'none',
-            }}
+            style={styles.numberInput}
           />
         </div>
       )}
@@ -252,7 +414,9 @@ function GeneralTab({ settings, onSettingChange }: {
         />
       </SettingRow>
 
-      <div style={styles.divider} />
+      </div>
+
+      <div style={styles.settingGroup}>
       <div style={styles.sectionLabel}>核心配置</div>
       <div style={styles.sectionDesc}>保存到 config/.env；部分配置需重启生效。</div>
 
@@ -282,19 +446,11 @@ function GeneralTab({ settings, onSettingChange }: {
 
       <button
         onClick={saveEnv}
-        style={{
-          marginTop: 12,
-          padding: '6px 14px',
-          borderRadius: 8,
-          border: 'none',
-          backgroundColor: theme.colors.accent,
-          color: '#fff',
-          fontSize: '0.8rem',
-          cursor: 'pointer',
-        }}
+        style={styles.saveButton}
       >
         保存核心配置
       </button>
+      </div>
     </div>
   )
 }
@@ -338,7 +494,7 @@ function AnimationTab({ settings, onSettingChange, accessoryParts, accessoryStat
   onSettingChange: (key: string, value: unknown) => void
   accessoryParts?: Record<string, string>
   accessoryState?: Record<string, boolean>
-  onAccessoryToggle?: (label: string) => void
+  onAccessoryToggle?: (label: string, enabled: boolean) => void
 }) {
   const [calibrating, setCalibrating] = useState(false)
   const [calibrationValues, setCalibrationValues] = useState<Record<string, number>>({})
@@ -435,7 +591,7 @@ function AnimationTab({ settings, onSettingChange, accessoryParts, accessoryStat
                 </div>
                 <Toggle
                   checked={accessoryState?.[label] ?? true}
-                  onChange={() => onAccessoryToggle?.(label)}
+                  onChange={(enabled) => onAccessoryToggle?.(label, enabled)}
                 />
               </div>
             ))}
@@ -998,7 +1154,7 @@ const styles: Record<string, React.CSSProperties> = {
 
   // ── Tab bar (left sidebar) ──
   tabBar: {
-    width: 52, flexShrink: 0, display: 'flex', flexDirection: 'column',
+    width: 44, flexShrink: 0, display: 'flex', flexDirection: 'column',
     padding: `${theme.spacing.sm}px 0`, gap: 2,
     borderRight: `1px solid ${theme.colors.border}`,
     backgroundColor: theme.colors.bg.surface,
@@ -1012,25 +1168,33 @@ const styles: Record<string, React.CSSProperties> = {
 
   // ── Content area ──
   content: {
-    flex: 1, overflowY: 'auto', padding: `${theme.spacing.lg}px ${theme.spacing.lg}px`,
+    flex: 1, minWidth: 0, overflowY: 'auto', padding: `${theme.spacing.lg}px ${theme.spacing.lg}px ${theme.spacing.xl}px`,
+    backgroundColor: theme.colors.bg.root,
   },
   tabContent: {
-    display: 'flex', flexDirection: 'column', gap: theme.spacing.md,
+    display: 'flex', flexDirection: 'column', gap: theme.spacing.sm,
+  },
+  settingGroup: {
+    display: 'flex', flexDirection: 'column', gap: 2,
+    padding: `${theme.spacing.sm}px ${theme.spacing.md}px ${theme.spacing.md}px`,
+    border: `1px solid ${theme.colors.border}`, borderRadius: theme.radius.lg,
+    backgroundColor: theme.colors.bg.panel, overflow: 'hidden',
   },
 
   // ── Section labels ──
   sectionLabel: {
+    paddingLeft: 10, borderLeft: `2px solid ${theme.colors.accent}`,
     fontSize: theme.fontSize.xs, fontWeight: theme.fontWeight.semibold,
-    color: theme.colors.text.muted, textTransform: 'uppercase' as const,
-    letterSpacing: '0.08em', marginTop: theme.spacing.xs,
+    color: theme.colors.text.secondary, textTransform: 'uppercase' as const,
+    letterSpacing: '0.08em', marginTop: theme.spacing.sm,
   },
   sectionDesc: {
     fontSize: theme.fontSize.xs, color: theme.colors.text.muted,
-    marginTop: -theme.spacing.sm,
+    marginTop: 2, lineHeight: 1.45,
   },
   divider: {
     height: 1, backgroundColor: theme.colors.border,
-    margin: `${theme.spacing.xs}px 0`,
+    margin: `${theme.spacing.sm}px 0 ${theme.spacing.xs}px`,
   },
   emptyState: {
     fontSize: theme.fontSize.sm, color: theme.colors.text.muted,
@@ -1039,12 +1203,13 @@ const styles: Record<string, React.CSSProperties> = {
 
   // ── Setting row ──
   settingRow: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: theme.spacing.lg, minHeight: 36,
+    display: 'grid', gridTemplateColumns: 'minmax(112px, 0.9fr) minmax(0, 1.1fr)',
+    alignItems: 'center', gap: theme.spacing.md, minHeight: 48,
+    padding: '7px 0', borderBottom: `1px solid ${theme.colors.border}`,
   },
-  settingInfo: { display: 'flex', flexDirection: 'column', gap: 1 },
-  settingLabel: { fontSize: theme.fontSize.md, fontWeight: theme.fontWeight.medium, color: theme.colors.text.primary },
-  settingDesc: { fontSize: theme.fontSize.xs, color: theme.colors.text.muted, marginTop: 1 },
+  settingInfo: { display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 },
+  settingLabel: { fontSize: theme.fontSize.sm, fontWeight: theme.fontWeight.medium, color: theme.colors.text.primary, lineHeight: 1.25 },
+  settingDesc: { fontSize: theme.fontSize.xs, color: theme.colors.text.muted, marginTop: 1, lineHeight: 1.35 },
   subSectionLabel: {
     fontSize: '0.7rem', fontWeight: 600, color: '#7f899c',
     textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 10,
@@ -1054,7 +1219,19 @@ const styles: Record<string, React.CSSProperties> = {
     padding: `${theme.spacing.xs}px ${theme.spacing.md}px`, borderRadius: theme.radius.md,
     border: `1px solid ${theme.colors.border}`, backgroundColor: theme.colors.bg.surface,
     color: theme.colors.text.primary, fontSize: theme.fontSize.sm, outline: 'none',
-    cursor: 'pointer', minWidth: 96, flexShrink: 0,
+    cursor: 'pointer', width: '100%', minWidth: 0, maxWidth: '100%',
+  },
+  numberInput: {
+    width: '100%', boxSizing: 'border-box', padding: `${theme.spacing.xs}px ${theme.spacing.sm}px`,
+    borderRadius: theme.radius.md, border: `1px solid ${theme.colors.border}`,
+    backgroundColor: theme.colors.bg.surface, color: theme.colors.text.primary,
+    fontSize: theme.fontSize.sm, outline: 'none',
+  },
+  saveButton: {
+    alignSelf: 'stretch', marginTop: theme.spacing.sm, padding: '8px 14px',
+    borderRadius: theme.radius.md, border: `1px solid ${theme.colors.accent}`,
+    backgroundColor: theme.colors.accent, color: '#fff', fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium, cursor: 'pointer',
   },
 
   // ── Toggle cards ──
@@ -1131,6 +1308,63 @@ const styles: Record<string, React.CSSProperties> = {
     padding: theme.spacing.md, borderRadius: theme.radius.md,
     backgroundColor: theme.colors.bg.surface, border: `1px solid ${theme.colors.border}`,
   },
+  backgroundCard: {
+    display: 'flex', flexDirection: 'column', gap: theme.spacing.md,
+    padding: theme.spacing.md, borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.bg.surface, border: `1px solid ${theme.colors.border}`,
+  },
+  backgroundHeader: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: theme.spacing.md,
+  },
+  backgroundHeading: { minWidth: 0, flex: 1 },
+  backgroundStatus: {
+    display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0,
+    padding: '4px 7px', borderRadius: theme.radius.full,
+    color: theme.colors.status.connected, backgroundColor: 'rgba(125, 201, 160, 0.1)',
+    fontSize: theme.fontSize.xs,
+  },
+  backgroundStatusError: { color: theme.colors.danger, backgroundColor: 'rgba(223, 133, 139, 0.1)' },
+  backgroundStatusIdle: { color: theme.colors.text.muted, backgroundColor: 'rgba(127, 137, 156, 0.1)' },
+  backgroundPreview: {
+    position: 'relative', height: 132, overflow: 'hidden', borderRadius: theme.radius.md,
+    border: `1px solid ${theme.colors.border}`, backgroundColor: theme.colors.bg.root,
+    backgroundImage: 'linear-gradient(135deg, rgba(217,119,87,0.08), transparent 48%), linear-gradient(45deg, rgba(255,255,255,0.03) 25%, transparent 25%, transparent 75%, rgba(255,255,255,0.03) 75%)',
+    backgroundSize: 'auto, 16px 16px',
+  },
+  backgroundPreviewMedia: { width: '100%', height: '100%', objectFit: 'contain' as const, display: 'block' },
+  backgroundEmpty: {
+    height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+    gap: 7, color: theme.colors.text.muted, fontSize: theme.fontSize.xs,
+  },
+  backgroundResourceRow: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: theme.spacing.md,
+  },
+  backgroundSettings: { display: 'flex', flexDirection: 'column', gap: 2, paddingTop: theme.spacing.xs, borderTop: `1px solid ${theme.colors.border}` },
+  backgroundActions: {
+    display: 'flex', flexDirection: 'column', gap: theme.spacing.xs,
+  },
+  primaryButton: {
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+    padding: '7px 10px', borderRadius: theme.radius.sm, border: 'none',
+    backgroundColor: theme.colors.accent, color: '#fff', cursor: 'pointer', fontSize: theme.fontSize.xs,
+  },
+  secondaryButton: {
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+    padding: '7px 10px', borderRadius: theme.radius.sm,
+    border: `1px solid ${theme.colors.border}`, backgroundColor: theme.colors.bg.panel,
+    color: theme.colors.text.secondary, cursor: 'pointer', fontSize: theme.fontSize.xs,
+  },
+  iconButton: {
+    display: 'grid', placeItems: 'center', width: 28, height: 28,
+    borderRadius: theme.radius.sm, border: `1px solid ${theme.colors.border}`,
+    backgroundColor: 'transparent', color: theme.colors.text.secondary, cursor: 'pointer',
+  },
+  backgroundMessage: {
+    padding: '8px 10px', borderRadius: theme.radius.sm,
+    backgroundColor: theme.colors.bg.surface, color: theme.colors.text.muted,
+    fontSize: theme.fontSize.xs, lineHeight: 1.45,
+  },
+  backgroundHint: { color: theme.colors.text.muted, fontSize: theme.fontSize.xs, lineHeight: 1.45 },
   calibrationHeader: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
     gap: theme.spacing.md,
@@ -1219,8 +1453,9 @@ const styles: Record<string, React.CSSProperties> = {
 
   // ── Proactive idle time ──
   proactiveIdleRow: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: theme.spacing.md, paddingLeft: theme.spacing.lg,
+    display: 'grid', gridTemplateColumns: 'minmax(112px, 0.9fr) minmax(0, 1.1fr)',
+    alignItems: 'center', gap: theme.spacing.md, padding: '5px 0 5px 0',
+    borderBottom: `1px solid ${theme.colors.border}`,
   },
   proactiveIdleLabel: {
     fontSize: theme.fontSize.xs, color: theme.colors.text.muted, whiteSpace: 'nowrap',
@@ -1236,7 +1471,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
 
   // ── Toggle switch ──
-  toggleWrap: { position: 'relative' as const, display: 'inline-block', flexShrink: 0 },
+  toggleWrap: { position: 'relative' as const, display: 'inline-block', justifySelf: 'end', flexShrink: 0 },
   toggleInput: { position: 'absolute' as const, opacity: 0, width: 0, height: 0, margin: 0 },
   toggleTrack: {
     display: 'inline-block', width: 40, height: 22, borderRadius: 11,

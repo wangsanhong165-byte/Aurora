@@ -86,7 +86,12 @@ export class CharacterBehaviorResolver {
 
     // Keep the semantic emotion as the expression input. ExpressionController
     // resolves it through the active model's emotionMap.
-    const expression = mapping.expression ?? emotion
+    // The LLM's segment emotion is the semantic truth. A behavior-level
+    // expression is only a fallback for neutral/omitted emotion; otherwise a
+    // `greet` rule can incorrectly turn an explicitly shy greeting into happy.
+    const expression = emotion === 'neutral' && mapping.expression
+      ? mapping.expression
+      : emotion
     const expressionIntensity = clamp(
       intensity * (mapping.expressionIntensityScale ?? 1) * (personality.expressionIntensityScale ?? 1),
     )

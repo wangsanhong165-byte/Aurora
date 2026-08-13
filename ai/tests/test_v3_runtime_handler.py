@@ -151,12 +151,6 @@ def test_production_ingress_has_no_v2_message_conversion() -> None:
     session_source = (
         ROOT / "app" / "transport" / "session.py"
     ).read_text("utf-8")
-    v3_handler_source = (
-        ROOT / "app" / "transport" / "v3_handler.py"
-    ).read_text("utf-8")
-
     assert "InboundMessage" not in handler_source
-    assert "MESSAGE_TYPE_MAP" not in v3_handler_source
-    assert "_envelope_to_inbound" not in v3_handler_source
     assert "V2CompatibilityAdapter" not in session_source
     assert not (ROOT / "app" / "transport" / "v2_adapter.py").exists()

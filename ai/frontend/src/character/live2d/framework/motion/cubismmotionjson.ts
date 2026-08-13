@@ -8,8 +8,9 @@
 
 import { CubismIdHandle } from '../id/cubismid';
 import { CubismFramework } from '../live2dcubismframework';
-import { csmString } from '../type/csmstring';
+import { CSM_ASSERT, CubismLogWarning } from '../utils/cubismdebug';
 import { CubismJson, JsonMap } from '../utils/cubismjson';
+import { CubismMotionSegmentType } from './cubismmotioninternal';
 
 // JSON keys
 const Meta = 'Meta';
@@ -75,6 +76,88 @@ export class CubismMotionJson {
       .getValueByString(Meta)
       .getValueByString(Loop)
       .toBoolean();
+  }
+
+  /**
+   *  motion3.jsonファイルの整合性チェック
+   *
+   * @return 正常なファイルの場合はtrueを返す。
+   */
+  hasConsistency(): boolean {
+    let result = true;
+
+    if (!this._json || !this._json.getRoot()) {
+      return false;
+    }
+
+    const actualCurveListSize = this._json
+      .getRoot()
+      .getValueByString(Curves)
+      .getVector().length;
+    let actualTotalSegmentCount = 0;
+    let actualTotalPointCount = 0;
+
+    // カウント処理
+    for (
+      let curvePosition = 0;
+      curvePosition < actualCurveListSize;
+      ++curvePosition
+    ) {
+      for (
+        let segmentPosition = 0;
+        segmentPosition < this.getMotionCurveSegmentCount(curvePosition);
+      ) {
+        if (segmentPosition == 0) {
+          actualTotalPointCount += 1;
+          segmentPosition += 2;
+        }
+
+        const segment = this.getMotionCurveSegment(
+          curvePosition,
+          segmentPosition
+        ) as CubismMotionSegmentType;
+
+        switch (segment) {
+          case CubismMotionSegmentType.CubismMotionSegmentType_Linear:
+            actualTotalPointCount += 1;
+            segmentPosition += 3;
+            break;
+          case CubismMotionSegmentType.CubismMotionSegmentType_Bezier:
+            actualTotalPointCount += 3;
+            segmentPosition += 7;
+            break;
+          case CubismMotionSegmentType.CubismMotionSegmentType_Stepped:
+            actualTotalPointCount += 1;
+            segmentPosition += 3;
+            break;
+          case CubismMotionSegmentType.CubismMotionSegmentType_InverseStepped:
+            actualTotalPointCount += 1;
+            segmentPosition += 3;
+            break;
+          default:
+            CSM_ASSERT(0);
+            break;
+        }
+
+        ++actualTotalSegmentCount;
+      }
+    }
+
+    // 個数チェック
+    if (actualCurveListSize != this.getMotionCurveCount()) {
+      CubismLogWarning('The number of curves does not match the metadata.');
+      result = false;
+    }
+    if (actualTotalSegmentCount != this.getMotionTotalSegmentCount()) {
+      CubismLogWarning('The number of segment does not match the metadata.');
+      result = false;
+    }
+    if (actualTotalPointCount != this.getMotionTotalPointCount()) {
+      CubismLogWarning('The number of point does not match the metadata.');
+      result = false;
+    }
+
+    return result;
   }
 
   public getEvaluationOptionFlag(flagType: EvaluationOptionFlag): boolean {
@@ -288,8 +371,7 @@ export class CubismMotionJson {
       .getValueByString(Curves)
       .getValueByIndex(curveIndex)
       .getValueByString(Segments)
-      .getVector()
-      .getSize();
+      .getVector().length;
   }
 
   /**
@@ -354,15 +436,13 @@ export class CubismMotionJson {
    * @param userDataIndex イベントのインデックス
    * @return イベントの文字列
    */
-  public getEventValue(userDataIndex: number): csmString {
-    return new csmString(
-      this._json
-        .getRoot()
-        .getValueByString(UserData)
-        .getValueByIndex(userDataIndex)
-        .getValueByString(Value)
-        .getRawString()
-    );
+  public getEventValue(userDataIndex: number): string {
+    return this._json
+      .getRoot()
+      .getValueByString(UserData)
+      .getValueByIndex(userDataIndex)
+      .getValueByString(Value)
+      .getRawString();
   }
 
   _json: CubismJson; // motion3.jsonのデータ
