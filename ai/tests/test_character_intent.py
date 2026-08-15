@@ -17,6 +17,15 @@ def test_segment_adapter_rejects_unknown_intent_values():
     assert intent.behavior == ""
 
 
+def test_segment_adapter_filters_emotion_against_active_model_capabilities():
+    intent = CharacterIntent.from_llm_segment(
+        {"emotion": "shy", "behavior": "speak"},
+        allowed_emotions=("neutral", "happy"),
+    )
+
+    assert intent.emotion == "neutral"
+
+
 def test_segment_adapter_does_not_restore_removed_v2_fields():
     intent = CharacterIntent.from_llm_segment({
         "tone": "happy",

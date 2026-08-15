@@ -62,6 +62,12 @@ def _is_allowed_client_origin(origin: str) -> bool:
 # Runtime manager (lazy init)
 _manager: Any = None
 
+
+def _get_presentation_registry():
+    from app.runtime.presentation_capabilities import get_presentation_registry
+
+    return get_presentation_registry()
+
 def _get_manager():
     """Get RuntimeManager singleton."""
     global _manager
@@ -76,29 +82,17 @@ def _load_live2d_config() -> dict[str, Any]:
     global _live2d_config, _live2d_model
     if _live2d_config is not None:
         return _live2d_config
-
-    import json
-    config_path = BASE_DIR / "config" / "live2d_models.json"
-    if config_path.exists():
-        try:
-            raw = json.loads(config_path.read_text("utf-8"))
-            _live2d_config = raw
-            # Determine active model: env var > first available > default
-            env_model = os.environ.get("LIVE2D_MODEL", "")
-            available = sorted(d.name for d in LIVE2D_DIR.iterdir() if d.is_dir()) if LIVE2D_DIR.exists() else []
-            if env_model and env_model in available and env_model in raw:
-                _live2d_model = env_model
-            else:
-                for m in ["Design_genius_White", "youxiaomiao", "ariu"]:
-                    if m in available and m in raw:
-                        _live2d_model = m
-                        break
-                else:
-                    _live2d_model = available[0] if available else _live2d_model
-            emotions = raw.get(_live2d_model, {}).get("prompt_emotions", [])
-            logger.info("[Live2D] Config loaded: model=%s, emotions=%d", _live2d_model, len(emotions))
-        except Exception as exc:
-            logger.error("[Live2D] Config load failed: %s", exc)
+    registry = _get_presentation_registry()
+    registry.refresh()
+    snapshot = registry.snapshot()
+    _live2d_config = registry.config()
+    if snapshot.model:
+        _live2d_model = snapshot.model
+    logger.info(
+        "[Live2D] Config loaded: model=%s, emotions=%d",
+        _live2d_model,
+        len(snapshot.allowed_emotions),
+    )
     return _live2d_config or {}
 
 
@@ -133,9 +127,11 @@ def _load_motion_presets() -> dict[str, Any]:
 def _build_model_info() -> dict[str, Any]:
     cfg = _load_live2d_config()
     model_cfg = cfg.get(_live2d_model, {})
+    capabilities = _get_presentation_registry().capabilities_for(_live2d_model)
     return {
         "name": _live2d_model,
         "url": f"/live2d-models/{_live2d_model}/{_live2d_model}.model3.json",
+        "promptEmotions": list(capabilities.allowed_emotions),
         "emotionMap": model_cfg.get("emotion_map", {}),
         "behaviors": model_cfg.get("behaviors", []),
         "accessories": model_cfg.get("accessories", {}),
@@ -422,14 +418,23 @@ async def list_models():
 async def set_model(data: dict):
     """Receive model selection from frontend before page reload."""
     global _live2d_config, _live2d_model
-    name = data.get("model", "")
-    _live2d_config = None
-    cfg = _load_live2d_config()
-    if not name or name not in cfg:
+    name = str(data.get("model", "")).strip()
+    registry = _get_presentation_registry()
+    registry.refresh()
+    try:
+        capabilities = registry.select(name)
+    except KeyError:
         raise HTTPException(status_code=404, detail=f"Live2D model not found: {name}")
-    _live2d_model = name
+    _live2d_config = registry.config()
+    _live2d_model = capabilities.model
+    if _avatar_controller is not None:
+        _avatar_controller.configure(_live2d_model, _load_avatar_config())
     logger.info("[Live2D] Model switched to: %s", name)
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "model": _live2d_model,
+        "promptEmotions": list(capabilities.allowed_emotions),
+    }
 
 
 @app.post("/api/set-mode")
@@ -579,6 +584,7 @@ async def serve_index():
         # without waiting for a WebSocket configuration event
         cfg = _load_live2d_config()
         model_cfg = cfg.get(_live2d_model, {})
+        capabilities = _get_presentation_registry().capabilities_for(_live2d_model)
         emotion_map = model_cfg.get("emotion_map", {})
         behaviors = model_cfg.get("behaviors", [])
         accessories = model_cfg.get("accessories", {})
@@ -603,6 +609,7 @@ async def serve_index():
             + json.dumps({
                 "name": _live2d_model,
                 "url": model_url,
+                "promptEmotions": list(capabilities.allowed_emotions),
                 "emotionMap": emotion_map,
                 "behaviors": behaviors,
                 "accessories": accessories,
@@ -666,8 +673,12 @@ if __name__ == "__main__":
         logger.info("  index.html: found (%d bytes)", index.stat().st_size)
     # Load live2d config
     cfg = _load_live2d_config()
-    model_cfg = cfg.get(_live2d_model, {})
-    logger.info("  Live2D active model: %s (%d emotions)", _live2d_model, len(model_cfg.get("prompt_emotions", [])))
+    capabilities = _get_presentation_registry().capabilities_for(_live2d_model)
+    logger.info(
+        "  Live2D active model: %s (%d emotions)",
+        _live2d_model,
+        len(capabilities.allowed_emotions),
+    )
     # Init subsystems
     _ensure_env()
     _load_character()

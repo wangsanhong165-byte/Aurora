@@ -3,7 +3,7 @@
 // Uses model-specific .exp3.json presets (via emotion_map) with hardcoded fallback.
 
 import { getExpression, EXPRESSION_PRESETS } from './live2d/expression'
-import type { ParameterController } from './controllers'
+import type { ParameterController } from './ExpressionParameterController'
 
 export interface ExpressionBlend {
   name: string

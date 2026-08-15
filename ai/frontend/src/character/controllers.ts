@@ -38,177 +38,6 @@ import {
   type MotionActionDefinition,
 } from './MotionAction'
 
-// ── Parameter Interpolation (smooth transitions) ──
-
-interface ParamTarget {
-  id: string
-  from: number
-  to: number
-  startTime: number
-  duration: number
-}
-
-/** @deprecated Compatibility reference; new code uses ExpressionParameterController. */
-export function legacyExpressionTargetForBlend(
-  value: number,
-  intensity: number,
-  blend: 'add' | 'multiply' | 'overwrite' = 'add',
-  current = 0,
-): number {
-  const weight = Math.max(0, Math.min(1, intensity))
-  if (blend === 'multiply') return 1 + (value - 1) * weight
-  if (blend === 'overwrite') return current + (value - current) * weight
-  return value * weight
-}
-
-/** @deprecated Compatibility reference; new code uses ExpressionParameterController. */
-export class LegacyParameterController {
-  private mixer: ParameterMixer | null = null
-  private targets: ParamTarget[] = []
-  private defaultParams = new Map<string, number>()
-  // Expressions must keep contributing after their transition finishes.
-  // ParameterMixer intentionally clears frame values every animation frame.
-  private activeExpressionParams = new Set<string>()
-  // Track part IDs from the current expression's part opacity changes
-  private activeExpressionParts = new Set<string>()
-  // Track last applied value for each parameter (used as interpolation "from")
-  private _currentValues = new Map<string, number>()
-
-  attach(_adapter: Live2DModelAdapter, mixer: ParameterMixer): void {
-    this.mixer = mixer
-    this._currentValues.clear()
-    this.activeExpressionParams.clear()
-  }
-
-  detach(): void {
-    this.mixer = null
-    this.targets = []
-    this._currentValues.clear()
-    this.activeExpressionParams.clear()
-  }
-
-  /** Set a tracked current value. */
-  private _setTracked(id: string, value: number): void {
-    this._currentValues.set(id, value)
-  }
-
-  /** Get tracked current value (fallback to 0). */
-  private _getTracked(id: string): number {
-    return this._currentValues.get(id) ?? 0
-  }
-
-  /** Queue a smooth parameter transition.
-   *  The interpolated values are later submitted to the mixer via getContributions(). */
-  setSmooth(id: string, to: number, duration = 300, delay = 0): void {
-    const from = this._getTracked(id)
-    this.removeTargets(id)
-    this.targets.push({ id, from, to, startTime: performance.now() + delay, duration })
-  }
-
-  /** Remove any pending interpolation targets for the given parameter id(s). */
-  removeTargets(ids: string | string[]): void {
-    const removeSet = new Set(typeof ids === 'string' ? [ids] : ids)
-    this.targets = this.targets.filter(t => !removeSet.has(t.id))
-  }
-
-  /** Count active targets for a given param. */
-  getTargetCount(id: string): number {
-    return this.targets.filter(t => t.id === id).length
-  }
-
-  /** Get all param IDs with active interpolation targets. */
-  getActiveTargetParams(): Set<string> {
-    return new Set(this.targets.map(t => t.id))
-  }
-
-  /** Apply expression preset with smooth transition. */
-  applyExpression(name: string, intensity: number, duration = 400): void {
-    const preset = getExpression(name)
-    const pIntensity = Math.max(0, Math.min(1, intensity))
-    const nextIds = new Set(preset.params.map((p) => p.id))
-
-    // Release controls owned by the prior expression but absent from this one.
-    for (const id of this.activeExpressionParams) {
-      if (!nextIds.has(id)) this.setSmooth(id, 0, duration)
-    }
-    this.activeExpressionParams = nextIds
-
-    for (const p of preset.params) {
-      const value = legacyExpressionTargetForBlend(
-        p.value,
-        pIntensity,
-        p.blend,
-        this._getTracked(p.id),
-      )
-      if (!this.defaultParams.has(p.id)) {
-        this.defaultParams.set(p.id, value)
-      }
-      this.setSmooth(p.id, value, duration)
-    }
-
-    // Part opacity changes follow the same adapter-owned write path as parameters.
-    // Always clear old expression parts first, even if the new expression has none.
-    const nextPartIds = preset.parts ? new Set(preset.parts.map((p) => p.id)) : new Set<string>()
-    if (this.mixer) {
-      for (const partId of this.activeExpressionParts) {
-        if (!nextPartIds.has(partId)) {
-          this.mixer.submitPartOpacity({
-            id: `expression-part:${partId}`,
-            partId,
-            opacity: 0,
-            priority: 5,
-            persistent: true,
-          })
-        }
-      }
-    }
-    this.activeExpressionParts = nextPartIds
-    if (preset.parts && this.mixer) {
-      for (const part of preset.parts) {
-        this.mixer.submitPartOpacity({
-          id: `expression-part:${part.id}`,
-          partId: part.id,
-          opacity: part.opacity * pIntensity,
-          priority: 75,
-          persistent: true,
-        })
-      }
-    }
-  }
-
-  /** Reset to neutral with transition. */
-  resetToNeutral(duration = 500): void {
-    this.applyExpression('neutral', 1, duration)
-  }
-
-  /**
-   * Update active interpolations and return contributions for the mixer.
-   * Call each frame. The returned contributions should be submitted to
-   * ParameterMixer before resolve/apply.
-   */
-  update(): Array<{ parameterId: string; value: number; source: string; priority: number }> {
-    const now = performance.now()
-    this.targets = this.targets.filter((t) => {
-      const elapsed = now - t.startTime
-      const progress = Math.min(1, elapsed / t.duration)
-      const eased = 1 - Math.pow(1 - progress, 3)
-      const value = t.from + (t.to - t.from) * eased
-      this._setTracked(t.id, value)
-
-      return progress < 1
-    })
-
-    // Return the settled values as well as values still interpolating. Without
-    // this, expressions disappear on the first frame after their fade-in.
-    return [...this.activeExpressionParams].map((parameterId) => ({
-      parameterId,
-      value: this._getTracked(parameterId),
-      source: 'expression',
-      priority: 75,
-    }))
-  }
-}
-
 // ── Idle Animation (blink + breath) ──
 
 export class IdleController {
@@ -790,6 +619,18 @@ export class CharacterController {
     }
     const basePlan = this.behaviorResolver.resolve(activeIntent)
     const policy = this.performancePolicy.evaluate(activeIntent, basePlan, this.behaviorResolver.getConfig(), this._profile)
+    if (policy.expressionFallbackReason) {
+      eventBus.emit('character:runtime-telemetry', {
+        type: 'expression.fallback',
+        turnId: intent.turnId,
+        metadata: {
+          requested: policy.requestedExpression,
+          resolved: policy.expression,
+          reason: policy.expressionFallbackReason,
+          model: this._profile?.model || this._modelName,
+        },
+      })
+    }
     this.attention.set(
       policy.modifiers.attention,
       activeIntent.durationMs ?? (policy.holdMs > 0 ? policy.holdMs : undefined),
@@ -856,7 +697,9 @@ export class CharacterController {
       turnId: intent.turnId ?? this.stateMachine.turnId,
       emotion: intent.emotion ?? 'neutral',
       behavior: intent.behavior ?? '',
+      requestedExpression: policy.requestedExpression,
       expression: this.exprCtrl.getCurrent(),
+      expressionFallbackReason: policy.expressionFallbackReason,
       expressionIntensity: this.exprCtrl.getIntensity(),
       durationMs: intent.durationMs ?? null,
       motion: motionDecision,
@@ -865,7 +708,9 @@ export class CharacterController {
       receivedAt: performance.now(),
     }
     eventBus.emit('character:performance', {
-      emotion: intent.emotion || 'neutral', behavior: intent.behavior || '', expression: policy.expression,
+      emotion: intent.emotion || 'neutral', behavior: intent.behavior || '',
+      requestedExpression: policy.requestedExpression, expression: policy.expression,
+      expressionFallbackReason: policy.expressionFallbackReason,
       motion: policy.motion || '', profile: this._profile?.model || this._modelName,
       transitionMs: policy.transitionMs, holdMs: policy.holdMs, motionProbability: policy.motionProbability,
       modifiers: { ...policy.modifiers },

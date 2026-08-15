@@ -1,5 +1,6 @@
 """High-level character intent contract. Never contains renderer or Cubism data."""
 from dataclasses import asdict, dataclass
+from collections.abc import Iterable
 from typing import Any
 
 from app.runtime.semantic_performance import normalize_motion_plan
@@ -25,7 +26,13 @@ class CharacterIntent:
     motion_plan: dict[str, Any] | None = None
 
     @classmethod
-    def from_llm_segment(cls, segment: dict[str, Any] | None, intensity: float = 0.5) -> "CharacterIntent":
+    def from_llm_segment(
+        cls,
+        segment: dict[str, Any] | None,
+        intensity: float = 0.5,
+        *,
+        allowed_emotions: Iterable[str] | None = None,
+    ) -> "CharacterIntent":
         segment = segment if isinstance(segment, dict) else {}
         emotion = str(segment.get("emotion", "neutral")).lower()
         behavior = str(segment.get("behavior", "")).lower()
@@ -39,8 +46,9 @@ class CharacterIntent:
             tag.strip().lower() for tag in raw_tags
             if isinstance(tag, str) and tag.strip()
         ))[:8] if isinstance(raw_tags, (list, tuple)) else ()
+        accepted_emotions = cls._accepted_emotions(allowed_emotions)
         return cls(
-            emotion=emotion if emotion in EMOTIONS else "neutral",
+            emotion=emotion if emotion in accepted_emotions else "neutral",
             behavior=behavior if behavior in BEHAVIORS else "",
             intensity=raw_intensity,
             attention=attention if attention in ATTENTIONS else "user",
@@ -50,6 +58,18 @@ class CharacterIntent:
             context_tags=tags,
             motion_plan=cls._motion_plan(segment.get("motionPlan", segment.get("motion_plan"))),
         )
+
+    @staticmethod
+    def _accepted_emotions(allowed_emotions: Iterable[str] | None) -> set[str]:
+        if allowed_emotions is None:
+            return set(EMOTIONS)
+        accepted = {
+            str(value).strip().lower()
+            for value in allowed_emotions
+            if str(value).strip().lower() in EMOTIONS
+        }
+        accepted.add("neutral")
+        return accepted
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

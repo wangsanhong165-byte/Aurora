@@ -109,9 +109,17 @@ class ResponseInterpreter:
             adapted_emotion, adaptation_warning = _adapt_semantic_emotion(
                 cleaned, turn.user_text,
             )
-            cleaned["emotion"] = adapted_emotion
+            resolved_emotion = CharacterIntent.from_llm_segment(
+                {"emotion": adapted_emotion},
+                allowed_emotions=turn.allowed_emotions,
+            ).emotion
+            cleaned["emotion"] = resolved_emotion
             if adaptation_warning:
                 warnings.append(adaptation_warning)
+            if resolved_emotion != adapted_emotion:
+                warnings.append(
+                    f"emotion_not_supported:{adapted_emotion}->{resolved_emotion}"
+                )
             segments.append(cleaned)
 
         dominant = max(
@@ -122,7 +130,10 @@ class ResponseInterpreter:
                 -item[0],
             ),
         )[1] if segments else {}
-        intent = CharacterIntent.from_llm_segment(dominant)
+        intent = CharacterIntent.from_llm_segment(
+            dominant,
+            allowed_emotions=turn.allowed_emotions,
+        )
         performance = PerformancePlan(
             emotion=intent.emotion,
             behavior=intent.behavior or ("speak" if response.reply else ""),

@@ -61,6 +61,21 @@ def test_turn_input_carries_transport_identity_into_character_turn():
     assert turn.turn_id == "turn-1"
 
 
+def test_expression_intensity_and_motion_energy_are_independent():
+    turn = CharacterTurn(input=TurnInput(text="hello"))
+    turn.live2d_intent = {
+        "emotion": "happy",
+        "intensity": 0.82,
+        "energy": 0.31,
+    }
+
+    assert turn.emotion_intensity == 0.82
+    assert turn.output.performance.intensity == 0.82
+    assert turn.output.performance.energy == 0.31
+    assert turn.live2d_intent["intensity"] == 0.82
+    assert turn.live2d_intent["energy"] == 0.31
+
+
 def test_character_runtime_handle_turn_is_the_only_public_turn_entrypoint():
     runtime = CharacterRuntime()
     turn = asyncio.run(runtime.handle_turn(TurnInput(text="hello")))

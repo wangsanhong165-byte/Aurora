@@ -1,6 +1,4 @@
-# Avatar Controller — sole entry point for all Live2D character control
-# Enforces: Runtime → Protocol → AvatarController → Live2DProvider
-# No other module may call Live2DProvider directly.
+# Avatar Controller — explicit avatar protocol and persisted-state authority.
 
 from dataclasses import dataclass, field
 import logging
@@ -11,8 +9,6 @@ from app.avatar.permission import PermissionManager, PermissionLevel
 from app.avatar.component_manager import ComponentManager
 from app.avatar.expression_manager import ExpressionManager
 from app.avatar.motion_manager import MotionManager
-from app.avatar.parameter_mixer import ParameterMixer
-from app.avatar.natural_behavior import NaturalBehaviorManager
 from app.avatar.state import AvatarState, AvatarStateStore
 from app.avatar.events import (
     AvatarEvent,
@@ -29,11 +25,12 @@ logger = logging.getLogger("avatar.controller")
 
 
 class AvatarController:
-    """Central avatar control authority.
+    """Explicit component/expression/motion protocol authority.
 
-    All Live2D operations — expression, motion, component visibility,
-    parameter blending — MUST go through this controller. Direct calls
-    to Live2DProvider from any other module are forbidden.
+    The normal LLM presentation path is ``character.intent`` and is resolved
+    by the frontend PerformanceDirector.  This controller owns explicit user
+    controls, suggestions, and persisted avatar state; it does not run a
+    second per-frame Live2D parameter system.
 
     Supports dual-control (Human + AI) with priority-based arbitration:
     USER(100) > SYSTEM(80) > AI(50) > IDLE(10)
@@ -44,8 +41,6 @@ class AvatarController:
         self.components = ComponentManager()
         self.expressions = ExpressionManager()
         self.motions = MotionManager()
-        self.mixer = ParameterMixer()
-        self.behavior = NaturalBehaviorManager()
         self.state_store = AvatarStateStore(data_dir)
 
         # Pending AI suggestions (keyed by suggestion_id)
@@ -57,8 +52,17 @@ class AvatarController:
     # ── Configuration ──────────────────────────────────────────────────
 
     def configure(self, model_id: str, avatar_config: dict) -> None:
-        """Load per-model configuration from avatar.yaml."""
+        """Replace the explicit-control catalog with one model's config."""
         model_cfg = avatar_config.get(model_id, {})
+
+        # A model switch replaces, rather than extends, the previous catalog.
+        # Keeping old definitions made explicit controls from the last model
+        # appear valid after a switch.
+        self.permission.reset()
+        self.components = ComponentManager()
+        self.expressions = ExpressionManager()
+        self.motions = MotionManager()
+        self._pending_suggestions.clear()
 
         components = model_cfg.get("components", {})
         self.components.register_all(components)
@@ -72,10 +76,6 @@ class AvatarController:
         motions = model_cfg.get("motions", {})
         self.motions.register_all(motions)
         logger.info("AvatarController configured: motions=%d", len(motions))
-
-        parameters = model_cfg.get("parameters", {})
-        self.mixer.register_all(parameters)
-        logger.info("AvatarController configured: parameter_owners=%d", len(parameters))
 
     def set_push_callback(self, callback: Any) -> None:
         """Set callback for pushing messages to frontend via WebSocket."""
@@ -288,40 +288,6 @@ class AvatarController:
             "motion_loop": motion.loop,
         }
 
-    # ── Per-Frame Parameter Update ──────────────────────────────────────
-
-    def update_frame(self, dt: float, lip_sync_params: dict[str, float] | None = None,
-                     expression_params: dict[str, float] | None = None) -> dict[str, float]:
-        """Advance one frame: natural behaviors + optional lip-sync/expression.
-
-        Call this each frame before rendering. The flow:
-        1. Submit lip-sync params (TTS-driven mouth) at priority 60
-        2. Submit expression params (emotion-driven brow/mouth) at priority 30
-        3. Advance NaturalBehaviorManager → submits gaze/blink/breath at priority 10
-        4. resolve() blends all sources into final parameter values
-
-        Returns {param_id: final_value} for the Cubism model.
-        """
-        self.mixer.reset_frame()
-
-        # Layer 1: Natural behaviors (IDLE priority, always runs)
-        natural_params = self.behavior.update(dt)
-        self.mixer.set_params("natural", natural_params, self.behavior.PRIORITY)
-
-        # Layer 2: Expression (AI emotion decision)
-        if expression_params:
-            self.mixer.set_params("expression", expression_params, priority=30)
-
-        # Layer 3: Lip sync (TTS audio analysis)
-        if lip_sync_params:
-            self.mixer.set_params("lip_sync", lip_sync_params, priority=60)
-
-        return self.mixer.resolve()
-
-    def set_gaze_target(self, x: float, y: float) -> None:
-        """Update mouse gaze target (normalized -1..1)."""
-        self.behavior.set_gaze_target(x, y)
-
     # ── Debug ───────────────────────────────────────────────────────────
 
     def debug_info(self) -> dict:
@@ -346,8 +312,6 @@ class AvatarController:
                 "controller": self.motions.get_current().controller,
                 "priority": self.motions.get_current().priority,
             },
-            "mixer": self.mixer.debug_frame(),
-            "behavior": self.behavior.get_enabled_state(),
             "pending_suggestions": len(self._pending_suggestions),
         }
 
@@ -357,6 +321,4 @@ class AvatarController:
         self.components.reset_to_defaults()
         self.expressions.reset()
         self.motions.stop()
-        self.mixer.reset_frame()
-        self.behavior = NaturalBehaviorManager()
         self._pending_suggestions.clear()

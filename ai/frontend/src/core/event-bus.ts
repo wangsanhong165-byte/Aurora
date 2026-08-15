@@ -50,7 +50,7 @@ export interface EventMap {
   'character:actions_update': { model: string; actions: MotionActionDefinition[] }
   'character:action_preview': { action: MotionActionDefinition }
   'character:activity': { activity: string }
-  'character:performance': { emotion: string; behavior: string; expression: string; motion: string; profile: string; transitionMs: number; holdMs: number; motionProbability: number; modifiers: Record<string, unknown> }
+  'character:performance': { emotion: string; behavior: string; requestedExpression: string; expression: string; expressionFallbackReason: 'unsupported_emotion' | null; motion: string; profile: string; transitionMs: number; holdMs: number; motionProbability: number; modifiers: Record<string, unknown> }
   'character:performance_debug': {
     activity: string
     previousActivity: string

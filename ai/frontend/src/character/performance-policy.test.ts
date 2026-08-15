@@ -134,3 +134,21 @@ test('an explicit segment emotion is not overwritten by a behavior default', () 
   assert.equal(base.expression, 'shy')
   assert.equal(plan.expression, 'shy')
 })
+
+test('unsupported expressions fall back explicitly and observably', () => {
+  const profile: AvatarCapabilityProfile = {
+    model: 'limited',
+    expressions: ['neutral', 'happy'],
+    motions: [], sequences: [], parameters: {}, bindings: {},
+  }
+  const plan = new CharacterPerformancePolicy().evaluate(
+    { emotion: 'shy', behavior: 'speak', intensity: 0.7 },
+    { expression: 'shy', expressionIntensity: 0.7, motionIntensity: 0.5, suppressIdle: false },
+    {},
+    profile,
+  )
+
+  assert.equal(plan.requestedExpression, 'shy')
+  assert.equal(plan.expression, 'neutral')
+  assert.equal(plan.expressionFallbackReason, 'unsupported_emotion')
+})

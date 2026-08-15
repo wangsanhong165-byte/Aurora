@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any
 
 from app.runtime.event import Event, EventType
+from app.runtime.presentation_capabilities import PresentationCapabilities
 
 
 class TurnOrigin(str, Enum):
@@ -109,6 +110,7 @@ class CharacterTurn:
     event: Event = field(init=False)
     session_id: str = ""
     telemetry: Any = None
+    presentation: PresentationCapabilities | None = None
 
     # Typed runtime-owned working fields. Pipeline steps may mutate these,
     # but durable character state is committed separately.
@@ -182,11 +184,15 @@ class CharacterTurn:
 
     @property
     def emotion_intensity(self) -> float:
-        return self.output.performance.energy
+        return self.output.performance.intensity
 
     @emotion_intensity.setter
     def emotion_intensity(self, value: float) -> None:
-        self.output.performance.energy = value
+        self.output.performance.intensity = value
+
+    @property
+    def allowed_emotions(self) -> tuple[str, ...] | None:
+        return self.presentation.allowed_emotions if self.presentation else None
 
     @property
     def audio(self) -> bytes:
@@ -203,6 +209,7 @@ class CharacterTurn:
             "emotion": plan.emotion,
             "behavior": plan.behavior,
             "attention": plan.attention,
+            "intensity": plan.intensity,
             "energy": plan.energy,
             "speaking": plan.speaking,
             "duration_ms": plan.duration_ms,
@@ -219,7 +226,8 @@ class CharacterTurn:
         plan.emotion = str(value.get("emotion", plan.emotion))
         plan.behavior = str(value.get("behavior", plan.behavior))
         plan.attention = str(value.get("attention", plan.attention))
-        plan.energy = float(value.get("energy", value.get("intensity", plan.energy)))
+        plan.intensity = float(value.get("intensity", plan.intensity))
+        plan.energy = float(value.get("energy", plan.energy))
         plan.speaking = bool(value.get("speaking", plan.speaking))
         plan.duration_ms = value.get("duration_ms")
         plan.natural_vad = CharacterIntent._natural_vad(

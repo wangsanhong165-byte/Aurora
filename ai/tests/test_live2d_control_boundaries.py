@@ -114,10 +114,39 @@ def test_llm_prompt_uses_semantic_intent_not_legacy_model_controls():
 
 
 def test_expression_controller_keeps_settled_values_across_mixer_frames():
-    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+    controller = (ROOT / "frontend/src/character/ExpressionParameterController.ts").read_text(encoding="utf-8")
 
-    assert "private activeExpressionParams = new Set<string>()" in controllers
-    assert "Return the settled values" in controllers
+    assert "private active = new Set<string>()" in controller
+    assert "const output = [...owned].map" in controller
+
+
+def test_only_one_frontend_expression_parameter_controller_remains():
+    controllers = (ROOT / "frontend/src/character/controllers.ts").read_text(encoding="utf-8")
+    explicit = (ROOT / "frontend/src/character/AvatarController.ts").read_text(encoding="utf-8")
+
+    assert "LegacyParameterController" not in controllers
+    assert "legacyExpressionTargetForBlend" not in controllers
+    assert "this._ctrl.exprCtrl.apply" in explicit
+    assert "this._ctrl.paramCtrl.applyExpression" not in explicit
+
+
+def test_backend_explicit_protocol_has_no_dormant_frame_controller():
+    controller = (ROOT / "app/avatar/controller.py").read_text(encoding="utf-8")
+
+    assert not (ROOT / "app/avatar/parameter_mixer.py").exists()
+    assert not (ROOT / "app/avatar/natural_behavior.py").exists()
+    assert "def update_frame(" not in controller
+    assert "def set_gaze_target(" not in controller
+
+
+def test_legacy_embedded_emotion_prompt_chain_is_removed():
+    planner = (ROOT / "app/runtime/default_planner.py").read_text(encoding="utf-8")
+    preprocessor = (ROOT / "app/modules/tts_preprocessor.py").read_text(encoding="utf-8")
+
+    assert not (ROOT / "app/prompts/utils/output_format.txt").exists()
+    assert not (ROOT / "app/prompts/utils/available_emotions.txt").exists()
+    assert "extract_emotion_tags" not in preprocessor
+    assert "Do NOT use [keyword] tags" in planner
 
 
 def test_realtime_controls_use_profile_binding_resolver():

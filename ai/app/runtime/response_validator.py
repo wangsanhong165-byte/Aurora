@@ -1,9 +1,10 @@
 """Normalize model presentation output before TTS and memory."""
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 
-from app.runtime.character_intent import BEHAVIORS, EMOTIONS, CharacterIntent
+from app.runtime.character_intent import BEHAVIORS, CharacterIntent
 
 
 @dataclass
@@ -14,7 +15,14 @@ class ValidatedResponse:
 
 
 class ResponseValidator:
-    def validate(self, reply: str, segments: list[dict] | None) -> ValidatedResponse:
+    def validate(
+        self,
+        reply: str,
+        segments: list[dict] | None,
+        *,
+        allowed_emotions: Iterable[str] | None = None,
+    ) -> ValidatedResponse:
+        accepted_emotions = CharacterIntent._accepted_emotions(allowed_emotions)
         missing_structured = bool(
             reply and not segments and len(self._split_sentences(str(reply))) > 1
         )
@@ -29,7 +37,7 @@ class ResponseValidator:
                 continue
             emotion = str(raw.get("emotion", "neutral")).lower()
             behavior = str(raw.get("behavior", "speak")).lower()
-            if emotion not in EMOTIONS:
+            if emotion not in accepted_emotions:
                 emotion = "neutral"
             if behavior not in BEHAVIORS or behavior == "idle":
                 behavior = "speak"
@@ -57,7 +65,9 @@ class ResponseValidator:
             if reply:
                 if reply.startswith(("{", "[")):
                     reply = "I couldn't format that response safely."
-                normalized = self._recover_semantic_segments(reply)
+                normalized = self._recover_semantic_segments(
+                    reply, accepted_emotions,
+                )
         # An empty reply (no spoken text and no non-empty segments) is never a
         # legitimate completion for a voice companion: it is either truncation
         # (finish_reason="length", reasoning consumed the budget) or the model
@@ -73,7 +83,11 @@ class ResponseValidator:
         )
 
     @classmethod
-    def _recover_semantic_segments(cls, reply: str) -> list[dict]:
+    def _recover_semantic_segments(
+        cls,
+        reply: str,
+        accepted_emotions: set[str] | None = None,
+    ) -> list[dict]:
         """Conservative fallback when a provider drops the JSON envelope.
 
         The first validation remains invalid so DecisionStep asks the LLM for
@@ -84,7 +98,12 @@ class ResponseValidator:
         sentences = cls._split_sentences(reply)
         if not sentences:
             sentences = [reply]
-        return [cls._recover_sentence(sentence) for sentence in sentences]
+        recovered = [cls._recover_sentence(sentence) for sentence in sentences]
+        if accepted_emotions is not None:
+            for item in recovered:
+                if item["emotion"] not in accepted_emotions:
+                    item["emotion"] = "neutral"
+        return recovered
 
     @staticmethod
     def _split_sentences(reply: str) -> list[str]:

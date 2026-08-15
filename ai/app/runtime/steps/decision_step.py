@@ -129,7 +129,9 @@ class DecisionStep(Step):
         from app.modules.tts_preprocessor import split_reasoning
 
         safe = ResponseValidator().validate(
-            final_reply or response.reply, response.segments or []
+            final_reply or response.reply,
+            response.segments or [],
+            allowed_emotions=ctx.allowed_emotions,
         )
         if not safe.valid:
             truncated = response.finish_reason == "length"
@@ -171,7 +173,9 @@ class DecisionStep(Step):
             accumulated_usage.add(repair.usage)
             response = repair
             safe = ResponseValidator().validate(
-                repair.reply, repair.segments or []
+                repair.reply,
+                repair.segments or [],
+                allowed_emotions=ctx.allowed_emotions,
             )
             if not safe.reply and not safe.segments:
                 # The repair failed to produce text. If the model DID reply with
@@ -180,7 +184,11 @@ class DecisionStep(Step):
                 # instead of a generic recovery line. Only a genuinely empty
                 # original falls through to the fallback sentence.
                 if original_reply and not original_reply.lstrip().startswith(("{", "[")):
-                    recovered = ResponseValidator().validate(original_reply, [])
+                    recovered = ResponseValidator().validate(
+                        original_reply,
+                        [],
+                        allowed_emotions=ctx.allowed_emotions,
+                    )
                     safe = ValidatedResponse(
                         reply=recovered.reply or original_reply,
                         segments=recovered.segments,

@@ -22,7 +22,7 @@ _RE_SPACES = re.compile(r" {2,}")
 
 
 def strip_brackets(text: str) -> str:
-    """Remove [...] and their contents (emotion tags like [joy])."""
+    """Remove generic square-bracket markup and its contents."""
     return _RE_BRACKETS.sub("", text)
 
 
@@ -88,17 +88,3 @@ def split_reasoning(text: str) -> tuple[str, str]:
 def clean_for_display(text: str) -> str:
     """Return only the final reply suitable for normal display and speech."""
     return split_reasoning(text)[0]
-
-
-def extract_emotion_tags(text: str) -> list[str]:
-    """Extract emotion keywords from [keyword] tags in text.
-
-    Useful as a fallback tone detector — if the LLM embeds [joy] in
-    the display text, we can extract it for Live2D expression.
-
-    Returns:
-        List of emotion names found, in order of appearance.
-    """
-    if not text:
-        return []
-    return re.findall(r"\[(\w+)\]", text)

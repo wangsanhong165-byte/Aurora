@@ -1,10 +1,4 @@
-"""Unit tests for AvatarController, PermissionManager, ComponentManager,
-ParameterMixer, and NaturalBehaviorManager.
-
-Tests the core permission arbitration, component management, parameter
-blending, and natural behavior logic without requiring a running server
-or Cubism SDK.
-"""
+"""Unit tests for explicit avatar protocol, state, and permission control."""
 
 import sys
 import os
@@ -21,8 +15,6 @@ from app.avatar.permission import PermissionManager, PermissionLevel
 from app.avatar.component_manager import ComponentManager, ComponentDef
 from app.avatar.expression_manager import ExpressionManager
 from app.avatar.motion_manager import MotionManager
-from app.avatar.parameter_mixer import ParameterMixer, ParameterOwner, ParameterValue
-from app.avatar.natural_behavior import NaturalBehaviorManager
 from app.avatar.state import AvatarState, AvatarStateStore
 from app.avatar.controller import AvatarController
 from app.avatar.events import AvatarRequest, AvatarSuggestion
@@ -469,228 +461,29 @@ class TestAvatarControllerIntegration:
         # Component should remain at default (disabled)
         assert not ctrl.components.is_enabled("goggles")
 
-
-# ── ParameterMixer Tests ──────────────────────────────────────────────────
-
-class TestParameterMixer:
-    def test_single_source_no_blend(self):
-        pm = ParameterMixer()
-        pm.register_owner("lip_sync", ["ParamMouthOpenY"], priority=60)
-        pm.set_params("lip_sync", {"ParamMouthOpenY": 0.8})
-        result = pm.resolve()
-        assert result["ParamMouthOpenY"] == 0.8
-
-    def test_multi_source_weighted_blend(self):
-        pm = ParameterMixer()
-        pm.register_owner("lip_sync", ["ParamMouthOpenY"], priority=60)
-        pm.register_owner("expression", ["ParamMouthOpenY"], priority=30)
-
-        pm.set_params("lip_sync", {"ParamMouthOpenY": 0.8})
-        pm.set_params("expression", {"ParamMouthOpenY": 0.2})
-        result = pm.resolve()
-
-        # lip_sync(0.8 * 60) + expression(0.2 * 30) / 90
-        # = (48 + 6) / 90 = 0.6
-        expected = (0.8 * 60 + 0.2 * 30) / 90
-        assert abs(result["ParamMouthOpenY"] - expected) < 0.01
-
-    def test_blink_absolute_override_when_active(self):
-        pm = ParameterMixer()
-        pm.register_owner("blink", ["ParamEyeLOpen"], priority=40)
-        pm.register_owner("expression", ["ParamEyeLOpen"], priority=30)
-
-        # Blink active (eyes closing)
-        pm.set_params("blink", {"ParamEyeLOpen": 0.0})
-        pm.set_params("expression", {"ParamEyeLOpen": 1.0})
-        result = pm.resolve()
-
-        # Blink wins absolutely when value < 0.5
-        assert result["ParamEyeLOpen"] == 0.0
-
-    def test_blink_not_active_blends_normally(self):
-        pm = ParameterMixer()
-        pm.register_owner("blink", ["ParamEyeLOpen"], priority=40)
-        pm.register_owner("expression", ["ParamEyeLOpen"], priority=30)
-
-        # Blink not active (eyes fully open)
-        pm.set_params("blink", {"ParamEyeLOpen": 1.0})
-        pm.set_params("expression", {"ParamEyeLOpen": 0.7})
-        result = pm.resolve()
-
-        # Both contribute since blink >= 0.5 (not active)
-        expected = (1.0 * 40 + 0.7 * 30) / 70
-        assert abs(result["ParamEyeLOpen"] - expected) < 0.01
-
-    def test_independent_params_no_interference(self):
-        pm = ParameterMixer()
-        pm.register_owner("lip_sync", ["ParamMouthOpenY"], priority=60)
-        pm.register_owner("blink", ["ParamEyeLOpen"], priority=40)
-
-        pm.set_params("lip_sync", {"ParamMouthOpenY": 0.8})
-        pm.set_params("blink", {"ParamEyeLOpen": 0.0})
-        result = pm.resolve()
-
-        assert result["ParamMouthOpenY"] == 0.8
-        assert result["ParamEyeLOpen"] == 0.0
-
-    def test_mask_weight_reduces_contribution(self):
-        pm = ParameterMixer()
-        pm.register_owner("source_a", ["ParamX"], priority=50, mask_weight=1.0)
-        pm.register_owner("source_b", ["ParamX"], priority=50, mask_weight=0.2)
-
-        pm.set_params("source_a", {"ParamX": 1.0})
-        pm.set_params("source_b", {"ParamX": 0.0})
-        result = pm.resolve()
-
-        # source_b has low mask_weight, so source_a dominates
-        assert result["ParamX"] > 0.7
-
-    def test_reset_frame_clears_values(self):
-        pm = ParameterMixer()
-        pm.register_owner("lip_sync", ["ParamMouthOpenY"], priority=60)
-
-        pm.set_params("lip_sync", {"ParamMouthOpenY": 0.8})
-        pm.reset_frame()
-        result = pm.resolve()
-        assert len(result) == 0
-
-    def test_register_all_from_config(self):
-        pm = ParameterMixer()
-        pm.register_all({
-            "lip_sync": {"owns": ["ParamMouthOpenY"], "priority": 60},
-            "blink": {"owns": ["ParamEyeLOpen", "ParamEyeROpen"], "priority": 40},
+    def test_configure_replaces_previous_model_catalog(self):
+        ctrl = AvatarController()
+        ctrl.configure("model_a", {
+            "model_a": {
+                "components": {"hat": {"display_name": "Hat"}},
+                "expressions": {"happy": {"preset": "happy", "default": True}},
+                "motions": {"wave": {"category": "behavior"}},
+            },
         })
-        assert "lip_sync" in pm.list_owners()
-        assert "blink" in pm.list_owners()
-        owner = pm.get_owner("lip_sync")
-        assert owner is not None
-        assert owner.priority == 60
+        ctrl.configure("model_b", {
+            "model_b": {
+                "components": {"ears": {"display_name": "Ears"}},
+                "expressions": {"sad": {"preset": "sad", "default": True}},
+                "motions": {"nod": {"category": "behavior"}},
+            },
+        })
 
-    def test_unregistered_source_defaults_priority_10(self):
-        pm = ParameterMixer()
-        pm.set_params("unknown_source", {"ParamX": 0.5})
-        result = pm.resolve()
-        assert result["ParamX"] == 0.5
-
-    def test_debug_frame_info(self):
-        pm = ParameterMixer()
-        pm.register_owner("lip_sync", ["ParamMouthOpenY"], priority=60)
-        pm.set_params("lip_sync", {"ParamMouthOpenY": 0.8})
-        pm.resolve()
-        debug = pm.debug_frame()
-        assert "frame_values" in debug
-        assert "resolved" in debug
-        assert debug["resolved"]["ParamMouthOpenY"] == 0.8
-
-
-# ── NaturalBehaviorManager Tests ──────────────────────────────────────────
-
-class TestNaturalBehaviorManager:
-    def test_gaze_smoothing(self):
-        nbm = NaturalBehaviorManager()
-        nbm.set_gaze_target(0.5, -0.3)
-
-        # Run several updates — gaze should approach target
-        for _ in range(60):
-            nbm.update(1 / 60)
-
-        params = nbm.update(1 / 60)
-        assert "ParamAngleX" in params
-        assert "ParamEyeBallX" in params
-        # Head angle should be non-zero (gaze is tracking)
-        assert abs(params["ParamAngleX"]) > 0.0
-
-    def test_gaze_disabled_produces_no_params(self):
-        nbm = NaturalBehaviorManager()
-        nbm.set_gaze_enabled(False)
-        nbm.set_blink_enabled(False)
-        nbm.set_breath_enabled(False)
-        nbm.set_idle_enabled(False)
-
-        params = nbm.update(1 / 60)
-        # All behaviors disabled — should produce no parameters
-        assert len(params) == 0
-
-    def test_blink_cycle_completes(self):
-        nbm = NaturalBehaviorManager()
-        # Disable other behaviors for clean test
-        nbm.set_gaze_enabled(False)
-        nbm.set_breath_enabled(False)
-        nbm.set_idle_enabled(False)
-
-        # Force immediate blink
-        nbm.blink.next_blink = 0.0
-        nbm.blink.phase = "open"
-        nbm.blink.timer = 10.0  # way past interval
-
-        params = nbm.update(1 / 60)
-        # Should have started closing or already be in some blink phase
-        assert "ParamEyeLOpen" in params
-
-    def test_blink_disabled_no_eye_params(self):
-        nbm = NaturalBehaviorManager()
-        nbm.set_blink_enabled(False)
-        nbm.set_gaze_enabled(False)
-        nbm.set_breath_enabled(False)
-        nbm.set_idle_enabled(False)
-
-        params = nbm.update(1 / 60)
-        assert "ParamEyeLOpen" not in params
-
-    def test_breath_produces_wave(self):
-        nbm = NaturalBehaviorManager()
-        nbm.set_gaze_enabled(False)
-        nbm.set_blink_enabled(False)
-        nbm.set_idle_enabled(False)
-
-        params1 = nbm.update(1 / 60)
-        params2 = nbm.update(1 / 60)
-
-        assert "ParamBreath" in params1
-        # Breath value should change between frames (sinusoidal)
-        assert params1["ParamBreath"] != params2["ParamBreath"]
-
-    def test_idle_micro_produces_subtle_movement(self):
-        nbm = NaturalBehaviorManager()
-        nbm.set_gaze_enabled(False)
-        nbm.set_blink_enabled(False)
-        nbm.set_breath_enabled(False)
-
-        params = nbm.update(1 / 60)
-        assert "ParamBodyAngleZ" in params
-        # Idle micro movements should be very subtle
-        assert abs(params["ParamBodyAngleZ"]) < 0.1
-
-    def test_enabled_state_roundtrip(self):
-        nbm = NaturalBehaviorManager()
-        nbm.set_gaze_enabled(False)
-        nbm.set_blink_enabled(False)
-
-        state = nbm.get_enabled_state()
-        assert state["gaze"] == False
-        assert state["blink"] == False
-        assert state["breath"] == True  # default
-
-        # Restore
-        nbm2 = NaturalBehaviorManager()
-        nbm2.set_enabled_state(state)
-        assert nbm2.gaze.enabled == False
-        assert nbm2.blink.enabled == False
-
-    def test_all_behaviors_contribute_params(self):
-        nbm = NaturalBehaviorManager()
-        params = nbm.update(1 / 60)
-
-        # All four behaviors are enabled by default — should produce params
-        assert len(params) > 0
-        # Gaze params
-        assert "ParamAngleX" in params or "ParamEyeBallX" in params
-        # Blink params
-        assert "ParamEyeLOpen" in params
-        # Breath params
-        assert "ParamBreath" in params
-        # Idle micro params
-        assert "ParamBodyAngleZ" in params
+        assert ctrl.components.get_def("hat") is None
+        assert ctrl.components.get_def("ears") is not None
+        assert not ctrl.expressions.has("happy")
+        assert ctrl.expressions.has("sad")
+        assert "wave" not in ctrl.motions.list_motions()
+        assert "nod" in ctrl.motions.list_motions()
 
 
 if __name__ == "__main__":

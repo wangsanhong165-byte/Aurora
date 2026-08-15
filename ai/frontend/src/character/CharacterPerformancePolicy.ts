@@ -9,6 +9,8 @@ export interface PerformanceModifiers {
 }
 
 export interface PerformancePlan extends CharacterPresentationPlan {
+  requestedExpression: string
+  expressionFallbackReason: 'unsupported_emotion' | null
   transitionMs: number
   holdMs: number
   modifiers: PerformanceModifiers
@@ -38,6 +40,9 @@ export class CharacterPerformancePolicy {
       Object.prototype.hasOwnProperty.call(config.emotionMap ?? {}, requestedExpression)
       || supportsExpression(profile, requestedExpression)
     ) ? requestedExpression : 'neutral'
+    const expressionFallbackReason = expression === requestedExpression
+      ? null
+      : 'unsupported_emotion'
     // A profile sequence is descriptive metadata, not an executable motion.
     // The old shortcut replaced a valid model mapping such as `arm_wave` with
     // the literal name `greet`; unless a native motion or preset with that
@@ -70,6 +75,8 @@ export class CharacterPerformancePolicy {
       ? baseMotionProbability * 0.55
       : contextTags.has('excited') ? Math.min(1, baseMotionProbability * 1.2) : baseMotionProbability
     return {
+      requestedExpression,
+      expressionFallbackReason,
       expression,
       expressionIntensity: Math.min(1, intensity * (personality.expressionIntensityScale ?? 1) * (mapping.expressionIntensityScale ?? 1)),
       motion,

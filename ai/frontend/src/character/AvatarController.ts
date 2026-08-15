@@ -70,7 +70,7 @@ export class AvatarController {
         this._state.expressionIntensity = data.intensity
         // Forward to CharacterController for expression application
         if (this._ctrl) {
-          this._ctrl.paramCtrl.applyExpression(data.name, data.intensity, 0.5)
+          this._ctrl.exprCtrl.apply(data.name, data.intensity, 500)
         }
       }),
     )
@@ -95,7 +95,7 @@ export class AvatarController {
 
         // Restore expression
         if (data.expression !== 'neutral' && this._ctrl) {
-          this._ctrl.paramCtrl.applyExpression(data.expression, data.intensity, 0)
+          this._ctrl.exprCtrl.apply(data.expression, data.intensity, 0)
         }
 
         // Restore components

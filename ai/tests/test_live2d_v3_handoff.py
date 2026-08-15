@@ -32,6 +32,8 @@ class TestLive2DV3Handoff(unittest.TestCase):
 
         self.assertEqual(ctx.live2d_intent["emotion"], "happy")
         self.assertEqual(ctx.live2d_intent["behavior"], "wave")
+        self.assertEqual(ctx.live2d_intent["intensity"], 0.8)
+        self.assertEqual(ctx.live2d_intent["energy"], 0.5)
         self.assertEqual(ctx.live2d_intent["speaking"], False)
 
     def test_emitter_maps_runtime_intent_to_one_semantic_character_event(self):

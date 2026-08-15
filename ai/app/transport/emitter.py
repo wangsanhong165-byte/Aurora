@@ -66,7 +66,10 @@ class TransportEmitter:
         for raw in turn.segments:
             if not isinstance(raw, dict):
                 continue
-            intent = CharacterIntent.from_llm_segment(raw)
+            intent = CharacterIntent.from_llm_segment(
+                raw,
+                allowed_emotions=turn.allowed_emotions,
+            )
             segment = {key: raw[key] for key in allowed if key in raw and key != "motionPlan"}
             segment["text"] = str(raw.get("text", ""))
             segment["emotion"] = intent.emotion
@@ -178,8 +181,8 @@ class TransportEmitter:
                 }))
 
         plan = turn.output.performance
-        events.extend([
-            self._event(turn, "character.intent", {
+        safe_plan = CharacterIntent.from_llm_segment(
+            {
                 "emotion": plan.emotion,
                 "behavior": plan.behavior,
                 "intensity": plan.intensity,
@@ -187,8 +190,22 @@ class TransportEmitter:
                 "energy": plan.energy,
                 "durationMs": plan.duration_ms,
                 "naturalVAD": plan.natural_vad,
-                "contextTags": list(plan.context_tags),
-                "motionPlan": normalize_motion_plan(plan.motion_plan).plan,
+                "contextTags": plan.context_tags,
+                "motionPlan": plan.motion_plan,
+            },
+            allowed_emotions=turn.allowed_emotions,
+        )
+        events.extend([
+            self._event(turn, "character.intent", {
+                "emotion": safe_plan.emotion,
+                "behavior": safe_plan.behavior,
+                "intensity": safe_plan.intensity,
+                "attention": safe_plan.attention,
+                "energy": safe_plan.energy,
+                "durationMs": safe_plan.duration_ms,
+                "naturalVAD": safe_plan.natural_vad,
+                "contextTags": list(safe_plan.context_tags),
+                "motionPlan": normalize_motion_plan(safe_plan.motion_plan).plan,
                 "segments": self._intent_segments(turn),
             }),
             self._event(turn, "turn.completed", {"reason": "complete"}),

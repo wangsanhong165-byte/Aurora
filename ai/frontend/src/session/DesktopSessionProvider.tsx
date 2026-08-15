@@ -18,7 +18,7 @@ import type { AppSettings } from '../core/store'
 import type { ChatMessage } from '../core/types'
 import { CompanionWorkspace } from '../ui/CompanionWorkspace'
 import type { CharacterDescriptor } from '../ui/character-catalog'
-import { requestLive2DModelLoad } from './live2d-switch'
+import { requestLive2DModelLoad, synchronizeStartupLive2DModel } from './live2d-switch'
 import { resolveHistoryCommand } from '../conversation/history-command'
 import { PermissionDialog } from '../ui/PermissionDialog'
 import {
@@ -298,9 +298,11 @@ export function DesktopSessionWorkspace() {
       const persistedModel = resolvePersistedLive2DModel(s)
       const startupModel = localStorage.getItem('live2d_model_name')
         || (window as any).__INITIAL_MODEL_INFO__?.name
-      if (persistedModel && persistedModel !== startupModel) {
-        eventBus.emit('character:switch_model', { name: persistedModel })
-      }
+      void synchronizeStartupLive2DModel(persistedModel, startupModel || '')
+        .catch(error => eventBus.emit('character:runtime-telemetry', {
+          type: 'model.startup-sync-failed',
+          metadata: { message: error instanceof Error ? error.message : String(error) },
+        }))
     }).catch(() => {})
 
     client.connect()

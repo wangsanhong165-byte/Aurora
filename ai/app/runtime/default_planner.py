@@ -11,6 +11,10 @@ from app.runtime.character_turn import CharacterTurn
 from app.runtime.character_intent import EMOTIONS, BEHAVIORS
 from app.runtime.prompt_config import PromptConfigStore
 from app.runtime.prompt_overrides import PromptOverrideStore
+from app.runtime.presentation_capabilities import (
+    Live2DPresentationRegistry,
+    get_presentation_registry,
+)
 
 
 class Plan:
@@ -35,14 +39,20 @@ class DefaultPlanner:
         self,
         prompt_store: PromptOverrideStore | None = None,
         prompt_config_store: PromptConfigStore | None = None,
+        presentation_registry: Live2DPresentationRegistry | None = None,
     ):
         prompt_dir = Path(__file__).resolve().parents[2] / "data" / "prompts"
         self._prompt_store = prompt_store or PromptOverrideStore(
             prompt_dir
         )
         self._prompt_config_store = prompt_config_store or PromptConfigStore(prompt_dir)
+        self._presentation_registry = presentation_registry or get_presentation_registry()
 
     def plan(self, ctx: CharacterTurn) -> Plan:
+        presentation = getattr(ctx, "presentation", None)
+        if presentation is None:
+            presentation = self._presentation_registry.snapshot()
+            ctx.presentation = presentation
         messages: list[dict[str, str]] = []
         sources: list[str] = []
 
@@ -124,7 +134,10 @@ class DefaultPlanner:
 
         native_map = {'en': 'English', 'ja': 'Japanese', 'zh': 'Chinese', 'ko': 'Korean', 'yue': 'Cantonese Chinese'}
         nl = native_map.get(prompt_lang, prompt_lang)
-        presentation_emotions = ", ".join(sorted(EMOTIONS))
+        presentation_emotions = ", ".join(
+            getattr(ctx, "allowed_emotions", presentation.allowed_emotions)
+            or tuple(sorted(EMOTIONS))
+        )
         presentation_behaviors = ", ".join(sorted(BEHAVIORS - {"idle"}))
 
         format_instruction = (
@@ -137,7 +150,7 @@ class DefaultPlanner:
             '5a. motionPlan is optional, but use 1-3 restrained semantic body-language beats when the segment contains emphasis, an emotional shift, greeting, agreement, disagreement, reflection, reassurance, or playful intent. Omit it only for genuinely short neutral speech; the runtime supplies a subtle deterministic fallback. Do not repeat the same primitive in adjacent segments. Allowed primitives: nod, tilt_left, tilt_right, lean_forward, lean_back, sway, look_left, look_right, breathe, shrug. durationMs must be 300-8000, step durationMs 120-2500, and intensity 0-1. The runtime rescales segment plans to the decoded speech duration, so atMs is relative to this segment and must not guess wall-clock playback time.\n'
             '5b. Never output Param*, Cubism IDs, parameter values, keyframes, animation files, or extra motionPlan fields.\n'
             f'6. Every final segment MUST set an "emotion" from: {presentation_emotions}.\n'
-            '6a. Choose emotion from the meaning of THIS segment. Ordinary informative speech defaults to neutral or calm; positive warmth uses smile/happy, playfulness uses playful, and surprise/concern/anger/sadness require matching semantic evidence. shy and embarrassed require explicit evidence of bashfulness, embarrassment, blushing, or romantic awkwardness. Never carry a previous emotion forward merely for continuity, and do not assign one conspicuous expression to every sentence.\n'
+            '6a. Choose only from the listed emotions and judge THIS segment independently. Ordinary informative speech defaults to neutral. Use a conspicuous emotion only when the segment provides matching semantic evidence; if the ideal label is unavailable, choose the closest listed emotion or neutral. shy and embarrassed require explicit evidence of bashfulness, embarrassment, blushing, or romantic awkwardness when those labels are available. Never carry a previous emotion forward merely for continuity, and do not assign one conspicuous expression to every sentence.\n'
             f'7. Every final segment MUST set a semantic "behavior" from: {presentation_behaviors}. Describe the communicative act, not merely the fact that audio is playing: greetings use greet, agreement uses agree, disagreement uses disagree, reflection uses think, and only ordinary speech uses speak.\n'
             '8. Never use idle for a segment that contains spoken text.\n'
             '9. Leave tool_calls as [] when not needed.\n'
