@@ -16,7 +16,7 @@ from .main import AppConfig
 from .system import SystemConfig
 from .asr import ASRConfig, QwenASRConfig, CloudASRConfig
 from .tts import TTSConfig, GSVIV2Config, QwenTTSConfig, EdgeTTSConfig, Pyttsx3Config, CloudTTSConfig
-from .llm import LLMConfig, DeepSeekConfig, OpenAIConfig, OllamaConfig
+from .llm import LLMConfig, DeepSeekConfig, OpenAIConfig, OllamaConfig, OpenCodeConfig
 from .memory import MemoryConfig, SQLiteMemoryConfig
 from .i18n import I18nMixin, Description
 from .utils import read_yaml, validate_config
@@ -35,7 +35,7 @@ __all__ = [
     "AppConfig", "SystemConfig",
     "ASRConfig", "QwenASRConfig", "CloudASRConfig",
     "TTSConfig", "GSVIV2Config", "QwenTTSConfig", "EdgeTTSConfig", "Pyttsx3Config", "CloudTTSConfig",
-    "LLMConfig", "DeepSeekConfig", "OpenAIConfig", "OllamaConfig",
+    "LLMConfig", "DeepSeekConfig", "OpenAIConfig", "OllamaConfig", "OpenCodeConfig",
     "MemoryConfig", "SQLiteMemoryConfig",
     "I18nMixin", "Description",
     "load_config", "load_and_validate", "read_yaml", "validate_config",

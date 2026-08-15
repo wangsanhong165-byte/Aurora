@@ -109,51 +109,10 @@ class DefaultPlanner:
             })
             sources.append("system")
 
-        # 2. Retrieved memories as context (from SQLiteMemory)
-        memories = ctx.memories
-        compiled_memory = ""
-        memory_parts: list[str] = []
-        if memories:
-            from app.runtime.context_assembler import ContextAssembler
-            compiled_memory, memory_parts = ContextAssembler().assemble_memories(memories)
-
-        append_system(
-            "memory_summary",
-            "Compiled memory context:\n" + compiled_memory if compiled_memory else "",
-        )
-        append_system(
-            "relevant_memory",
-            "Relevant past context:\n" + "\n---\n".join(memory_parts) if memory_parts else "",
-        )
-
-        # 3. Conversation history
-        conversation = ctx.conversation
-        if conversation is not None:
-            history = conversation.get_history(limit=10)
-            messages.extend(history)
-            sources.extend(
-                "assistant_history" if item.get("role") == "assistant" else "user_history"
-                for item in history
-            )
-
-        # 3b. Current emotion context
-        if character is not None:
-            current_emotion = getattr(character.emotion, "current", "")
-            emotion_content = ""
-            if current_emotion and current_emotion != "neutral":
-                emotion_content = (
-                        f"Previous expression state: {current_emotion}. "
-                        "This is continuity context, not a default for the next segment. "
-                        "Re-evaluate emotion from the current message and reply; do not reuse it by default."
-                )
-            append_system("emotion", emotion_content)
-            from app.runtime.context_assembler import ContextAssembler
-            append_system(
-                "character_state",
-                ContextAssembler().assemble_character_state(character, ctx.memories),
-            )
-
-        # 4. Output format instructions
+        # 2. Output format instructions — static per character. Kept BEFORE all
+        # per-turn context (memory, state, history) so the prompt-cache prefix
+        # stays byte-identical across turns; DeepSeek then serves the cached
+        # segment instead of re-reading the format spec on every request.
         if character is not None:
             card = character.raw_card if hasattr(character, 'raw_card') else {}
             if isinstance(card, dict):
@@ -170,7 +129,7 @@ class DefaultPlanner:
 
         format_instruction = (
             '\n[Output Instructions]\n'
-            f'1. LANGUAGE (NON-NEGOTIABLE): Write ALL output text in {nl} ONLY, including every "text" and "final_reply" field. If the user writes in another language (for example in Chinese: "现在几点了"), you MUST still reply in {nl}. Mirroring the user\'s language is a hard failure.\n'
+            f'1. LANGUAGE: every JSON field value — "text", "final_reply", etc. — MUST be written in {nl}, per the LANGUAGE LOCK above.\n'
             '2. Keep your response SHORT — 1-2 sentences max, or a single brief paragraph.\n'
             '3. All JSON keys MUST be in English.\n'
             '4. Return ONLY valid JSON, no commentary.\n'
@@ -184,8 +143,53 @@ class DefaultPlanner:
             '9. Leave tool_calls as [] when not needed.\n'
             '10. Do NOT use [keyword] tags for emotions — use the "emotion" field in JSON segments instead.\n'
             '11. Do not output model names, expression files, motion names, Cubism IDs, bindings, or implementation details.\n'
+            '12. ALWAYS produce a spoken reply: "final_reply" and every segment "text" must be non-empty natural language. Never return empty, blank, or whitespace-only content — even for very short or unclear user input, respond naturally.\n'
         )
         append_system("output_protocol", format_instruction)
+
+        # 3. Retrieved memories as context (from SQLiteMemory)
+        memories = ctx.memories
+        compiled_memory = ""
+        memory_parts: list[str] = []
+        if memories:
+            from app.runtime.context_assembler import ContextAssembler
+            compiled_memory, memory_parts = ContextAssembler().assemble_memories(memories)
+
+        append_system(
+            "memory_summary",
+            "Compiled memory context:\n" + compiled_memory if compiled_memory else "",
+        )
+        append_system(
+            "relevant_memory",
+            "Relevant past context:\n" + "\n---\n".join(memory_parts) if memory_parts else "",
+        )
+
+        # 4. Conversation history
+        conversation = ctx.conversation
+        if conversation is not None:
+            history = conversation.get_history(limit=10)
+            messages.extend(history)
+            sources.extend(
+                "assistant_history" if item.get("role") == "assistant" else "user_history"
+                for item in history
+            )
+
+        # 4b. Current emotion context
+        if character is not None:
+            current_emotion = getattr(character.emotion, "current", "")
+            emotion_content = ""
+            if current_emotion and current_emotion != "neutral":
+                emotion_content = (
+                        f"Previous expression state: {current_emotion}. "
+                        "This is continuity context, not a default for the next segment. "
+                        "Re-evaluate emotion from the current message and reply; do not reuse it by default."
+                )
+            append_system("emotion", emotion_content)
+            from app.runtime.context_assembler import ContextAssembler
+            append_system(
+                "character_state",
+                ContextAssembler().assemble_character_state(character, ctx.memories),
+            )
 
         # 5. Current user input
         user_text = ctx.user_text or ctx.event.payload.get("text", "")

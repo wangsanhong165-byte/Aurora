@@ -63,6 +63,7 @@ class RuntimeEventHandler:
         self._audio_session_id = ""
         self._active_task: asyncio.Task[None] | None = None
         self._active_turn_id = ""
+        self._turns_processed = 0
 
     @property
     def management(self):
@@ -184,6 +185,7 @@ class RuntimeEventHandler:
                 turn_id=turn_input.turn_id,
             )]
         self._active_turn_id = turn_input.turn_id
+        self._turns_processed += 1
 
         if self.send_event is not None:
             self._active_task = asyncio.create_task(self._run_turn_and_push(turn_input))
@@ -404,3 +406,16 @@ class RuntimeEventHandler:
         emitter = self.emitter_factory()
         for event in emitter.emit(turn):
             await self.send_event(event)
+
+    def memory_finalize(self) -> None:
+        """Best-effort final memory extraction for the closing session.
+
+        Called from the bridge's WebSocket disconnect path. Only fires when
+        this connection actually processed a turn; the extraction itself is a
+        background, idempotent no-op when there are no unprocessed turns.
+        """
+        if self._turns_processed <= 0:
+            return
+        memory = getattr(self.runtime, "providers", {}).get("memory")
+        if memory is not None and hasattr(memory, "on_session_end"):
+            memory.on_session_end()

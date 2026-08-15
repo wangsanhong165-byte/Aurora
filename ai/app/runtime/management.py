@@ -233,6 +233,21 @@ class RuntimeManager:
             self.create_history()
         return self._current_history_uid
 
+    def _finalize_session_memory(self) -> None:
+        """Best-effort final memory extraction for the session that is closing.
+
+        Runs in a background thread (ticker) and no-ops when there are no
+        unprocessed turns. Called before a new history is created or a
+        different history is loaded, so short sessions still get their
+        pending turns summarized and facts extracted.
+        """
+        try:
+            memory = getattr(self._runtime, "providers", {}).get("memory")
+            if memory is not None and hasattr(memory, "on_session_end"):
+                memory.on_session_end(self.get_character_id())
+        except Exception:
+            logger.warning("Session-end memory extraction failed", exc_info=True)
+
     def get_history_list(self) -> list[dict]:
         """Return histories sorted by timestamp desc."""
         with self._history_lock:
@@ -253,6 +268,8 @@ class RuntimeManager:
         info = self._history_index.get(history_uid)
         if info is not None and str(info.get("character_id", "")) != self.get_character_id():
             raise KeyError(f"history not found for active character: {history_uid}")
+        if self._current_history_uid and self._current_history_uid != history_uid:
+            self._finalize_session_memory()
         self._current_history_uid = history_uid
         messages = self._load_messages(history_uid)
 
@@ -266,7 +283,7 @@ class RuntimeManager:
                     role = m.get("role", "")
                     content = m.get("content", "")
                     if role in ("user", "assistant") and content:
-                        conv.add_turn({"role": role, "content": content})
+                        conv.add_turn(role, content)
         except Exception as e:
             logger.warning("Failed to restore conversation: %s", e)
 
@@ -274,6 +291,8 @@ class RuntimeManager:
 
     def create_history(self) -> dict:
         """Create a new history UID and return it."""
+        if self._current_history_uid:
+            self._finalize_session_memory()
         uid = f"hist_{uuid.uuid4().hex[:12]}"
         now = datetime.now(timezone.utc).isoformat()
         with self._history_lock:

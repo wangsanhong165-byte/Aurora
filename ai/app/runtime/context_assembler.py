@@ -6,6 +6,46 @@ from __future__ import annotations
 class ContextAssembler:
     COMPILED_MEMORY_CHARS = 4000
 
+    _SUMMARY_SECTIONS = ("[还悬着]", "[现状]", "[已聊透]")
+
+    @staticmethod
+    def _truncate_summary_sections(content: str, cap: int) -> str:
+        """Keep the pending section whole; head-truncate the rest within cap.
+
+        The rolling summary's "[还悬着]" section is what must survive a long
+        conversation — truncating from the head would otherwise drop the very
+        threads the character is supposed to remember to follow up on.
+        """
+        if len(content) <= cap:
+            return content
+        sections: list[str] = []
+        current = ""
+        for line in content.splitlines(keepends=True):
+            stripped = line.strip()
+            if any(
+                stripped.startswith(marker)
+                for marker in ContextAssembler._SUMMARY_SECTIONS
+            ):
+                if current:
+                    sections.append(current)
+                current = line
+            else:
+                current += line
+        if current:
+            sections.append(current)
+        pending = next(
+            (s for s in sections if s.strip().startswith("[还悬着]")), ""
+        )
+        others = [s for s in sections if s is not pending]
+        budget = cap - len(pending)
+        out = pending
+        for part in others:
+            if budget <= 0:
+                break
+            out += part[:budget]
+            budget -= len(part)
+        return out
+
     @staticmethod
     def _preferences_from_memories(memories) -> tuple[list[str], list[str]]:
         """Derive liked/disliked from the persisted memories table (single source).
@@ -103,7 +143,12 @@ class ContextAssembler:
             elif kind == "conversation_summary":
                 # Dedicated branch: the rolling summary is longer than the
                 # generic 500-char cap but still counts against the budget.
-                text = f"[近期对话] {str(data.get('content', ''))[:800]}"
+                # The "[还悬着]" pending section is preserved whole so the
+                # character remembers open threads after a long conversation.
+                summary = ContextAssembler._truncate_summary_sections(
+                    str(data.get("content", "")), 800
+                )
+                text = f"[近期对话] {summary}"
             elif data.get("content"):
                 label = {
                     "preference": "Preference",

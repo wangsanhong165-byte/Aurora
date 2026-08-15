@@ -141,10 +141,17 @@ class VoiceRegistry:
         }
 
     def _configured(self, voice_id: str, data: dict[str, Any]) -> bool:
+        """True when every asset the manifest declares is present on disk.
+
+        A pack that only declares a reference audio (GSVI-style, where model
+        weights live on the TTS server) is complete with just that file; a
+        pack that declares GPT/SoVITS weights must ship all of them.
+        """
         voice_dir = self._voice_dir(voice_id)
-        return all(
-            data.get(key) and (voice_dir / str(data[key])).is_file()
+        return bool(data.get("ref")) and all(
+            (voice_dir / str(data[key])).is_file()
             for key in ("ref", "gpt", "vits")
+            if data.get(key)
         )
 
     @staticmethod

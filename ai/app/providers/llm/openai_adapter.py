@@ -8,10 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any, AsyncIterator
 
 from app.interfaces.llm import LLMInterface, LLMResponse, LLMUsage, ToolCall
 from app.models.http_adapters import OpenAILLMAdapter
+
+# Explicit output budget for the main chat path. Reasoning models spend part of
+# this on their hidden chain, so an overly tight cap truncates the reply before
+# any visible text is produced. This is a ceiling, not a target — normal replies
+# stay far below it and are unaffected.
+_DEFAULT_MAX_TOKENS = 8192
 
 
 class OpenAILLMProvider(LLMInterface):
@@ -54,13 +61,24 @@ class OpenAILLMProvider(LLMInterface):
 
         Runs the sync adapter in a thread to avoid blocking the event loop.
         Normalizes provider-specific response format into LLMResponse.
+
+        The output budget is an explicit, relaxed ceiling by default (override
+        with LLM_MAX_TOKENS) so reasoning models have room to finish the reply
+        after their hidden chain. LLM_REASONING_EFFORT optionally trims that
+        chain ("low") when truncation still happens.
         """
+        max_tokens = kwargs.get("max_tokens")
+        if max_tokens is None:
+            raw = os.environ.get("LLM_MAX_TOKENS", "")
+            max_tokens = int(raw) if raw.isdigit() else _DEFAULT_MAX_TOKENS
         result = await asyncio.to_thread(
             self._adapter.generate,
             messages,
             temperature=kwargs.get("temperature", 0.3),
             tools=tools,
             max_tool_rounds=1,  # single round per call; loop handled by DecisionStep
+            max_tokens=max_tokens,
+            reasoning_effort=os.environ.get("LLM_REASONING_EFFORT") or None,
         )
 
         return self._normalize(result, messages)
@@ -136,6 +154,7 @@ class OpenAILLMProvider(LLMInterface):
                 cached_tokens=int(cached or 0),
                 model=str(result.get("model", "")),
             ),
+            finish_reason=str(result.get("finish_reason", "") or ""),
         )
 
     async def generate_stream(

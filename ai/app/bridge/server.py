@@ -525,6 +525,12 @@ async def client_websocket_endpoint(websocket: WebSocket):
         await session.run()
     finally:
         handler.disable_proactive_push()
+        # Final memory extraction for the session that just closed — best
+        # effort, background, no-ops when nothing is pending.
+        try:
+            handler.memory_finalize()
+        except Exception:
+            pass
 
 @app.get("/libs/{rest:path}")
 async def serve_libs(rest: str):

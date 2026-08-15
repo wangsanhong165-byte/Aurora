@@ -31,6 +31,14 @@ from app.runtime.tool_coordinator import ToolCoordinator
 _MAX_TOOL_ROUNDS = min(3, max(1, int(os.environ.get("AGENT_MAX_TOOL_ROUNDS", "3"))))
 
 
+def _empty_reply_fallback() -> str:
+    """Graceful line when the LLM still returns no text after one repair."""
+    return os.environ.get(
+        "LLM_EMPTY_REPLY_FALLBACK",
+        "我刚才走神了，能再跟我说一遍吗？",
+    )
+
+
 class DecisionStep(Step):
     """Strategy combination: Planner → PromptCompiler → Reasoner.
 
@@ -62,7 +70,7 @@ class DecisionStep(Step):
         )
 
     async def run(self, ctx: CharacterTurn) -> None:
-        from app.runtime.response_validator import ResponseValidator
+        from app.runtime.response_validator import ResponseValidator, ValidatedResponse
         from app.runtime.tool_policy import ToolPolicy
 
         compiled = self.prompt_compiler.compile(ctx, ctx.character_self)
@@ -124,18 +132,33 @@ class DecisionStep(Step):
             final_reply or response.reply, response.segments or []
         )
         if not safe.valid:
-            messages.append({
-                "role": "assistant",
-                "content": final_reply or response.reply,
-            })
+            truncated = response.finish_reason == "length"
+            original_reply = (final_reply or response.reply).strip()
+            invalid_content = original_reply
+            # An empty assistant message (or a whitespace-only one) is
+            # meaningless to the model and some APIs reject it; the repair
+            # instruction below carries the context.
+            if invalid_content:
+                messages.append({
+                    "role": "assistant",
+                    "content": invalid_content,
+                })
+            repair_hint = (
+                "Your previous response was truncated before a reply was "
+                "produced. Return a complete valid JSON object now. Never "
+                "return empty content."
+                if truncated
+                else (
+                    "Your previous response was invalid structured output. "
+                    "Repair it now. Return only the required valid JSON object; "
+                    "preserve the intended meaning and do not call tools. "
+                    "Never return empty content."
+                )
+            )
             messages.append({
                 "role": "system",
                 "_source_id": "repair_instruction",
-                "content": (
-                    "Your previous response was invalid structured output. "
-                    "Repair it now. Return only the required valid JSON object; "
-                    "preserve the intended meaning and do not call tools."
-                ),
+                "content": repair_hint,
             })
             _sync_prompt_sources(messages)
             clean_messages = deepcopy(messages)
@@ -150,6 +173,40 @@ class DecisionStep(Step):
             safe = ResponseValidator().validate(
                 repair.reply, repair.segments or []
             )
+            if not safe.reply and not safe.segments:
+                # The repair failed to produce text. If the model DID reply with
+                # usable plain text (the validator only rejected its shape —
+                # multi-sentence prose when JSON was expected), keep that reply
+                # instead of a generic recovery line. Only a genuinely empty
+                # original falls through to the fallback sentence.
+                if original_reply and not original_reply.lstrip().startswith(("{", "[")):
+                    recovered = ResponseValidator().validate(original_reply, [])
+                    safe = ValidatedResponse(
+                        reply=recovered.reply or original_reply,
+                        segments=recovered.segments,
+                        valid=True,
+                    )
+                    ctx.warnings.append("assistant_reply_recovered")
+                else:
+                    fallback = _empty_reply_fallback()
+                    safe = ValidatedResponse(
+                        reply=fallback,
+                        segments=[{
+                            "text": fallback,
+                            "emotion": "neutral",
+                            "behavior": "speak",
+                            "attention": "user",
+                            "energy": 0.5,
+                            "intensity": 0.5,
+                            "contextTags": ["empty_reply_fallback"],
+                        }],
+                        valid=True,
+                    )
+                    # Marked so the recovery line is never written into the LLM
+                    # conversation history — storing "I got distracted" poisons
+                    # later turns and makes the model echo the pattern instead
+                    # of answering.
+                    ctx.warnings.append("assistant_reply_fallback")
         clean_reply, tagged_reasoning = split_reasoning(safe.reply)
         interpreted = self.response_interpreter.interpret(
             LLMResponse(
@@ -183,5 +240,8 @@ class DecisionStep(Step):
         if conversation is not None:
             if user_text and ctx.input_origin == "user":
                 conversation.add_turn("user", user_text)
-            if ctx.reply_text:
+            if ctx.reply_text and not any(
+                warning.startswith("assistant_reply_fallback")
+                for warning in ctx.warnings
+            ):
                 conversation.add_turn("assistant", ctx.reply_text)

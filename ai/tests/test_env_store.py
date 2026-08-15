@@ -58,3 +58,38 @@ def test_write_rejects_unknown_group_keys(tmp_path, monkeypatch):
 
     assert "ACTIVE_CHARACTER" not in env.read_text(encoding="utf-8")
     assert "TTS_ENGINE=gsvi-v2pro" in env.read_text(encoding="utf-8")
+
+
+def test_env_store_exposes_opencode_keys():
+    assert "OPENCODE_API_KEY" in env_store.EXPOSED_KEYS["llm"]
+    assert "OPENCODE_BASE_URL" in env_store.EXPOSED_KEYS["llm"]
+    assert "OPENCODE_MODEL" in env_store.EXPOSED_KEYS["llm"]
+
+
+def test_env_store_roundtrips_opencode_values(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("", encoding="utf-8")
+    monkeypatch.setattr(env_store, "_ENV_PATH", env)
+
+    env_store.write_env_values({
+        "llm": {
+            "OPENCODE_BASE_URL": "http://127.0.0.1:4096/v1",
+            "OPENCODE_MODEL": "opencode",
+            "OPENCODE_API_KEY": "local",
+        }
+    })
+    vals = env_store.read_env_values()
+    assert vals["llm"]["OPENCODE_BASE_URL"] == "http://127.0.0.1:4096/v1"
+    assert vals["llm"]["OPENCODE_MODEL"] == "opencode"
+    assert vals["llm"]["OPENCODE_API_KEY"] == "local"
+
+
+def test_config_manager_has_opencode_engine():
+    from app.config_manager.llm import LLMConfig, OpenCodeConfig
+    from app.config_manager import OpenCodeConfig as Exported
+
+    cfg = LLMConfig()
+    assert cfg.opencode.engine == "opencode"
+    assert cfg.opencode.base_url == "http://127.0.0.1:4096/v1"
+    assert cfg.opencode.model == "opencode"
+    assert Exported is OpenCodeConfig

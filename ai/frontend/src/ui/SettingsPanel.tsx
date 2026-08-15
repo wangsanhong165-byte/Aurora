@@ -421,15 +421,20 @@ function GeneralTab({ settings, onSettingChange }: {
       <div style={styles.sectionDesc}>保存到 config/.env；部分配置需重启生效。</div>
 
       <div style={styles.subSectionLabel}>LLM</div>
-      <EnvRow label="Engine" group="llm" keyName="LLM_ENGINE" value={env.llm?.LLM_ENGINE ?? ''} onChange={setEnvKey} options={['deepseek', 'openai', 'local']} />
+      <EnvRow label="Engine" group="llm" keyName="LLM_ENGINE" value={env.llm?.LLM_ENGINE ?? ''} onChange={setEnvKey} options={['deepseek', 'openai', 'opencode', 'local']} />
       <EnvRow label="Base URL" group="llm" keyName="LLM_BASE_URL" value={env.llm?.LLM_BASE_URL ?? ''} onChange={setEnvKey} />
       <EnvRow label="Model" group="llm" keyName="LLM_MODEL" value={env.llm?.LLM_MODEL ?? ''} onChange={setEnvKey} />
       <EnvRow label="DeepSeek API Key" group="llm" keyName="DEEPSEEK_API_KEY" value={env.llm?.DEEPSEEK_API_KEY ?? ''} onChange={setEnvKey} type="password" />
       <EnvRow label="OpenAI API Key" group="llm" keyName="OPENAI_API_KEY" value={env.llm?.OPENAI_API_KEY ?? ''} onChange={setEnvKey} type="password" />
       <EnvRow label="OpenAI Base URL" group="llm" keyName="OPENAI_BASE_URL" value={env.llm?.OPENAI_BASE_URL ?? ''} onChange={setEnvKey} />
+      <EnvRow label="OpenCode Base URL" group="llm" keyName="OPENCODE_BASE_URL" value={env.llm?.OPENCODE_BASE_URL ?? ''} onChange={setEnvKey} placeholder="http://127.0.0.1:4096/v1" />
+      <EnvRow label="OpenCode Model" group="llm" keyName="OPENCODE_MODEL" value={env.llm?.OPENCODE_MODEL ?? ''} onChange={setEnvKey} placeholder="opencode" />
+      <EnvRow label="OpenCode API Key" group="llm" keyName="OPENCODE_API_KEY" value={env.llm?.OPENCODE_API_KEY ?? ''} onChange={setEnvKey} type="password" placeholder="local" />
       <EnvRow label="Temperature" group="llm" keyName="LLM_TEMPERATURE" value={env.llm?.LLM_TEMPERATURE ?? ''} onChange={setEnvKey} />
       <EnvRow label="Reasoning Effort" group="llm" keyName="LLM_REASONING_EFFORT" value={env.llm?.LLM_REASONING_EFFORT ?? ''} onChange={setEnvKey} options={['low', 'medium', 'high']} />
       <EnvRow label="Timeout (s)" group="llm" keyName="LLM_TIMEOUT_SECONDS" value={env.llm?.LLM_TIMEOUT_SECONDS ?? ''} onChange={setEnvKey} />
+      <EnvRow label="Max Output Tokens" group="llm" keyName="LLM_MAX_TOKENS" value={env.llm?.LLM_MAX_TOKENS ?? ''} onChange={setEnvKey} placeholder="8192" />
+      <EnvRow label="Empty Reply Fallback" group="llm" keyName="LLM_EMPTY_REPLY_FALLBACK" value={env.llm?.LLM_EMPTY_REPLY_FALLBACK ?? ''} onChange={setEnvKey} placeholder="我刚才走神了，能再跟我说一遍吗？" />
 
       <div style={styles.subSectionLabel}>语音服务</div>
       <EnvRow label="ASR Engine" group="asr" keyName="ASR_ENGINE" value={env.asr?.ASR_ENGINE ?? ''} onChange={setEnvKey} />
@@ -455,7 +460,7 @@ function GeneralTab({ settings, onSettingChange }: {
   )
 }
 
-function EnvRow({ label, group, keyName, value, onChange, options, type }: {
+function EnvRow({ label, group, keyName, value, onChange, options, type, placeholder }: {
   label: string
   group: string
   keyName: string
@@ -463,6 +468,7 @@ function EnvRow({ label, group, keyName, value, onChange, options, type }: {
   onChange: (group: string, key: string, value: string) => void
   options?: string[]
   type?: string
+  placeholder?: string
 }) {
   return (
     <SettingRow label={label}>
@@ -480,6 +486,7 @@ function EnvRow({ label, group, keyName, value, onChange, options, type }: {
           type={type || 'text'}
           value={value}
           onChange={(e) => onChange(group, keyName, e.target.value)}
+          placeholder={placeholder}
           spellCheck={false}
         />
       )}

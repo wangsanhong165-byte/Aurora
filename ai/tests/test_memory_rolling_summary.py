@@ -268,3 +268,79 @@ def test_context_assembler_summary_respects_budget():
     ], total_chars=1000)
     rendered = next(p for p in parts if "[近期对话]" in p)
     assert len(rendered) <= 1000
+
+
+# ── Resolved/Pending three-section summary ──────────────────────────────────
+
+
+def test_rolling_summary_prompt_has_pending_sections():
+    from app.memory.prompts import system_rolling_summary
+
+    prompt = system_rolling_summary("Alice")
+    assert "[还悬着]" in prompt
+    assert "[现状]" in prompt
+    assert "[已聊透]" in prompt
+    assert "迭代更新规则" in prompt
+
+
+def test_context_assembler_preserves_pending_section_under_truncation():
+    ca = ContextAssembler()
+    summary = (
+        "[还悬着] 答应用户的鬼故事还没开始写。\n"
+        "[现状] " + "聊了很多内容。" * 200 + "\n"
+        "[已聊透] 用户对鬼是否存在的看法已经聊透了。\n"
+    )
+    assert len(summary) > 800
+    truncated = ContextAssembler._truncate_summary_sections(summary, 800)
+    assert "[还悬着] 答应用户的鬼故事还没开始写。" in truncated
+    assert len(truncated) <= 800
+
+
+def test_fact_extraction_prompt_defers_open_loop():
+    from app.memory.prompts import system_fact_extraction
+
+    prompt = system_fact_extraction()
+    assert "open_loop" in prompt
+    assert "不要提取 open_loop" in prompt
+    assert "fact、preference、recent_state、episode、relationship" in prompt
+    assert ", open_loop" not in prompt  # not in the LLM-emittable list
+
+
+# ── on_session_end final extraction ─────────────────────────────────────────
+
+
+def test_ticker_on_session_end_runs_extraction(tmp_compiler, monkeypatch):
+    from app.memory.ticker import MemoryTicker
+
+    monkeypatch.setattr("app.memory.ticker.memory_store", MemoryStore(base_dir=tmp_compiler))
+    monkeypatch.setattr("app.memory.ticker.compile_today_and_assemble", lambda char_id="": None)
+    monkeypatch.setattr(
+        "app.memory.ticker.run_extraction_pipeline",
+        lambda llm_adapter, character_name="", character_id="", store=None:
+            {"summary": "会话结束摘要", "facts_stored": 1},
+    )
+    ticker = MemoryTicker(llm_adapter=_MockLLM(""))
+    ticker._on_session_end("monika")
+    assert get_conversation_summary("monika") == "会话结束摘要"
+
+
+def test_ticker_on_session_end_noop_without_llm(tmp_compiler):
+    from app.memory.ticker import MemoryTicker
+
+    ticker = MemoryTicker(llm_adapter=None)
+    ticker.on_session_end("monika")  # must not spawn work without an adapter
+    assert get_conversation_summary("monika") == ""
+
+
+def test_sqlite_memory_forwards_on_session_end(monkeypatch):
+    class _Ticker:
+        def __init__(self):
+            self.calls = []
+
+        def on_session_end(self, character_id=""):
+            self.calls.append(character_id)
+
+    mem = SQLiteMemory(store=None)
+    mem._ticker = _Ticker()
+    mem.on_session_end("monika")
+    assert mem._ticker.calls == ["monika"]

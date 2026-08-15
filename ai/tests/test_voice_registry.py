@@ -1,3 +1,4 @@
+import json
 import wave
 import zipfile
 from pathlib import Path
@@ -110,6 +111,41 @@ def test_voice_registry_duplicate_and_missing(tmp_path: Path):
         registry.add(_spec(assets))
     with pytest.raises(KeyError, match="not found"):
         registry.resolve("ghost")
+
+
+def _install_ref_only_pack(tmp_path: Path, extra_fields: dict) -> None:
+    """Install a hand-written voice pack that declares only a reference audio."""
+    voice_dir = tmp_path / "config" / "voices" / "monika"
+    voice_dir.mkdir(parents=True)
+    ref = voice_dir / "ref.wav"
+    with wave.open(str(ref), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16_000)
+        output.writeframes(b"\0\0" * 320)
+    manifest = {
+        "id": "monika",
+        "name": "Monika",
+        "ref": "ref.wav",
+        "prompt_text": "reference transcript",
+        "prompt_lang": "en",
+        **extra_fields,
+    }
+    (voice_dir / "voice.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+
+def test_ref_only_voice_pack_is_configured(tmp_path: Path):
+    """A GSVI-style pack (reference audio only) is complete without weights."""
+    _install_ref_only_pack(tmp_path, {})
+    assert VoiceRegistry(tmp_path).get("monika")["configured"] is True
+
+
+def test_pack_declaring_missing_weight_is_not_configured(tmp_path: Path):
+    """A pack that declares a weight which is missing is incomplete."""
+    _install_ref_only_pack(tmp_path, {"gpt": "missing.ckpt", "vits": "missing.pth"})
+    assert VoiceRegistry(tmp_path).get("monika")["configured"] is False
 
 
 def test_tts_step_resolves_system_voice_id(tmp_path: Path, monkeypatch):

@@ -8,13 +8,24 @@ Following openhanako's design: memory = user profile, not collaboration manual.
 
 def system_rolling_summary(char_name: str = "") -> str:
     name = char_name or "我"
-    return f"""你是一个记忆摘要助手。请将最近的对话整理成一段简洁的摘要（2-3句话）。
+    return f"""你是一个记忆摘要助手。请把最近的对话整理成三段式摘要，每段以中括号标题开头。
+
+严格按以下结构输出：
+
+[还悬着] 1-3 条：用户提出但还没聊完的话题；用户期待后续进展的事；你答应用户要做的事。每条一句话。没有就写"（无）"。
+[现状] 2-3 句：当前对话在聊什么、进展到哪。
+[已聊透] 1-3 条：已经收尾、暂时不需要再提起的话题。没有就写"（无）"。
 
 提炼原则：
 - 以 {name} 的第一人称视角写（"{name}今天和用户聊了..."）
 - 把同一主题的多次往返归并为一件事，不要逐条流水账
 - 优先记录用户是谁、喜欢什么、在意什么、最近关注什么
 - 工作相关内容只保留到大主题层级，不写具体细节
+
+迭代更新规则（重要）：
+- 输入里可能包含上一份摘要。上一份的"[还悬着]"如果这轮解决了，移入"[已聊透]"；新出现的悬而未决，加入"[还悬着]"。
+- 只移除明确过时的内容。
+- 关键：如果最后一轮包含用户未满足的请求、未回答的问题、或期待后续的话题，"[还悬着]"绝不能为空。
 
 可以记录：
 - 用户的身份、人格特质、审美、兴趣、喜欢或讨厌的事物
@@ -26,7 +37,7 @@ def system_rolling_summary(char_name: str = "") -> str:
 - 不要记录具体方案、改法、测试或发布流程
 - 不要单轮对话内的来回修改、重试
 
-直接输出摘要文本，不要 Markdown 标题，不要 JSON。"""
+直接输出正文，每段以"[还悬着]"、"[现状]"、"[已聊透]"开头。不要其它 Markdown 标题，不要 JSON。"""
 
 
 def system_fact_extraction() -> str:
@@ -39,15 +50,16 @@ def system_fact_extraction() -> str:
 3. 每条事实必须是原子的（一条只记一件事）
 4. 标签用于后续检索，选择有辨识度的关键词，2~5个
 5. 如果摘要中没有值得提取的新内容，返回空数组 []
-6. type 只能是 fact、preference、recent_state、episode、relationship、open_loop
-7. predicate 表示可被后续事实替换的稳定属性，例如 city、favorite_food、current_project
-8. stable_key 使用“type:user:predicate”；同一属性发生变化时必须返回相同 stable_key
+6. type 只能是 fact、preference、recent_state、episode、relationship
+   注意：不要提取 open_loop（未完成话题由系统从 [还悬着] 段自动提取，这里不要输出）
+7. 不要理会 [还悬着] [现状] [已聊透] 这些结构标记本身，只从内容里提取事实
+8. predicate 表示可被后续事实替换的稳定属性，例如 city、favorite_food、current_project
+9. stable_key 使用 type:user:predicate；同一属性发生变化时必须返回相同 stable_key
 
 输出格式（严格的 JSON 数组，不要 markdown 代码块）：
 [
   {"fact": "...", "type": "fact", "subject": "user", "predicate": "...", "stable_key": "fact:user:...", "confidence": 0.8, "importance": 0.7, "tags": ["tag1", "tag2"], "time": null}
 ]"""
-
 
 def system_compile_today(char_name: str = "") -> str:
     name = char_name or "我"

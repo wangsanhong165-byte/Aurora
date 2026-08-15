@@ -61,6 +61,10 @@ class LLMResponse:
     messages: list[dict[str, Any]] = field(default_factory=list)
     error: str = ""
     usage: LLMUsage = field(default_factory=LLMUsage)
+    # Provider-side completion signal ("stop", "length", ...). "length" means
+    # the output budget was exhausted, so an empty reply is truncation, not a
+    # deliberate silence — the pipeline must treat it as abnormal.
+    finish_reason: str = ""
 
     def add_usage(self, usage: LLMUsage) -> None:
         self.usage.add(usage)

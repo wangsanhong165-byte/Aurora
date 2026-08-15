@@ -190,3 +190,77 @@ def test_forget_without_llm_still_deletes(tmp_path):
     count = asyncio.run(mem.forget("2099-01-01"))
     assert count >= 2
     assert len(store.recent_turns(10)) == 0
+
+
+# ── open_loop activation ────────────────────────────────────────────────────
+
+
+def test_parse_pending_section_extracts_items():
+    from app.memory.extractor import _parse_pending_section
+
+    summary = (
+        "[还悬着] 答应用户的鬼故事还没开始写；用户还想深聊灵异话题。\n"
+        "[现状] 聊了很多。\n"
+        "[已聊透] 用户对鬼是否存在的看法聊透了。\n"
+    )
+    items = _parse_pending_section(summary)
+    assert items == ["答应用户的鬼故事还没开始写", "用户还想深聊灵异话题"]
+
+
+def test_parse_pending_section_empty_and_missing():
+    from app.memory.extractor import _parse_pending_section
+
+    assert _parse_pending_section("[现状] 聊了什么\n") == []
+    assert _parse_pending_section("[还悬着] （无）\n[现状] 聊了什么\n") == []
+    assert _parse_pending_section("") == []
+
+
+def test_sync_open_loops_stores_pending_as_open_loop(tmp_path):
+    from app.memory.extractor import sync_open_loops
+
+    store = MemoryStore(base_dir=tmp_path)
+    summary = (
+        "[还悬着] 答应用户的鬼故事还没开始写。\n"
+        "[现状] 聊了很多。\n[已聊透] 无。\n"
+    )
+    stats = sync_open_loops(store, "monika", summary)
+    loops = store.list_memories(
+        character_id="monika", memory_type="open_loop", active_only=True
+    )
+    assert stats["open_loops_open"] == 1
+    assert len(loops) == 1
+    assert loops[0]["memory_type"] == "open_loop"
+    assert "鬼故事" in loops[0]["content"]
+
+
+def test_sync_open_loops_closes_resolved_topic(tmp_path):
+    from app.memory.extractor import sync_open_loops
+
+    store = MemoryStore(base_dir=tmp_path)
+    sync_open_loops(store, "monika",
+                    "[还悬着] 答应用户的鬼故事还没开始写。\n[现状] x\n[已聊透] 无。\n")
+    # Next summary drops the pending topic -> the loop must close (active=0).
+    stats = sync_open_loops(store, "monika",
+                            "[还悬着] （无）\n[现状] 鬼故事已经写完了。\n[已聊透] 鬼故事写完了。\n")
+    assert stats["open_loops_closed"] == 1
+    active = store.list_memories(
+        character_id="monika", memory_type="open_loop", active_only=True
+    )
+    assert active == []
+
+
+def test_sync_open_loops_reopens_topic_via_upsert_revive(tmp_path):
+    from app.memory.extractor import sync_open_loops
+
+    store = MemoryStore(base_dir=tmp_path)
+    sync_open_loops(store, "monika",
+                    "[还悬着] 答应用户的鬼故事还没开始写。\n[现状] x\n[已聊透] 无。\n")
+    sync_open_loops(store, "monika",
+                    "[还悬着] （无）\n[现状] 写完了。\n[已聊透] 鬼故事写完。\n")
+    # Same topic comes back later -> the loop row is revived, not duplicated.
+    sync_open_loops(store, "monika",
+                    "[还悬着] 答应用户的鬼故事还没开始写。\n[现状] 又要写。\n[已聊透] 无。\n")
+    active = store.list_memories(
+        character_id="monika", memory_type="open_loop", active_only=True
+    )
+    assert len(active) == 1

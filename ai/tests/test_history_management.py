@@ -19,6 +19,40 @@ class _Runtime:
         return {"card": {"id": "monika"}}
 
 
+class _RecordingConversation:
+    """Records restored turns instead of only being clearable."""
+
+    def __init__(self):
+        self.turns = []
+
+    def clear(self):
+        self.turns = []
+
+    def add_turn(self, role, content, **metadata):
+        self.turns.append({"role": role, "content": content})
+
+
+def test_load_history_restores_conversation_turns(tmp_path):
+    runtime = _Runtime()
+    runtime.conversation = _RecordingConversation()
+    manager = RuntimeManager(base_dir=tmp_path, runtime=runtime)
+    uid = manager.create_history()["history_uid"]
+    manager.record_turn_metadata(uid, "title")
+    (manager._histories_dir / f"{uid}.json").write_text(
+        json.dumps([
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]),
+        encoding="utf-8",
+    )
+
+    manager.load_history(uid)
+    assert runtime.conversation.turns == [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+    ]
+
+
 def test_history_index_persists_delete_atomically(tmp_path, monkeypatch):
     manager = RuntimeManager(base_dir=tmp_path, runtime=_Runtime())
     created = manager.create_history()

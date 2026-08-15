@@ -108,9 +108,20 @@ class OpenAILLMAdapter:
     ) -> None:
         from openai import OpenAI
 
-        self._api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
-        self._base_url = base_url or os.environ.get("LLM_BASE_URL", "https://api.deepseek.com")
-        self._model = model or os.environ.get("LLM_MODEL", "deepseek-v4-flash")
+        engine = os.environ.get("LLM_ENGINE", "").strip().lower()
+        if engine == "opencode":
+            # OpenCode serve — OpenAI-compatible local server (default port 4096
+            # per opencode.json server.port). Uses a placeholder key.
+            self._api_key = api_key or os.environ.get("OPENCODE_API_KEY", "local")
+            self._base_url = base_url or os.environ.get(
+                "OPENCODE_BASE_URL", "http://127.0.0.1:4096/v1"
+            )
+            self._model = model or os.environ.get("OPENCODE_MODEL", "opencode")
+        else:
+            # deepseek (default) / openai via the shared LLM_BASE_URL/LLM_MODEL.
+            self._api_key = api_key or os.environ.get("DEEPSEEK_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
+            self._base_url = base_url or os.environ.get("LLM_BASE_URL", "https://api.deepseek.com")
+            self._model = model or os.environ.get("LLM_MODEL", "deepseek-v4-flash")
         self._temperature = temperature
         self._max_tool_rounds = max_tool_rounds
         self._client = OpenAI(api_key=self._api_key, base_url=self._base_url)
@@ -128,6 +139,7 @@ class OpenAILLMAdapter:
         max_tool_rounds: int | None = None,
         response_format: dict | None | object = _JSON_SENTINEL,
         max_tokens: int | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Run a complete turn: chat completion with optional tool-calling loop.
 
@@ -141,6 +153,8 @@ class OpenAILLMAdapter:
                 Pass None to disable JSON enforcement (plain text).
                 Omit (default) to auto-enable JSON for tool-free calls.
             max_tokens: Max tokens in the response. None = model default.
+            reasoning_effort: Optional reasoning budget hint ("low"/"medium"/
+                "high") for reasoning models. Empty/None = provider default.
         """
         rounds = 0
         max_rounds = max_tool_rounds or self._max_tool_rounds
@@ -156,6 +170,8 @@ class OpenAILLMAdapter:
             }
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
+            if reasoning_effort:
+                kwargs["reasoning_effort"] = reasoning_effort
             # response_format: sentinel = auto (JSON for tool-free),
             # None = no enforcement, dict = use as-is
             if response_format is _JSON_SENTINEL:
@@ -173,6 +189,11 @@ class OpenAILLMAdapter:
             # DeepSeek/OpenAI-compatible reasoning models may return their
             # chain separately from message.content.
             reasoning = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None) or ""
+            # Preserve the completion signal: "length" with empty content means
+            # the output budget was exhausted on reasoning, not a real reply.
+            finish_reason = ""
+            if resp.choices:
+                finish_reason = str(getattr(resp.choices[0], "finish_reason", "") or "")
 
             usage = {}
             if resp.usage:
@@ -203,6 +224,7 @@ class OpenAILLMAdapter:
                 return {
                     "content": msg.content or "",
                     "reasoning": reasoning,
+                    "finish_reason": finish_reason,
                     "tool_calls": [
                         {"name": tc.function.name, "args": _safe_json_loads(tc.function.arguments)}
                         for tc in msg.tool_calls
@@ -217,6 +239,7 @@ class OpenAILLMAdapter:
             return {
                 "content": msg.content or "",
                 "reasoning": reasoning,
+                "finish_reason": finish_reason,
                 "tool_calls": [],
                 "tool_rounds": rounds,
                 "model": self._model,

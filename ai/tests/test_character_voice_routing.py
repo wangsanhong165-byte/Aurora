@@ -146,7 +146,7 @@ def test_reply_language_does_not_follow_voice_reference_language(tmp_path: Path)
     )
 
     assert "native language is Chinese" in system_text
-    assert "Write ALL output text in Chinese ONLY" in system_text
+    assert "MUST be written in Chinese" in system_text
     assert "native language is Japanese" not in system_text
 
 
@@ -167,7 +167,7 @@ def test_cantonese_reply_language_is_not_silently_changed_to_english(tmp_path: P
         message["content"] for message in messages if message["role"] == "system"
     )
     assert "native language is Cantonese Chinese" in system_text
-    assert "Write ALL output text in Cantonese Chinese ONLY" in system_text
+    assert "MUST be written in Cantonese Chinese" in system_text
 
 
 def test_previous_emotion_is_context_not_a_default_for_the_next_turn(tmp_path: Path):

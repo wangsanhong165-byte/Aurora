@@ -7,6 +7,7 @@ so the same pipeline works for any persona.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Optional
 
 from app.memory.store import memory_store
@@ -17,6 +18,85 @@ from app.memory.prompts import (
 
 _TURNS_PER_SUMMARY = 10
 _RECENT_PROMPT_MESSAGES = 10
+
+# Deterministic open_loop extraction from the rolling summary's "[还悬着]" section.
+_PENDING_SECTION = "[还悬着]"
+_NEXT_SECTION_MARKERS = ("[现状]", "[已聊透]")
+_OPEN_LOOP_PREDICATE = "pending_topic"
+_EMPTY_PENDING_MARKERS = ("（无）", "(无)", "无", "none")
+
+
+def _parse_pending_section(summary: str) -> list[str]:
+    """Parse pending-topic items out of the summary's [还悬着] section.
+
+    No LLM: the summarizer is already instructed to write 1-3 short pending
+    lines under that header, so this just splits them deterministically.
+    Returns at most 3 normalized items.
+    """
+    if not summary:
+        return []
+    start = summary.find(_PENDING_SECTION)
+    if start == -1:
+        return []
+    body = summary[start + len(_PENDING_SECTION):]
+    for marker in _NEXT_SECTION_MARKERS:
+        idx = body.find(marker)
+        if idx != -1:
+            body = body[:idx]
+            break
+    body = body.strip()
+    if not body or body.strip().strip("：:") in _EMPTY_PENDING_MARKERS:
+        return []
+    items: list[str] = []
+    for chunk in re.split(r"[\n；;。！!？?]+", body):
+        chunk = chunk.strip().lstrip("-*·• ")
+        if chunk and len(chunk) >= 4:
+            items.append(chunk)
+    return items[:3]
+
+
+def _pending_topic_key(content: str) -> str:
+    """Stable dedup key for a pending topic (word-normalized content)."""
+    normalized = re.sub(r"[\W_]+", "", content.lower())
+    return normalized[:40] or "topic"
+
+
+def sync_open_loops(store: Any, character_id: str, summary: str) -> dict:
+    """Persist pending threads as open_loop memories; close ones that resolved.
+
+    Runs only when the rolling summary actually changed, so a stale summary
+    never resurrects closed loops. Closing is a soft delete (active=0), the
+    same reversible lifecycle the decay uses — a reopened topic is revived by
+    the next upsert instead of being re-created.
+    """
+    stats = {"open_loops_open": 0, "open_loops_closed": 0}
+    if not character_id:
+        return stats
+    pending = _parse_pending_section(summary)
+    for item in pending:
+        store.upsert_memory(
+            memory_type="open_loop",
+            subject="user",
+            predicate=_OPEN_LOOP_PREDICATE,
+            content=item,
+            character_id=character_id,
+            importance=0.7,
+            confidence=0.8,
+            stable_key=f"open_loop:user:{_OPEN_LOOP_PREDICATE}:{_pending_topic_key(item)}",
+        )
+        stats["open_loops_open"] += 1
+    # Close loops that are no longer pending in the current summary.
+    current = store.list_memories(
+        character_id=character_id, memory_type="open_loop",
+        active_only=True, limit=100,
+    )
+    pending_texts = {item for item in pending}
+    for mem in current:
+        content = str(mem.get("content", "")).strip()
+        if content and content not in pending_texts:
+            store.forget_memory(mem["id"], character_id=character_id)
+            stats["open_loops_closed"] += 1
+    return stats
 
 
 def _call_llm(system: str, user: str, llm_adapter: Any, timeout: int = 15) -> str:
@@ -211,5 +291,6 @@ def run_extraction_pipeline(
         summary, llm_adapter, character_id=character_id, store=store
     )
     stats["facts_stored"] = len(facts)
+    stats["open_loops"] = sync_open_loops(store, character_id, summary)
 
     return stats

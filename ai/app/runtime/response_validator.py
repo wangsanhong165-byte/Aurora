@@ -54,12 +54,22 @@ class ResponseValidator:
             reply = " ".join(item["text"] for item in normalized)
         elif reply:
             reply = str(reply).strip()
-            if reply.startswith(("{", "[")):
-                reply = "I couldn't format that response safely."
-            normalized = self._recover_semantic_segments(reply)
+            if reply:
+                if reply.startswith(("{", "[")):
+                    reply = "I couldn't format that response safely."
+                normalized = self._recover_semantic_segments(reply)
+        # An empty reply (no spoken text and no non-empty segments) is never a
+        # legitimate completion for a voice companion: it is either truncation
+        # (finish_reason="length", reasoning consumed the budget) or the model
+        # silently emitted no content. Mark it invalid so the pipeline repairs
+        # it instead of presenting silence as success.
+        valid = (
+            not malformed_structured
+            and not missing_structured
+            and bool(normalized or str(reply or "").strip())
+        )
         return ValidatedResponse(
-            str(reply or "").strip(), normalized,
-            not malformed_structured and not missing_structured,
+            str(reply or "").strip(), normalized, valid,
         )
 
     @classmethod

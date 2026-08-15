@@ -114,6 +114,16 @@ class SQLiteMemory(MemoryInterface):
         if self._ticker is not None:
             self._ticker.notify_turn(character_id)
 
+    def on_session_end(self, character_id: str = "") -> None:
+        """Final memory extraction for a session that is closing.
+
+        Best-effort and non-blocking: the ticker runs it in a background
+        thread and it no-ops when there are no unprocessed turns. Callers are
+        history creation/loading and WebSocket disconnect.
+        """
+        if self._ticker is not None:
+            self._ticker.on_session_end(character_id)
+
     def activate_character(self, character_id: str) -> None:
         """Update compiler context and regenerate off the caller thread."""
         from app.memory.compiler import set_active_char

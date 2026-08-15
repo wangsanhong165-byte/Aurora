@@ -204,7 +204,35 @@ class MemoryTicker:
             if now - last < 30:
                 return
             self._last_extraction_time[char_id] = now
+        self._run_extraction_cycle(char_id)
 
+    def on_session_end(self, character_id: str = ""):
+        """Final memory extraction when a session closes.
+
+        Triggered on WebSocket disconnect, a new conversation (create_history),
+        or loading a different history. Runs the same idempotent extraction
+        cycle as the turn threshold but without the 30s gate, so a short
+        session that ended right after a threshold still gets its pending turns
+        summarized. No-op when there are no unprocessed turns (summary_window
+        finds nothing after through_log_id).
+        """
+        if self._stopped or not self._llm_adapter:
+            return
+        char_id = str(character_id or self._get_char_id()).strip()
+        if not char_id:
+            return
+        self._run_background(
+            self._bound("_on_session_end", self._on_session_end, char_id)
+        )
+
+    def _on_session_end(self, character_id: str = ""):
+        char_id = str(character_id or self._get_char_id()).strip()
+        if not char_id:
+            return
+        self._run_extraction_cycle(char_id)
+
+    def _run_extraction_cycle(self, char_id: str) -> None:
+        """One decay + extraction + summary + compile pass for a character."""
         # Capture the character ONCE up front: a switch during the LLM call
         # must not write one character's summary into another's file.
         char_name = self._get_char_name(char_id)
@@ -247,6 +275,13 @@ class MemoryTicker:
             if character_id:
                 self._store.decay_memories(character_id=character_id)
                 compile_and_assemble(character_id)
+                # LLM merge of near-duplicate memories (only when there are
+                # enough to be worth it; no-ops otherwise).
+                try:
+                    from app.memory.merger import merge_memories
+                    merge_memories(self._llm_adapter, self._store, character_id=character_id)
+                except Exception:
+                    logger.exception("Memory merge failed for %s", character_id)
                 self._store.prune_character_history(character_id, cutoff)
                 self._store.delete_memories_before(
                     cutoff, character_id=character_id
