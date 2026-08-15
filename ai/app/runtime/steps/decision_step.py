@@ -58,10 +58,9 @@ class DecisionStep(Step):
     ):
         self.llm = llm
         self.tools = tool_provider
-        self.planner = planner or DefaultPlanner()
         from app.runtime.prompt_compiler import PromptCompiler
         from app.runtime.response_interpreter import ResponseInterpreter
-        self.prompt_compiler = PromptCompiler(self.planner)
+        self.prompt_compiler = PromptCompiler(planner=planner)
         self.response_interpreter = ResponseInterpreter()
         self.tool_coordinator = ToolCoordinator(
             tools=tool_provider,
@@ -75,11 +74,9 @@ class DecisionStep(Step):
 
         compiled = self.prompt_compiler.compile(ctx, ctx.character_self)
         messages = list(compiled.messages)
-        from app.runtime.context_budget import ContextBudget
-        context_budget = ContextBudget()
-        messages, budget_report = context_budget.fit_messages(messages)
         ctx.prompt_sources = [str(message.get("_source_id", "")) for message in messages]
-        ctx.context_budget = budget_report
+        ctx.context_budget = compiled.budget_report
+        context_budget = self.prompt_compiler.context_budget
 
         user_text = ctx.user_text or ctx.event.payload.get("text", "")
 

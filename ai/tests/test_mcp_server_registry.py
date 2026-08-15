@@ -5,7 +5,12 @@ from app.modules.mcp import server_registry as server_registry_module
 from app.modules.mcp.server_registry import ServerRegistry
 
 
-def test_uvx_server_uses_workspace_writable_runtime_directories(tmp_path: Path):
+def test_uvx_server_uses_workspace_writable_runtime_directories(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(
+        server_registry_module.shutil,
+        "which",
+        lambda name: f"{name}.exe",
+    )
     config_path = tmp_path / "config" / "mcp_servers.json"
     config_path.parent.mkdir()
     config_path.write_text(

@@ -1,40 +1,178 @@
-"""Pure prompt compilation for a CharacterTurn."""
+"""Single prompt assembly and budgeting boundary for a CharacterTurn."""
 
 from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from app.runtime.character_intent import BEHAVIORS, EMOTIONS
 from app.runtime.character_turn import CharacterTurn
+from app.runtime.context_assembler import ContextAssembler
+from app.runtime.context_budget import ContextBudget
+from app.runtime.presentation_capabilities import Live2DPresentationRegistry, get_presentation_registry
+from app.runtime.prompt_config import PromptConfigStore
+from app.runtime.prompt_overrides import PromptOverrideStore
 
 
 @dataclass(frozen=True)
 class CompiledPrompt:
     messages: list[dict[str, Any]]
     sources: list[str]
+    budget_report: Any = None
+
+
+def _reply_language(card: object) -> str:
+    if not isinstance(card, dict):
+        return "en"
+    tts = card.get("tts", {})
+    if not isinstance(tts, dict):
+        tts = {}
+    return str(card.get("reply_language") or tts.get("prompt_lang") or "en")
 
 
 class PromptCompiler:
-    """Compile model messages without executing tools or mutating the turn."""
+    """Own stable identity, dynamic context, source policy, and budget fitting."""
 
-    def __init__(self, planner: Any):
-        self._planner = planner
-
-    def compile(
+    def __init__(
         self,
-        turn: CharacterTurn,
-        character_self: Any,
-    ) -> CompiledPrompt:
-        # CharacterSelf remains an explicit ownership input; the planner reads
-        # the same aggregate through turn.character_self.
+        planner: Any | None = None,
+        *,
+        prompt_store: PromptOverrideStore | None = None,
+        prompt_config_store: PromptConfigStore | None = None,
+        presentation_registry: Live2DPresentationRegistry | None = None,
+        context_budget: ContextBudget | None = None,
+    ) -> None:
+        prompt_dir = Path(__file__).resolve().parents[2] / "data" / "prompts"
+        self._legacy_planner = planner
+        self._prompt_store = prompt_store or PromptOverrideStore(prompt_dir)
+        self._prompt_config_store = prompt_config_store or PromptConfigStore(prompt_dir)
+        self._presentation_registry = presentation_registry or get_presentation_registry()
+        self._context_budget = context_budget or ContextBudget()
+
+    @property
+    def context_budget(self) -> ContextBudget:
+        return self._context_budget
+
+    def compile(self, turn: CharacterTurn, character_self: Any) -> CompiledPrompt:
         turn.character_self = character_self
-        plan = self._planner.plan(turn)
-        messages = deepcopy(list(plan.messages))
-        sources = list(getattr(plan, "sources", []))
+        if self._legacy_planner is not None:
+            plan = self._legacy_planner.plan(turn)
+            messages = deepcopy(list(plan.messages))
+            sources = list(getattr(plan, "sources", []))
+        else:
+            messages, sources = self._assemble(turn)
         if len(sources) < len(messages):
             sources.extend("" for _ in range(len(messages) - len(sources)))
         for message, source_id in zip(messages, sources):
             if source_id:
                 message["_source_id"] = source_id
-        return CompiledPrompt(messages=messages, sources=sources)
+        fitted, budget_report = self._context_budget.fit_messages(messages)
+        return CompiledPrompt(
+            messages=fitted,
+            sources=[str(message.get("_source_id", "")) for message in fitted],
+            budget_report=budget_report,
+        )
+
+    def _assemble(self, ctx: CharacterTurn) -> tuple[list[dict[str, Any]], list[str]]:
+        presentation = getattr(ctx, "presentation", None)
+        if presentation is None:
+            presentation = self._presentation_registry.snapshot()
+            ctx.presentation = presentation
+        messages: list[dict[str, Any]] = []
+        sources: list[str] = []
+        character = ctx.character
+        character_id = str(getattr(character, "id", "")) if character is not None else ""
+
+        def append_system(source_id: str, default_content: str) -> None:
+            content: str | None = default_content
+            if character_id:
+                try:
+                    content = self._prompt_config_store.resolve(character_id, source_id, default_content)
+                except ValueError:
+                    content = default_content
+            if content and content.strip():
+                messages.append({"role": "system", "content": content.strip()})
+                sources.append(source_id)
+
+        card = character.raw_card if character is not None and hasattr(character, "raw_card") else {}
+        prompt_lang = _reply_language(card)
+        native_map = {"en": "English", "ja": "Japanese", "zh": "Chinese", "ko": "Korean", "yue": "Cantonese Chinese"}
+        native_override = {"en": "你只能用 English 输出", "ja": "日本語のみで出力してください", "zh": "请用中文输出", "ko": "한국어로만 출력하세요", "yue": "请只用粤语输出"}
+        language = native_map.get(prompt_lang, "English")
+        append_system(
+            "language",
+            f"LANGUAGE LOCK: Your native language is {language}. Even if the user writes in another language, you MUST reply in {language} ONLY. "
+            f"{native_override.get(prompt_lang, f'You must output {language} only.')} This rule is NON-NEGOTIABLE — do not mirror the user's language.",
+        )
+
+        if character is not None:
+            persona = getattr(character, "persona", None)
+            if persona is not None and persona.prompt_context:
+                append_system("persona", persona.prompt_context)
+            try:
+                addition = self._prompt_store.get(character_id) if character_id else ""
+            except ValueError:
+                addition = ""
+            if addition:
+                messages.append({"role": "system", "content": "Additional project instructions for this character:\n" + addition})
+                sources.append("addition")
+        elif not messages:
+            messages.append({"role": "system", "content": "You are a helpful assistant. Respond concisely."})
+            sources.append("system")
+
+        allowed_emotions = ", ".join(
+            getattr(ctx, "allowed_emotions", presentation.allowed_emotions)
+            or tuple(sorted(EMOTIONS))
+        )
+        behaviors = ", ".join(sorted(BEHAVIORS - {"idle"}))
+        append_system("output_protocol", self._output_protocol(language, allowed_emotions, behaviors))
+
+        compiled_memory, memory_parts = ContextAssembler().assemble_memories(ctx.memories)
+        append_system("memory_summary", "Compiled memory context:\n" + compiled_memory if compiled_memory else "")
+        append_system("relevant_memory", "Relevant past context:\n" + "\n---\n".join(memory_parts) if memory_parts else "")
+
+        if ctx.conversation is not None:
+            history = ctx.conversation.get_history(limit=10)
+            messages.extend(history)
+            sources.extend(
+                "assistant_history" if item.get("role") == "assistant" else "user_history"
+                for item in history
+            )
+
+        if character is not None:
+            previous_emotion = getattr(character.emotion, "current", "")
+            append_system(
+                "emotion",
+                (
+                    f"Previous expression state: {previous_emotion}. This is continuity context, not a default for the next segment. "
+                    "Re-evaluate emotion from the current message and reply; do not reuse it by default."
+                ) if previous_emotion and previous_emotion != "neutral" else "",
+            )
+            append_system("character_state", ContextAssembler().assemble_character_state(character, ctx.memories))
+
+        user_text = ctx.user_text or ctx.event.payload.get("text", "")
+        if user_text and ctx.input_origin == "initiative":
+            messages.append({"role": "system", "content": f"Trusted initiative event (not a user message):\n{user_text}\nStructured event: {ctx.initiative}"})
+            sources.append("initiative")
+        elif user_text:
+            messages.append({"role": "user", "content": user_text})
+            sources.append("user_input")
+        return messages, sources
+
+    @staticmethod
+    def _output_protocol(language: str, emotions: str, behaviors: str) -> str:
+        return (
+            "\n[Output Instructions]\n"
+            f"1. LANGUAGE: every JSON field value MUST be written in {language}.\n"
+            "2. Keep the spoken response short: 1-2 sentences or one brief paragraph.\n"
+            "3. Return only valid JSON with English keys.\n"
+            "4. Format: {\"segments\":[{\"text\":\"...\",\"emotion\":\"neutral\",\"behavior\":\"speak\",\"attention\":\"user\",\"energy\":0.5,\"intensity\":0.5,\"naturalVAD\":{\"valence\":0,\"arousal\":0,\"dominance\":0},\"contextTags\":[],\"motionPlan\":{\"durationMs\":1200,\"steps\":[{\"atMs\":0,\"durationMs\":600,\"primitive\":\"nod\",\"intensity\":0.5}]}}],\"tool_calls\":[],\"final_reply\":\"...\"}\n"
+            "5. motionPlan is optional. Use 1-3 restrained semantic body-language beats for emphasis, emotional shifts, greeting, agreement, disagreement, reflection, reassurance, or playfulness. Omit it for genuinely short neutral speech. Allowed primitives: nod, tilt_left, tilt_right, lean_forward, lean_back, sway, look_left, look_right, breathe, shrug. durationMs 300-8000; step durationMs 120-2500; intensity 0-1.\n"
+            "6. Never output Param*, Cubism IDs, keyframes, animation files, expression files, motion names, or implementation details.\n"
+            f"7. Every final segment MUST set an \"emotion\" from: {emotions}. Judge each segment independently; ordinary speech defaults to neutral. shy and embarrassed require explicit evidence.\n"
+            f"8. Every spoken segment must choose behavior from: {behaviors}. Use greet, agree, disagree, think, and speak by communicative meaning; never idle for spoken text.\n"
+            "9. Leave tool_calls empty when not needed. Do NOT use [keyword] tags for emotions.\n"
+            "10. SPOKEN TEXT ONLY: final_reply and segment text contain only words the character actually says aloud. Never narrate or claim visible actions such as blinking, leaning, smiling, or making a face. Visible performance belongs only in emotion, behavior, naturalVAD, and motionPlan. If those fields cannot represent an action, do not claim that it happened. Always produce a non-empty natural spoken reply. Never return empty, blank, or whitespace-only content.\n"
+        )

@@ -564,6 +564,7 @@ def test_character_detail_exposes_only_safe_editing_metadata(tmp_path):
         "id": "lantern",
         "name": "Lantern",
         "persona": "persona",
+        "personality_profile": {},
         "reply_language": "zh",
         "model_id": "testmodel",
         "voice_id": "testvoice",
@@ -573,6 +574,45 @@ def test_character_detail_exposes_only_safe_editing_metadata(tmp_path):
         "live2d_model": "testmodel",
         "voice_configured": True,
     }
+
+
+def test_character_personality_profile_round_trips_without_rebuilding_card(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "lantern", "name": "Lantern", "persona": "persona",
+        "reply_language": "zh", "model_id": "testmodel", "voice_id": "testvoice",
+        "personality_profile": {
+            "values": ["honesty"],
+            "speech_style": {"tone": ["warm"], "avoid": ["stage directions"]},
+        },
+    })
+    card_path = tmp_path / "config" / "characters" / "lantern" / "character.json"
+    card = json.loads(card_path.read_text("utf-8"))
+    card["future_extension"] = {"keep": True}
+    card_path.write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+
+    created_profile = catalog.get("lantern")["personality_profile"]
+    assert created_profile["values"] == ["honesty"]
+    assert created_profile["speech_style"] == {
+        "tone": ["warm"], "habits": [], "avoid": ["stage directions"],
+    }
+
+    detail = catalog.update("lantern", {
+        "personality_profile": {
+            "motivations": ["help the user"],
+            "relationship_style": {"close": "playful and candid"},
+        },
+    })
+
+    stored = json.loads(card_path.read_text("utf-8"))
+    assert detail["personality_profile"]["motivations"] == ["help the user"]
+    assert detail["personality_profile"]["relationship_style"]["close"] == (
+        "playful and candid"
+    )
+    assert stored["personality_profile"] == detail["personality_profile"]
+    assert stored["future_extension"] == {"keep": True}
 
 
 def test_reference_character_update_preserves_unedited_card_and_index_fields(tmp_path):

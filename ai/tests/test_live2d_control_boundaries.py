@@ -105,11 +105,11 @@ def test_tts_keeps_character_speaking_until_browser_audio_ends():
 
 def test_llm_prompt_uses_semantic_intent_not_legacy_model_controls():
     decision = (ROOT / "app/runtime/steps/decision_step.py").read_text(encoding="utf-8")
-    planner = (ROOT / "app/runtime/default_planner.py").read_text(encoding="utf-8")
+    planner = (ROOT / "app/runtime/prompt_compiler.py").read_text(encoding="utf-8")
 
-    # The prompt format is now in DefaultPlanner (extracted from DecisionStep)
-    assert '"emotion" from: {presentation_emotions}' in planner
-    assert '"behavior" from: {presentation_behaviors}' in planner
+    # PromptCompiler is the single prompt assembly boundary.
+    assert "Every final segment MUST set" in planner and "{emotions}" in planner
+    assert "behavior from: {behaviors}" in planner
     assert "avatar_caps = _load_avatar_capabilities()" not in decision
 
 
@@ -140,7 +140,7 @@ def test_backend_explicit_protocol_has_no_dormant_frame_controller():
 
 
 def test_legacy_embedded_emotion_prompt_chain_is_removed():
-    planner = (ROOT / "app/runtime/default_planner.py").read_text(encoding="utf-8")
+    planner = (ROOT / "app/runtime/prompt_compiler.py").read_text(encoding="utf-8")
     preprocessor = (ROOT / "app/modules/tts_preprocessor.py").read_text(encoding="utf-8")
 
     assert not (ROOT / "app/prompts/utils/output_format.txt").exists()

@@ -71,6 +71,39 @@ test('reads model descriptors with registration state', () => {
   ])
 })
 
+test('round-trips structured personality separately from the legacy persona text', () => {
+  const personalityProfile = {
+    values: ['诚实'], motivations: ['长期陪伴'],
+    speechStyle: { tone: ['自然'], habits: [], avoid: ['描述未发生的动作'] },
+    selfPreferences: { likes: ['夜晚'], dislikes: [] },
+    relationshipStyle: { new: '友好克制', familiar: '', close: '坦率' },
+    boundaries: ['不越界'],
+  }
+  assert.deepEqual(buildCharacterPayload({
+    id: 'alice', name: 'Alice', persona: 'legacy persona', personalityProfile,
+    replyLanguage: 'zh', modelId: 'shirone', voiceId: 'alice',
+  }), {
+    id: 'alice', name: 'Alice', persona: 'legacy persona',
+    personality_profile: {
+      values: ['诚实'], motivations: ['长期陪伴'],
+      speech_style: { tone: ['自然'], habits: [], avoid: ['描述未发生的动作'] },
+      self_preferences: { likes: ['夜晚'], dislikes: [] },
+      relationship_style: { new: '友好克制', familiar: '', close: '坦率' },
+      boundaries: ['不越界'],
+    },
+    reply_language: 'zh', model_id: 'shirone', voice_id: 'alice',
+  })
+
+  const detail = readCharacterDetail({ character: {
+    id: 'alice', name: 'Alice', persona: 'legacy persona', personality_profile: {
+      values: ['诚实'], speech_style: { tone: ['自然'] },
+    },
+  } })
+  assert.deepEqual(detail.personalityProfile.values, ['诚实'])
+  assert.deepEqual(detail.personalityProfile.speechStyle.tone, ['自然'])
+  assert.deepEqual(detail.personalityProfile.boundaries, [])
+})
+
 test('reads editable character detail without exposing the raw character card', () => {
   assert.deepEqual(readCharacterDetail({
     character: {
@@ -82,6 +115,13 @@ test('reads editable character detail without exposing the raw character card', 
     },
   }), {
     id: 'lantern', name: 'Lantern', persona: 'A concise persona.',
+    personalityProfile: {
+      values: [], motivations: [],
+      speechStyle: { tone: [], habits: [], avoid: [] },
+      selfPreferences: { likes: [], dislikes: [] },
+      relationshipStyle: { new: '', familiar: '', close: '' },
+      boundaries: [],
+    },
     replyLanguage: 'zh', modelId: 'Design_genius_White', voiceId: 'monika',
     voiceName: 'Monika', resourceMode: 'reference',
     resourceReferencesEditable: true, personaOverrideActive: true,

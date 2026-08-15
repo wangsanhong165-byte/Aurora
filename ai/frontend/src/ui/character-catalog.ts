@@ -13,10 +13,21 @@ export type CharacterForm = {
   replyLanguage: string
   modelId: string
   voiceId: string
+  personalityProfile?: PersonalityProfile
+}
+
+export type PersonalityProfile = {
+  values: string[]
+  motivations: string[]
+  speechStyle: { tone: string[]; habits: string[]; avoid: string[] }
+  selfPreferences: { likes: string[]; dislikes: string[] }
+  relationshipStyle: { new: string; familiar: string; close: string }
+  boundaries: string[]
 }
 
 export type CharacterDetail = CharacterDescriptor & {
   persona: string
+  personalityProfile: PersonalityProfile
   modelId: string
   voiceId: string
   voiceName: string
@@ -49,6 +60,57 @@ export type ModelDescriptor = {
   profile: boolean
 }
 
+export function emptyPersonalityProfile(): PersonalityProfile {
+  return {
+    values: [], motivations: [],
+    speechStyle: { tone: [], habits: [], avoid: [] },
+    selfPreferences: { likes: [], dislikes: [] },
+    relationshipStyle: { new: '', familiar: '', close: '' },
+    boundaries: [],
+  }
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map(item => String(item).trim()).filter(Boolean)
+    : []
+}
+
+function readPersonalityProfile(value: unknown): PersonalityProfile {
+  const raw = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  const speech = raw.speech_style && typeof raw.speech_style === 'object'
+    ? raw.speech_style as Record<string, unknown> : {}
+  const preferences = raw.self_preferences && typeof raw.self_preferences === 'object'
+    ? raw.self_preferences as Record<string, unknown> : {}
+  const relationship = raw.relationship_style && typeof raw.relationship_style === 'object'
+    ? raw.relationship_style as Record<string, unknown> : {}
+  return {
+    values: strings(raw.values), motivations: strings(raw.motivations),
+    speechStyle: {
+      tone: strings(speech.tone), habits: strings(speech.habits), avoid: strings(speech.avoid),
+    },
+    selfPreferences: {
+      likes: strings(preferences.likes), dislikes: strings(preferences.dislikes),
+    },
+    relationshipStyle: {
+      new: String(relationship.new || ''), familiar: String(relationship.familiar || ''),
+      close: String(relationship.close || ''),
+    },
+    boundaries: strings(raw.boundaries),
+  }
+}
+
+function writePersonalityProfile(profile: PersonalityProfile) {
+  return {
+    values: profile.values,
+    motivations: profile.motivations,
+    speech_style: profile.speechStyle,
+    self_preferences: profile.selfPreferences,
+    relationship_style: profile.relationshipStyle,
+    boundaries: profile.boundaries,
+  }
+}
+
 export function buildCharacterPayload(form: CharacterForm) {
   return {
     id: form.id.trim().toLowerCase(),
@@ -57,6 +119,9 @@ export function buildCharacterPayload(form: CharacterForm) {
     reply_language: form.replyLanguage,
     model_id: form.modelId,
     voice_id: form.voiceId,
+    ...(form.personalityProfile
+      ? { personality_profile: writePersonalityProfile(form.personalityProfile) }
+      : {}),
   }
 }
 
@@ -64,7 +129,7 @@ export function buildCharacterUpdatePayload(
   form: CharacterForm,
   resourceReferencesEditable: boolean,
 ) {
-  const payload: Record<string, string> = {
+  const payload: Record<string, unknown> = {
     name: form.name.trim(),
     persona: form.persona.trim(),
     reply_language: form.replyLanguage,
@@ -72,6 +137,9 @@ export function buildCharacterUpdatePayload(
   if (resourceReferencesEditable) {
     payload.model_id = form.modelId
     payload.voice_id = form.voiceId
+  }
+  if (form.personalityProfile) {
+    payload.personality_profile = writePersonalityProfile(form.personalityProfile)
   }
   return payload
 }
@@ -125,6 +193,7 @@ export function readCharacterDetail(raw: Record<string, unknown>): CharacterDeta
     id: value.id,
     name: value.name,
     persona: String(value.persona || ''),
+    personalityProfile: readPersonalityProfile(value.personality_profile),
     replyLanguage: String(value.reply_language || 'en'),
     modelId: String(value.model_id || value.live2d_model || ''),
     voiceId: String(value.voice_id || ''),

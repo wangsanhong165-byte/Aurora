@@ -1,4 +1,6 @@
-"""Character persona — identity and setting data."""
+"""Character persona — stable identity, setting, and structured tendencies."""
+
+from app.domain.character.personality_profile import PersonalityProfile
 
 
 class Persona:
@@ -26,6 +28,23 @@ class Persona:
     @property
     def setting(self) -> str:
         return self._card.get("character_setting") or self._card.get("system_prompt", "")
+
+    @property
+    def profile(self) -> PersonalityProfile:
+        return PersonalityProfile.from_card(self._card)
+
+    @property
+    def prompt_context(self) -> str:
+        """Return stable identity context without learned user state."""
+        parts = []
+        if self.display_name:
+            parts.append(f"You are {self.display_name}.")
+        if self.setting:
+            parts.append(self.setting)
+        structured = self.profile.to_prompt()
+        if structured:
+            parts.append(structured)
+        return "\n".join(parts)
 
     @property
     def color(self) -> str:

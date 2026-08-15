@@ -8,17 +8,31 @@ import shutil
 import struct
 import tempfile
 import threading
+import time
 import zipfile
 import zlib
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 import soundfile
 
+from app.domain.character.personality_profile import (
+    PersonalityProfile,
+    normalize_personality_profile,
+)
+
 
 _IMPORT_LOCK = threading.RLock()
+
+
+@dataclass(frozen=True)
+class CharacterCatalogSnapshot:
+    character_id: str
+    card: bytes
+    index: bytes | None
 
 
 class CharacterCatalog:
@@ -28,7 +42,8 @@ class CharacterCatalog:
     _LANGUAGES = {"zh", "en", "ja", "ko", "yue"}
     _AUDIO_SUFFIXES = {".wav", ".flac", ".mp3", ".ogg", ".m4a"}
     _UPDATE_FIELDS = frozenset({
-        "name", "persona", "reply_language", "model_id", "voice_id",
+        "name", "persona", "personality_profile", "reply_language",
+        "model_id", "voice_id",
     })
 
     def __init__(self, base_dir: Path | str | None = None) -> None:
@@ -86,6 +101,26 @@ class CharacterCatalog:
         with _IMPORT_LOCK:
             return self._update_locked(character_id, raw_changes)
 
+    def snapshot(self, character_id: str) -> CharacterCatalogSnapshot:
+        """Capture the exact persistence bytes needed for orchestration rollback."""
+        with _IMPORT_LOCK:
+            directory, _ = self._read_card_locked(character_id)
+            return CharacterCatalogSnapshot(
+                character_id=str(character_id).strip().lower(),
+                card=(directory / "character.json").read_bytes(),
+                index=self._index_path.read_bytes() if self._index_path.exists() else None,
+            )
+
+    def restore(self, snapshot: CharacterCatalogSnapshot) -> None:
+        """Restore an update snapshot without reconstructing a character card."""
+        with _IMPORT_LOCK:
+            directory, _ = self._read_card_locked(snapshot.character_id)
+            (directory / "character.json").write_bytes(snapshot.card)
+            if snapshot.index is None:
+                self._index_path.unlink(missing_ok=True)
+            else:
+                self._index_path.write_bytes(snapshot.index)
+
     def _update_locked(
         self,
         character_id: str,
@@ -120,6 +155,10 @@ class CharacterCatalog:
             updated["name"] = self._updated_name_map(card.get("name"), name)
         if "persona" in raw_changes:
             updated["character_setting"] = persona
+        if "personality_profile" in raw_changes:
+            updated["personality_profile"] = normalize_personality_profile(
+                raw_changes["personality_profile"]
+            )
         if "reply_language" in raw_changes:
             updated["reply_language"] = reply_language
 
@@ -214,6 +253,7 @@ class CharacterCatalog:
             "persona": str(
                 card.get("character_setting") or card.get("system_prompt", "")
             ),
+            "personality_profile": PersonalityProfile.from_card(card).to_dict(),
             "reply_language": str(
                 card.get("reply_language") or tts.get("prompt_lang") or "en"
             ),
@@ -365,12 +405,12 @@ class CharacterCatalog:
             )) / "character"
             fallback_id = next(item for item in ids if item != character_id)
             try:
-                character_dir.replace(staged_dir)
+                self._replace_directory(character_dir, staged_dir)
                 self._remove_from_index(character_id, fallback_id)
                 shutil.rmtree(staged_dir.parent)
             except Exception:
                 if staged_dir.exists() and not character_dir.exists():
-                    staged_dir.replace(character_dir)
+                    self._replace_directory(staged_dir, character_dir)
                 if previous_index is None:
                     self._index_path.unlink(missing_ok=True)
                 else:
@@ -410,9 +450,9 @@ class CharacterCatalog:
         try:
             self._stage_character(spec, character_stage)
             self._stage_live2d(spec, model_stage)
-            model_stage.replace(model_dir)
+            self._replace_directory(model_stage, model_dir)
             installed.append(model_dir)
-            character_stage.replace(character_dir)
+            self._replace_directory(character_stage, character_dir)
             installed.append(character_dir)
             self._register(character_id, spec["name"])
         except Exception:
@@ -481,6 +521,9 @@ class CharacterCatalog:
         persona = str(raw_spec.get("persona", "")).replace("\r\n", "\n").strip()
         reply_language = str(raw_spec.get("reply_language", "")).strip().lower()
         self._validate_editable_fields(name, persona, reply_language)
+        personality_profile = normalize_personality_profile(
+            raw_spec.get("personality_profile")
+        )
         model_id = self._validate_model_reference(raw_spec.get("model_id"))
         voice_id = self._validate_voice_reference(raw_spec.get("voice_id"))
 
@@ -488,6 +531,7 @@ class CharacterCatalog:
             "id": character_id,
             "name": name,
             "persona": persona,
+            "personality_profile": personality_profile,
             "reply_language": reply_language,
             "model_id": model_id,
             "voice_id": voice_id,
@@ -496,7 +540,7 @@ class CharacterCatalog:
     def _reference_card(self, spec: dict[str, Any]) -> dict[str, Any]:
         from app.character.voices import VoiceRegistry
         voice = VoiceRegistry(self._base).resolve(spec["voice_id"])
-        return {
+        card = {
             "$schema": "character/v3",
             "id": spec["id"],
             "name": {"zh": spec["name"], "en": spec["name"], "ja": spec["name"]},
@@ -513,6 +557,9 @@ class CharacterCatalog:
             },
             "rules": {"max_segments_per_reply": 5, "avoid": ["Markdown"]},
         }
+        if spec["personality_profile"]:
+            card["personality_profile"] = spec["personality_profile"]
+        return card
 
     @staticmethod
     def _write_card(character_dir: Path, card: dict[str, Any]) -> None:
@@ -521,6 +568,18 @@ class CharacterCatalog:
             encoding="utf-8",
         )
         (character_dir / "pinned.md").write_text("", encoding="utf-8")
+
+    @staticmethod
+    def _replace_directory(source: Path, target: Path) -> None:
+        """Retry atomic directory moves briefly while Windows scanners release handles."""
+        for attempt in range(6):
+            try:
+                source.replace(target)
+                return
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.04 * (attempt + 1))
 
     def register_model(self, model_id: str) -> dict[str, Any]:
         """Register a Live2D model directory at the system level.
@@ -579,6 +638,9 @@ class CharacterCatalog:
             raise ValueError("persona is required and must be at most 20000 characters")
         if reply_language not in self._LANGUAGES:
             raise ValueError(f"unsupported reply language: {reply_language}")
+        personality_profile = normalize_personality_profile(
+            raw_spec.get("personality_profile")
+        )
 
         assets = raw_spec.get("assets")
         voice = raw_spec.get("voice")
@@ -615,6 +677,7 @@ class CharacterCatalog:
             "id": character_id,
             "name": name,
             "persona": persona,
+            "personality_profile": personality_profile,
             "reply_language": reply_language,
             "live2d_directory": live2d_directory,
             "model_json": model_files[0],
@@ -819,6 +882,8 @@ class CharacterCatalog:
             },
             "rules": {"max_segments_per_reply": 5, "avoid": ["Markdown"]},
         }
+        if spec["personality_profile"]:
+            card["personality_profile"] = spec["personality_profile"]
         (stage / "character.json").write_text(
             json.dumps(card, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",

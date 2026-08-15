@@ -6,6 +6,7 @@
   "main": "electron/main.cjs",
   "description": "Companion Runtime frontend",
   "scripts": {
+    "pretest": "node --test --experimental-strip-types src/ui/character-catalog.test.ts src/character/performance/presentation-ingress.test.ts",
     "dev": "vite",
     "dev:electron": "NODE_ENV=development electron .",
     "build": "vite build",

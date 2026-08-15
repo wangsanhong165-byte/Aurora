@@ -20,7 +20,7 @@ from typing import Any, Awaitable, Callable
 
 from app.core.initiative_queue import initiative_queue
 from app.core.intent import compute_candidates, decide_action
-from app.core.state import mood_tracker, state_store as core_state_store
+from app.core.state import state_store as core_state_store
 from app.runtime.character_turn import (
     CharacterTurn,
     TurnInput,
@@ -156,9 +156,9 @@ class CharacterRuntime:
             MemoryRetrieveStep(providers["memory"]),
             DecisionStep(providers["llm"], tool_provider=providers["tool"]),
             EmotionStep(),
-            MemorySaveStep(providers["memory"]),
             TTSStep(providers["tts"]),
             Live2DStep(),
+            MemorySaveStep(providers["memory"]),
         ]
 
     def switch_character(self, character_id: str) -> dict:
@@ -394,8 +394,11 @@ class CharacterRuntime:
         char = getattr(getattr(self, "_character_step", None), "character", None)
         if char is None:
             char = ctx.get("character") or core_state_store.get("character")
+        mood_state = getattr(char, "mood", None)
+        mood_data = mood_state.to_dict() if hasattr(mood_state, "to_dict") else {}
+        mood_score = max(0.0, min(100.0, 50.0 + 50.0 * float(mood_data.get("valence", 0.0))))
         candidates = compute_candidates(
-            idle, mood_tracker.mood,
+            idle, mood_score,
             activity=ctx.get("activity", ""),
             events=events,
             character_mood=str(getattr(getattr(char, "mood", None), "current", "")),
@@ -653,14 +656,18 @@ class CharacterRuntime:
 
         turn.conversation = self.conversation
         turn.character_self = self.character_self
-        previous_character_state = self.character_self.snapshot()
+        self.character_self.begin_turn()
 
         # Track turn count in state store
         turn_count = state_store.get("turn_count", 0)
         state_store.set("turn_count", turn_count + 1)
         turn.turn_count = turn_count + 1
 
-        turn = await self.pipeline.run(turn)
+        try:
+            turn = await self.pipeline.run(turn)
+        except Exception:
+            self.character_self.rollback_turn()
+            raise
 
         if turn.prompt_messages:
             self._last_prompt_snapshot = {
@@ -678,32 +685,45 @@ class CharacterRuntime:
         store = getattr(memory_provider, "_store", None)
         character = turn.character
         if usage and store is not None and hasattr(store, "record_usage"):
-            store.record_usage(
-                getattr(character, "id", ""),
-                usage,
-                turn.context_budget,
-            )
+            try:
+                store.record_usage(
+                    getattr(character, "id", ""),
+                    usage,
+                    turn.context_budget,
+                )
+            except Exception:
+                logger.exception("Usage ledger persistence failed")
+                turn.warnings.append("usage_ledger_save_failed")
         if memory_provider is not None and not turn.error and hasattr(memory_provider, "notify_turn"):
-            memory_provider.notify_turn(getattr(character, "id", ""))
+            try:
+                memory_provider.notify_turn(getattr(character, "id", ""))
+            except Exception:
+                logger.exception("Memory background notification failed")
+                turn.warnings.append("memory_notification_failed")
 
         if not turn.error:
-            if turn.input_origin == "user":
-                mood_tracker.update(turn.user_text, turn.reply_text)
-            self.character_self.sync_from_character()
-            self.character_self.record_interaction(
-                turn.user_text or turn.event.payload.get("display_text", ""),
-                learned=turn.learned_memories,
-                previous_state=previous_character_state,
-            )
-            if store is not None and hasattr(store, "save_character_state"):
-                store.save_character_state(
-                    getattr(character, "id", ""),
-                    self.character_self.snapshot(),
+            try:
+                committed_state = self.character_self.commit_turn(
+                    turn.user_text or turn.event.payload.get("display_text", ""),
+                    learned=turn.learned_memories,
                 )
+            except Exception:
+                self.character_self.rollback_turn()
+                raise
+            if store is not None and hasattr(store, "save_character_state"):
+                try:
+                    store.save_character_state(
+                        getattr(character, "id", ""),
+                        committed_state,
+                    )
+                except Exception:
+                    logger.exception("Character state persistence failed")
+                    turn.warnings.append("character_state_save_failed")
             turn.transition_to(TurnPhase.COMPLETED)
             if turn.telemetry:
                 turn.telemetry.record("turn.completed", duration_ms=turn.metrics.get("e2e_latency_ms"))
         else:
+            self.character_self.rollback_turn()
             if turn.telemetry:
                 turn.telemetry.record("turn.failed", error_code=turn.error.code if turn.error else "unknown", metadata={"message": str(turn.error) if turn.error else ""})
         turn.metrics["e2e_latency_ms"] = (time.perf_counter() - started_at) * 1000

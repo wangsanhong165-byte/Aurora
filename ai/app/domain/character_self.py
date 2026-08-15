@@ -20,6 +20,7 @@ class CharacterSelf:
         self.character = character
         self.character_id = str(getattr(character, "id", ""))
         self._state = deepcopy(character.dynamic_state())
+        self._turn_baseline: dict[str, Any] | None = None
 
     def snapshot(self) -> dict[str, Any]:
         return deepcopy(self._state)
@@ -27,6 +28,34 @@ class CharacterSelf:
     def sync_from_character(self) -> None:
         """Adopt direct domain changes made by learning or other providers."""
         self._state = deepcopy(self.character.dynamic_state())
+
+    def begin_turn(self) -> None:
+        """Open one rollback boundary around all mutations in a runtime turn."""
+        if self._turn_baseline is not None:
+            raise RuntimeError("character turn transaction is already active")
+        self._turn_baseline = self.snapshot()
+
+    def commit_turn(
+        self,
+        user_text: str,
+        *,
+        learned: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Commit the completed turn and return its single durable snapshot."""
+        previous = deepcopy(self._turn_baseline or self._state)
+        self.sync_from_character()
+        self.record_interaction(user_text, learned=learned, previous_state=previous)
+        self._turn_baseline = None
+        return self.snapshot()
+
+    def rollback_turn(self) -> None:
+        """Restore the exact pre-turn domain state after any pipeline failure."""
+        if self._turn_baseline is None:
+            return
+        baseline = deepcopy(self._turn_baseline)
+        self.character.restore_dynamic_state(baseline)
+        self._state = baseline
+        self._turn_baseline = None
 
     def stage(self, updates: dict[str, Any]) -> CharacterSelfChange:
         candidate = self.snapshot()

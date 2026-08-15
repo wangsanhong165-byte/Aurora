@@ -51,7 +51,14 @@ class MemorySaveStep(Step):
             )
         except Exception:
             memory_payload["history_uid"] = ""
-        await self.memory.store("conversation_turn", memory_payload)
+        try:
+            await self.memory.store("conversation_turn", memory_payload)
+        except Exception:
+            logging.getLogger("memory_step").exception(
+                "Turn memory persistence failed; preserving generated reply"
+            )
+            ctx.warnings.append("memory_save_failed")
+            return
         if memory_payload["history_uid"]:
             try:
                 get_manager().record_turn_metadata(

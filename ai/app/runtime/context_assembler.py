@@ -84,7 +84,7 @@ class ContextAssembler:
             disliked = [p.topic for p in character.preferences.top_disliked(3)
                         if p.valence < 0]
         lines = [
-            "[Dynamic character state]",
+            "[Dynamic learned user and relationship state]",
             f"- mood: {character.mood.current}",
             f"- relationship affinity: {affinity:.2f}",
         ]

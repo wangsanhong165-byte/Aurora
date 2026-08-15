@@ -70,5 +70,4 @@ def learn_from_turn(character, user_text: str, store, character_self=None) -> li
             character.goals.add(content, priority=4)
         learned.append({"type": "open_loop", "content": content})
 
-    store.save_character_state(character.id, character.dynamic_state())
     return learned

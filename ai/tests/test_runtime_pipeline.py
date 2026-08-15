@@ -193,6 +193,43 @@ class TestCharacterRuntime(unittest.TestCase):
         history = conv.get_history(limit=10)
         self.assertGreaterEqual(len(history), 1)
 
+    def test_background_memory_notification_failure_does_not_break_committed_turn(self):
+        """Non-critical post-turn bookkeeping must not discard a valid reply."""
+        class FailingNotifier:
+            _store = None
+
+            def notify_turn(self, character_id=""):
+                raise OSError("ticker unavailable")
+
+        self.runtime.providers["memory"] = FailingNotifier()
+        event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
+
+        turn = _run(self.runtime.handle_turn(_turn_input(event)))
+
+        self.assertIsNone(turn.error)
+        self.assertIn("memory_notification_failed", turn.warnings)
+        self.assertIsNone(self.runtime.character_self._turn_baseline)
+
+    def test_character_state_commit_exception_closes_transaction_by_rollback(self):
+        """A failed durable-state commit cannot leave the next turn locked out."""
+        event = Event(EventType.TEXT_RECEIVED, {"text": "hello"}, source="test")
+        original_rollback = self.runtime.character_self.rollback_turn
+
+        with patch.object(
+            self.runtime.character_self,
+            "commit_turn",
+            side_effect=RuntimeError("commit failed"),
+        ), patch.object(
+            self.runtime.character_self,
+            "rollback_turn",
+            wraps=original_rollback,
+        ) as rollback:
+            with self.assertRaisesRegex(RuntimeError, "commit failed"):
+                _run(self.runtime.handle_turn(_turn_input(event)))
+
+        rollback.assert_called_once_with()
+        self.assertIsNone(self.runtime.character_self._turn_baseline)
+
 
 class TestDecisionStep(unittest.TestCase):
     """DecisionStep and DefaultPlanner integration."""
@@ -212,8 +249,8 @@ class TestDecisionStep(unittest.TestCase):
         """The pipeline should use the single durable MemorySaveStep."""
         step_names = [type(s).__name__ for s in self.runtime.pipeline._steps]
         expected = ["ASRStep", "CharacterStep", "MemoryRetrieveStep",
-                    "DecisionStep", "EmotionStep", "MemorySaveStep",
-                    "TTSStep", "Live2DStep"]
+                    "DecisionStep", "EmotionStep", "TTSStep", "Live2DStep",
+                    "MemorySaveStep"]
         self.assertEqual(step_names, expected)
 
 
@@ -326,6 +363,21 @@ class TestMemorySteps(unittest.TestCase):
         _run(step.run(ctx))
         # MockMemory stores in _storage list
         self.assertIsInstance(self.memory._storage, list)
+
+    def test_memory_save_failure_keeps_the_generated_reply(self):
+        from app.runtime.steps import MemorySaveStep
+
+        class FailingMemory(MockMemory):
+            async def store(self, event_type, data):
+                raise OSError("disk unavailable")
+
+        ctx = CharacterTurn(input=TurnInput(text="hi"))
+        ctx.user_text = "hi"
+        ctx.reply_text = "hello back"
+        _run(MemorySaveStep(FailingMemory()).run(ctx))
+
+        self.assertEqual(ctx.reply_text, "hello back")
+        self.assertIn("memory_save_failed", ctx.warnings)
 
 
 class TestCharacterStep(unittest.TestCase):

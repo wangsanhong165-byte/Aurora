@@ -30,6 +30,7 @@ import { FrameTimingMonitor, type FrameTimingSample } from './FrameTimingMonitor
 import { EmbodiedTrackingController } from './performance/EmbodiedTrackingController'
 import { PerformanceDirector } from './performance/PerformanceDirector'
 import { PerformanceCoordinator } from './performance/PerformanceCoordinator'
+import { PresentationIngress, type PresentationChannel, type PresentationRequest } from './performance/PresentationIngress'
 export { ParameterController, expressionTargetForBlend } from './ExpressionParameterController'
 import {
   compileMotionAction,
@@ -192,6 +193,7 @@ export class CharacterController {
   frameTiming = new FrameTimingMonitor()
   embodiedTracking = new EmbodiedTrackingController()
   performanceDirector = new PerformanceDirector()
+  presentationIngress = new PresentationIngress()
 
   // References set externally by the animation loop
   private adapter: Live2DModelAdapter | null = null
@@ -299,6 +301,7 @@ export class CharacterController {
     this.performanceCoordinator.reset()
     this.embodiedTracking.reset()
     this.performanceDirector.reset()
+    this.presentationIngress.reset()
     this._lastIntentAudit = {}
     this._performanceTrace = []
     ;(globalThis as unknown as {
@@ -317,20 +320,20 @@ export class CharacterController {
     // Subscribe to event bus
     this.cleanupFns.push(
       eventBus.on('character:emotion', ({ emotion, intensity }) => {
-        this.applyIntent({ emotion, intensity })
+        this.submitPresentation({ source: 'explicit', owner: 'manual:emotion', leaseMs: 1_500, intent: { emotion, intensity } })
       }),
     )
 
     this.cleanupFns.push(
       eventBus.on('character:intent', ({ emotion, behavior, intensity }) => {
-        this.applyIntent({ emotion, behavior, intensity })
+        this.submitPresentation({ source: 'explicit', owner: 'manual:intent', leaseMs: 1_500, intent: { emotion, behavior, intensity } })
       }),
     )
 
     this.cleanupFns.push(
       eventBus.on('character:interaction', (interaction) => {
         const decision = this.interactionPolicy.resolve(interaction)
-        if (decision) this.applyIntent(decision.intent)
+        if (decision) this.submitPresentation({ source: 'interaction', owner: `interaction:${interaction.type}`, leaseMs: 850, intent: decision.intent })
       }),
     )
 
@@ -450,6 +453,7 @@ export class CharacterController {
         this.performanceDirector.onAudioEnd(turnId)
         this.audioPlaybackActive = false
         this.lipSync.setSpeaking(false)
+        this.presentationIngress.releaseTurn(turnId)
         if (this.currentActivity === 'speaking') {
           if (this._audioEndTimer) clearTimeout(this._audioEndTimer)
           this._audioEndTimer = setTimeout(() => {
@@ -479,7 +483,11 @@ export class CharacterController {
     this.cleanupFns.push(
       eventBus.on('runtime:asr.result', ({ turnId, text: _text }) => {
         if (!this.stateMachine.isCurrentTurn(turnId)) return
-        this.applyIntent({ emotion: 'neutral', behavior: 'listen', intensity: 0.35, attention: 'user', energy: 0.25 })
+        this.submitPresentation({
+          source: 'lifecycle', owner: `turn:${turnId}:asr`, turnId, leaseMs: 500,
+          channels: ['expression', 'attention', 'activity'],
+          intent: { turnId, emotion: 'neutral', behavior: 'listen', intensity: 0.35, attention: 'user', energy: 0.25 },
+        })
         this.onActivityChange('thinking', turnId)
       }),
     )
@@ -513,11 +521,13 @@ export class CharacterController {
         }, 1_000)
       }),
       eventBus.on('runtime:turn.failed', ({ turnId }) => {
+        this.presentationIngress.releaseTurn(turnId)
         this.performanceDirector.cancelTurn(turnId)
         this.motionArbiter.cancelTurn(turnId)
         if (this.stateMachine.isCurrentTurn(turnId)) this.onActivityChange('idle', turnId)
       }),
       eventBus.on('runtime:turn.cancelled', ({ turnId }) => {
+        this.presentationIngress.releaseTurn(turnId)
         this.performanceDirector.cancelTurn(turnId)
         this.motionArbiter.cancelTurn(turnId)
         if (this.stateMachine.isCurrentTurn(turnId)) this.onActivityChange('idle', turnId)
@@ -529,6 +539,7 @@ export class CharacterController {
   setTurnId(turnId: string): void {
     const previousTurnId = this.stateMachine.turnId
     if (previousTurnId && previousTurnId !== turnId) {
+      this.presentationIngress.releaseTurn(previousTurnId)
       this.performanceDirector.cancelTurn(previousTurnId)
       this.motionArbiter.cancelTurn(previousTurnId)
     }
@@ -595,15 +606,25 @@ export class CharacterController {
     }
   }
 
-  /** Execute a semantic presentation plan through existing expression/motion controllers. */
-  private applyIntent(intent: import('./CharacterBehaviorResolver').CharacterIntent): void {
+  private submitPresentation(request: PresentationRequest): void {
+    const accepted = this.presentationIngress.submit(request)
+    if (accepted) this.applyIntent(accepted.intent, accepted.channels)
+  }
+
+  /** Execute one accepted semantic plan through existing expression/motion controllers. */
+  private applyIntent(
+    intent: import('./CharacterBehaviorResolver').CharacterIntent,
+    channels: ReadonlySet<PresentationChannel> = new Set(['expression', 'motion', 'attention', 'activity']),
+  ): void {
     const activeIntent = {
       ...intent,
       activity: intent.activity ?? this.currentActivity,
     }
-    this._currentEmotion = activeIntent.emotion || 'neutral'
-    this._currentEmotionIntensity = Math.max(0, Math.min(1, activeIntent.intensity ?? 1))
-    this.vad.setEmotion(activeIntent.emotion, activeIntent.intensity ?? 1)
+    if (channels.has('expression')) {
+      this._currentEmotion = activeIntent.emotion || 'neutral'
+      this._currentEmotionIntensity = Math.max(0, Math.min(1, activeIntent.intensity ?? 1))
+      this.vad.setEmotion(activeIntent.emotion, activeIntent.intensity ?? 1)
+    }
     eventBus.emit('character:runtime-telemetry', {
       type: 'intent.received',
       metadata: {
@@ -614,7 +635,7 @@ export class CharacterController {
         attention: intent.attention ?? 'user',
       },
     })
-    if (activeIntent.naturalVAD) {
+    if (channels.has('expression') && activeIntent.naturalVAD) {
       this.vad.setTarget(activeIntent.naturalVAD, Math.max(0.6, (activeIntent.durationMs ?? 2400) / 1000))
     }
     const basePlan = this.behaviorResolver.resolve(activeIntent)
@@ -631,11 +652,15 @@ export class CharacterController {
         },
       })
     }
-    this.attention.set(
-      policy.modifiers.attention,
-      activeIntent.durationMs ?? (policy.holdMs > 0 ? policy.holdMs : undefined),
-    )
-    this.exprCtrl.apply(policy.expression, policy.expressionIntensity, policy.transitionMs)
+    if (channels.has('attention')) {
+      this.attention.set(
+        policy.modifiers.attention,
+        activeIntent.durationMs ?? (policy.holdMs > 0 ? policy.holdMs : undefined),
+      )
+    }
+    if (channels.has('expression')) {
+      this.exprCtrl.apply(policy.expression, policy.expressionIntensity, policy.transitionMs)
+    }
     const plannedMotion = intent.motionPlan
       ? compileMotionPlanForModel(
           intent.motionPlan,
@@ -654,7 +679,7 @@ export class CharacterController {
     } = intent.motionPlan
       ? { requested: true, source: 'motionPlan', accepted: false, reason: 'compile_rejected' }
       : { requested: false, source: 'none', accepted: false, reason: 'no_motion_requested' }
-    if (plannedMotion) {
+    if (channels.has('motion') && plannedMotion) {
       this.motionArbiter.registerPreset(plannedMotion)
       const accepted = this.motionArbiter.request({
         name: plannedMotion.name,
@@ -674,7 +699,7 @@ export class CharacterController {
         name: plannedMotion.name,
         durationMs: plannedMotion.duration,
       }
-    } else if (policy.motion && Math.random() <= policy.motionProbability) {
+    } else if (channels.has('motion') && policy.motion && Math.random() <= policy.motionProbability) {
       const accepted = this.motionArbiter.request({
         name: policy.motion,
         owner: `intent:${intent.turnId || this.stateMachine.turnId || 'local'}`,
@@ -716,7 +741,7 @@ export class CharacterController {
       modifiers: { ...policy.modifiers },
     })
     if (this._performanceResetTimer) clearTimeout(this._performanceResetTimer)
-    if (policy.holdMs > 0 && activeIntent.activity !== 'speaking') {
+    if (channels.has('expression') && policy.holdMs > 0 && activeIntent.activity !== 'speaking') {
       this._performanceResetTimer = setTimeout(() => {
         if (this.currentActivity === 'idle') {
           this.exprCtrl.apply('neutral', 1, Math.max(420, policy.transitionMs))
@@ -955,7 +980,13 @@ export class CharacterController {
       })
     }
 
-    for (const cue of this.performanceDirector.update()) this.applyIntent(cue)
+    for (const cue of this.performanceDirector.update()) {
+      this.submitPresentation({
+        source: 'llm', owner: `turn:${cue.turnId || this.stateMachine.turnId}:performance`,
+        turnId: cue.turnId || this.stateMachine.turnId, leaseMs: cue.durationMs ?? 1_200,
+        intent: cue,
+      })
+    }
     const vadSnapshot = this.vad.update(dt)
     const trackingPose: Record<string, number> = {}
     if (this.headTrackingEnabled) {
@@ -1128,7 +1159,10 @@ export class CharacterController {
       else if (step.type === 'attention') this.attention.set(
         step.value === 'away' ? 'away' : step.value === 'screen' ? 'screen' : 'user',
       )
-      else if (step.type === 'behavior') this.applyIntent({ emotion: 'neutral', behavior: step.value, intensity: 0.5 })
+      else if (step.type === 'behavior') this.submitPresentation({
+        source: 'explicit', owner: 'authored:behavior', leaseMs: 800,
+        intent: { emotion: 'neutral', behavior: step.value, intensity: 0.5 },
+      })
     }
     const motionContribs = this.motionArbiter.update(dt)
     for (const contribution of motionContribs) {

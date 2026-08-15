@@ -69,3 +69,28 @@ def test_character_self_syncs_external_learning_and_records_recent_interaction()
     assert state["recent_focus"] == ["刚刚聊到：我喜欢安静的界面"]
     assert state["recent_changes"] == ["记住了：用户喜欢安静的界面"]
     assert state["interaction_count"] == 1
+
+
+def test_character_self_rolls_back_all_mutations_from_a_failed_turn():
+    class Character:
+        id = "monika"
+
+        def __init__(self):
+            self.state = {"mood": {"current": "neutral", "valence": 0.0}}
+
+        def dynamic_state(self):
+            return self.state.copy()
+
+        def restore_dynamic_state(self, state):
+            self.state = state.copy()
+
+    character = Character()
+    aggregate = CharacterSelf(character)
+    aggregate.begin_turn()
+    character.state = {"mood": {"current": "happy", "valence": 0.8}}
+    aggregate.sync_from_character()
+
+    aggregate.rollback_turn()
+
+    assert aggregate.snapshot() == {"mood": {"current": "neutral", "valence": 0.0}}
+    assert character.state == aggregate.snapshot()

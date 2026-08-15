@@ -27,7 +27,9 @@ from app.runtime.runtime import runtime as default_runtime
 from app.runtime.prompt_config import PromptConfigStore
 from app.runtime.prompt_overrides import PromptOverrideStore
 from app.character.catalog import CharacterCatalog
+from app.character.lifecycle import CharacterLifecycle
 from app.character.voices import VoiceRegistry
+from app.memory.compiler import delete_character_compiled_data
 
 logger = logging.getLogger("runtime.management")
 
@@ -58,6 +60,17 @@ class RuntimeManager:
         self._voices = VoiceRegistry(self._base_dir)
 
         self._ensure_dirs()
+        self._character_lifecycle = CharacterLifecycle(
+            catalog=self._character_catalog,
+            runtime=self._runtime,
+            active_character_id=self.get_character_id,
+            switch_character=self.switch_character,
+            prompt_configs=self._prompt_configs,
+            prompt_overrides=self._prompt_overrides,
+            memory_store=self._memory_store,
+            delete_histories=self._delete_character_histories,
+            delete_compiled_data=delete_character_compiled_data,
+        )
 
     # ── Initialization ──────────────────────────────────────────────
 
@@ -601,14 +614,14 @@ class RuntimeManager:
                 return default_content
 
         from app.runtime.character_turn import CharacterTurn, TurnInput
-        from app.runtime.default_planner import DefaultPlanner
+        from app.runtime.prompt_compiler import PromptCompiler
 
         turn = CharacterTurn(input=TurnInput(text="__prompt_preview__"))
         turn.character = character
-        plan = DefaultPlanner(
+        plan = PromptCompiler(
             prompt_store=_EmptyOverrideStore(),
             prompt_config_store=_DefaultOnlyConfigStore(),
-        ).plan(turn)
+        ).compile(turn, getattr(self._runtime, "character_self", None))
 
         defaults: dict[str, str] = {}
         static_sources = {"language", "persona", "output_protocol"}
@@ -628,7 +641,7 @@ class RuntimeManager:
             ("Compiled memory context:", "memory_summary"),
             ("Relevant past context:", "relevant_memory"),
             ("Current emotion:", "emotion"),
-            ("[Dynamic character state]", "character_state"),
+            ("[Dynamic learned user and relationship state]", "character_state"),
             ("[Output Instructions]", "output_protocol"),
         )
         stripped = content.lstrip()
@@ -864,40 +877,7 @@ class RuntimeManager:
     ) -> dict[str, Any]:
         """Persist an editable character patch and reload the active role."""
         target = str(character_id or "").strip().lower()
-        is_active = self.get_character_id() == target
-        if is_active and not bool(getattr(self._runtime, "_runtime_idle", True)):
-            raise RuntimeError("runtime is processing a turn")
-
-        previous = self._character_catalog.get(target)
-        registry = getattr(self._runtime, "_character_registry", None)
-        persisted = False
-        try:
-            updated = self._character_catalog.update(target, changes)
-            persisted = True
-            if registry is not None and hasattr(registry, "refresh"):
-                registry.refresh()
-
-            runtime_reloaded = False
-            if is_active:
-                switched = self.switch_character(target)
-                if "error" in switched:
-                    raise RuntimeError(str(switched["error"]))
-                runtime_reloaded = True
-        except Exception:
-            if persisted:
-                try:
-                    self._character_catalog.update(
-                        target,
-                        self._update_patch_from_detail(previous),
-                    )
-                    if registry is not None and hasattr(registry, "refresh"):
-                        registry.refresh()
-                except Exception:
-                    logger.exception(
-                        "[CharacterCatalog] Failed to roll back update for %s",
-                        target,
-                    )
-            raise
+        updated, runtime_reloaded = self._character_lifecycle.update(target, changes)
 
         decorated = self._decorate_character_detail(updated)
         logger.info("[CharacterCatalog] Updated character: %s", target)
@@ -919,23 +899,8 @@ class RuntimeManager:
             "persona_override_active": persona_rule.get("mode") == "replace",
         }
 
-    @staticmethod
-    def _update_patch_from_detail(detail: dict[str, Any]) -> dict[str, Any]:
-        patch = {
-            "name": detail["name"],
-            "persona": detail["persona"],
-            "reply_language": detail["reply_language"],
-        }
-        if detail.get("resource_references_editable"):
-            patch["model_id"] = detail["model_id"]
-            patch["voice_id"] = detail["voice_id"]
-        return patch
-
     def create_character(self, specification: dict[str, Any]) -> dict[str, Any]:
-        character = self._character_catalog.create(specification)
-        registry = getattr(self._runtime, "_character_registry", None)
-        if registry is not None and hasattr(registry, "refresh"):
-            registry.refresh()
+        character = self._character_lifecycle.create(specification)
         logger.info("[CharacterCatalog] Imported complete pack: %s", character["id"])
         return {"character": character}
 
@@ -945,43 +910,9 @@ class RuntimeManager:
         Shared Live2D models and voices are intentionally retained.
         """
         target = str(character_id or "").strip().lower()
-        characters = self._character_catalog.list()
-        ids = [str(item.get("id", "")) for item in characters]
-        if target not in ids:
-            raise KeyError(f"character not found: {target}")
-        if len(ids) <= 1:
-            raise ValueError("cannot delete the last character")
-
-        fallback = next(item for item in ids if item != target)
-        if self.get_character_id() == target:
-            switched = self.switch_character(fallback)
-            if "error" in switched:
-                raise RuntimeError(str(switched["error"]))
-
-        deleted = self._character_catalog.delete(target)
-        self._prompt_configs.delete(target)
-        self._prompt_overrides.delete(target)
-        store = self._memory_store()
-        database_rows = store.delete_character_data(target) if store is not None else {}
-        deleted_histories = self._delete_character_histories(target)
-        from app.memory.compiler import delete_character_compiled_data
-        delete_character_compiled_data(target)
-
-        registry = getattr(self._runtime, "_character_registry", None)
-        if registry is not None and hasattr(registry, "refresh"):
-            registry.refresh()
-        conversations = getattr(self._runtime, "_conversations_by_character", None)
-        if isinstance(conversations, dict):
-            conversations.pop(target, None)
+        result = self._character_lifecycle.delete(target)
         logger.info("[CharacterCatalog] Deleted character: %s", target)
-        return {
-            "deleted_character_id": target,
-            "active_character_id": self.get_character_id(),
-            "fallback_character_id": deleted["fallback_character_id"],
-            "database_rows": database_rows,
-            "deleted_histories": deleted_histories,
-            "shared_assets_preserved": True,
-        }
+        return result
 
     def get_voice_catalog(self) -> dict[str, Any]:
         return {"voices": self._voices.list()}

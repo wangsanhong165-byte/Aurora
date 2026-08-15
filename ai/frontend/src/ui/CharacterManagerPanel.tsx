@@ -5,6 +5,7 @@ import {
   buildCharacterPayload,
   buildCharacterUpdatePayload,
   buildVoicePayload,
+  emptyPersonalityProfile,
   readCharacterCatalog,
   readCharacterDetail,
   readModelCatalog,
@@ -13,6 +14,7 @@ import {
   type CharacterDescriptor,
   type CharacterForm,
   type ModelDescriptor,
+  type PersonalityProfile,
   type VoiceDescriptor,
   type VoiceForm,
 } from './character-catalog'
@@ -26,6 +28,7 @@ type Tab = 'characters' | 'voices' | 'models'
 
 const EMPTY_CHARACTER: CharacterForm = {
   id: '', name: '', persona: '', replyLanguage: 'zh', modelId: '', voiceId: '',
+  personalityProfile: emptyPersonalityProfile(),
 }
 const EMPTY_VOICE: VoiceForm = {
   id: '', name: '', promptLanguage: 'zh', promptText: '',
@@ -123,6 +126,11 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
       throw error
     }
   }
+  const updatePersonality = (profile: PersonalityProfile) => {
+    updateCharacter('personalityProfile', profile)
+  }
+  const listValue = (value: string) => value
+    .split(/\r?\n|，|,/).map(item => item.trim()).filter(Boolean)
 
   const closeCharacterForm = () => {
     setCharacterForm(EMPTY_CHARACTER)
@@ -157,6 +165,7 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
         replyLanguage: detail.replyLanguage,
         modelId: detail.modelId,
         voiceId: detail.voiceId,
+        personalityProfile: detail.personalityProfile,
       })
       setShowCharacterForm(true)
       setMessage(`正在编辑 ${detail.name}`)
@@ -311,6 +320,7 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
     }
   }
 
+  const personality = characterForm.personalityProfile ?? emptyPersonalityProfile()
   const characterComplete = Boolean(
     characterForm.id.trim() && characterForm.name.trim() && characterForm.persona.trim()
     && (
@@ -404,6 +414,23 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
                   : <select value={characterForm.voiceId} onChange={event => updateCharacter('voiceId', event.target.value)}>{voices.map(voice => <option key={voice.id} value={voice.id}>{voice.name}（{voice.promptLang}）</option>)}</select>}</label>
               </div>
               <label>角色设定<textarea value={characterForm.persona} onChange={event => updateCharacter('persona', event.target.value)} placeholder="身份、语气、背景与行为边界" /></label>
+              <details className="character-personality-editor">
+                <summary>结构化人格（可选，用于稳定长期表现）</summary>
+                <p className="character-import-note">每行或逗号分隔一项。这里写角色自身的稳定倾向，不写从对话中学习到的用户信息。</p>
+                <div className="character-form-grid">
+                  <label>价值观<textarea value={personality.values.join('\n')} onChange={event => updatePersonality({ ...personality, values: listValue(event.target.value) })} placeholder="真诚\n尊重边界" /></label>
+                  <label>长期动机<textarea value={personality.motivations.join('\n')} onChange={event => updatePersonality({ ...personality, motivations: listValue(event.target.value) })} placeholder="陪伴用户完成长期目标" /></label>
+                  <label>语言气质<textarea value={personality.speechStyle.tone.join('\n')} onChange={event => updatePersonality({ ...personality, speechStyle: { ...personality.speechStyle, tone: listValue(event.target.value) } })} placeholder="自然\n不端着" /></label>
+                  <label>语言习惯<textarea value={personality.speechStyle.habits.join('\n')} onChange={event => updatePersonality({ ...personality, speechStyle: { ...personality.speechStyle, habits: listValue(event.target.value) } })} placeholder="句子长短交替" /></label>
+                  <label>表达时避免<textarea value={personality.speechStyle.avoid.join('\n')} onChange={event => updatePersonality({ ...personality, speechStyle: { ...personality.speechStyle, avoid: listValue(event.target.value) } })} placeholder="复述系统状态\n说出未发生的动作" /></label>
+                  <label>角色自己的喜好<textarea value={personality.selfPreferences.likes.join('\n')} onChange={event => updatePersonality({ ...personality, selfPreferences: { ...personality.selfPreferences, likes: listValue(event.target.value) } })} /></label>
+                  <label>角色自己的反感<textarea value={personality.selfPreferences.dislikes.join('\n')} onChange={event => updatePersonality({ ...personality, selfPreferences: { ...personality.selfPreferences, dislikes: listValue(event.target.value) } })} /></label>
+                  <label>行为边界<textarea value={personality.boundaries.join('\n')} onChange={event => updatePersonality({ ...personality, boundaries: listValue(event.target.value) })} /></label>
+                  <label>初识关系<input value={personality.relationshipStyle.new} onChange={event => updatePersonality({ ...personality, relationshipStyle: { ...personality.relationshipStyle, new: event.target.value } })} /></label>
+                  <label>熟悉关系<input value={personality.relationshipStyle.familiar} onChange={event => updatePersonality({ ...personality, relationshipStyle: { ...personality.relationshipStyle, familiar: event.target.value } })} /></label>
+                  <label>亲密关系<input value={personality.relationshipStyle.close} onChange={event => updatePersonality({ ...personality, relationshipStyle: { ...personality.relationshipStyle, close: event.target.value } })} /></label>
+                </div>
+              </details>
               {editingCharacter?.personaOverrideActive && (
                 <p className="character-edit-warning">此角色当前存在“角色设定替换”。保存角色卡后，提示词面板中的替换内容仍然优先生效。</p>
               )}

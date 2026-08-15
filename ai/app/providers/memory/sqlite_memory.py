@@ -188,16 +188,19 @@ class SQLiteMemory(MemoryInterface):
                     character = data.get("character")
                     if character is not None and user_text:
                         from app.runtime.character_learning import learn_from_turn
+                        character_self = data.get("character_self")
                         data["learned_memories"] = learn_from_turn(
                             character,
                             user_text,
                             self._store,
-                            character_self=data.get("character_self"),
+                            character_self=character_self,
                         )
-                    elif character is not None:
-                        self._store.save_character_state(
-                            character.id, character.dynamic_state()
-                        )
+                        # Direct provider callers have no Runtime transaction;
+                        # Runtime callers pass CharacterSelf and commit once.
+                        if character_self is None:
+                            self._store.save_character_state(
+                                character.id, character.dynamic_state()
+                            )
         else:
             self._fallback.append({"event_type": event_type, "data": data})
 
