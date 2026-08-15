@@ -10,6 +10,7 @@ import tempfile
 import threading
 import zipfile
 import zlib
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,9 @@ class CharacterCatalog:
     _ID = re.compile(r"^[a-z0-9][a-z0-9_-]{1,47}$")
     _LANGUAGES = {"zh", "en", "ja", "ko", "yue"}
     _AUDIO_SUFFIXES = {".wav", ".flac", ".mp3", ".ogg", ".m4a"}
+    _UPDATE_FIELDS = frozenset({
+        "name", "persona", "reply_language", "model_id", "voice_id",
+    })
 
     def __init__(self, base_dir: Path | str | None = None) -> None:
         self._base = Path(base_dir or Path(__file__).resolve().parents[2]).resolve()
@@ -50,49 +54,274 @@ class CharacterCatalog:
                 continue
             try:
                 card = json.loads(card_path.read_text("utf-8"))
-                character_id = str(card["id"])
-                name_map = card.get("name", {})
-                name = (
-                    next((str(value) for value in name_map.values() if value), character_id)
-                    if isinstance(name_map, dict)
-                    else str(name_map or character_id)
-                )
-                tts = card.get("tts", {})
-                voice_id = str(tts.get("voice_id", "")).strip()
-                if voice_id:
-                    from app.character.voices import VoiceRegistry
-                    try:
-                        voice_configured = bool(
-                            VoiceRegistry(self._base).get(voice_id).get("configured")
-                        )
-                    except (KeyError, ValueError):
-                        voice_configured = False
-                else:
-                    custom = tts.get("custom_model", {})
-                    refs = tts.get("ref_audio", {})
-                    voice_paths = [
-                        refs.get("neutral", "") if isinstance(refs, dict) else "",
-                        custom.get("t2s", "") if isinstance(custom, dict) else "",
-                        custom.get("vits", "") if isinstance(custom, dict) else "",
-                    ]
-                    voice_configured = all(
-                        relative and (directory / relative).is_file()
-                        for relative in voice_paths
-                    )
+                detail = self._detail_from_card(directory, card)
                 result.append({
-                    "id": character_id,
-                    "name": name,
-                    "reply_language": str(
-                        card.get("reply_language")
-                        or tts.get("prompt_lang")
-                        or "en"
-                    ),
-                    "live2d_model": str(card.get("live2d", {}).get("model", "")),
-                    "voice_configured": voice_configured,
+                    "id": detail["id"],
+                    "name": detail["name"],
+                    "reply_language": detail["reply_language"],
+                    "live2d_model": detail["live2d_model"],
+                    "voice_configured": detail["voice_configured"],
                 })
-            except (KeyError, TypeError, json.JSONDecodeError, OSError):
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError, OSError):
                 continue
         return result
+
+    def get(self, character_id: str) -> dict[str, Any]:
+        """Return the safe editable projection for one installed character."""
+        with _IMPORT_LOCK:
+            directory, card = self._read_card_locked(character_id)
+            return self._detail_from_card(directory, card)
+
+    def update(
+        self,
+        character_id: str,
+        raw_changes: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Patch one character card through the editable-field whitelist.
+
+        The card and index are restored together if either replacement fails.
+        Unknown card and index fields remain byte-for-byte equivalent at the
+        data level because this method mutates only the documented fields.
+        """
+        with _IMPORT_LOCK:
+            return self._update_locked(character_id, raw_changes)
+
+    def _update_locked(
+        self,
+        character_id: str,
+        raw_changes: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not isinstance(raw_changes, dict):
+            raise ValueError("character update must be an object")
+        if "id" in raw_changes:
+            raise ValueError("character id is read-only")
+        unknown = sorted(set(raw_changes) - self._UPDATE_FIELDS)
+        if unknown:
+            raise ValueError(
+                "unsupported character update fields: " + ", ".join(unknown)
+            )
+
+        directory, card = self._read_card_locked(character_id)
+        current = self._detail_from_card(directory, card)
+        resource_fields = {"model_id", "voice_id"}.intersection(raw_changes)
+        if resource_fields and not current["resource_references_editable"]:
+            raise ValueError("embedded character resources are read-only")
+
+        name = str(raw_changes.get("name", current["name"])).strip()
+        persona = str(raw_changes.get("persona", current["persona"]))
+        persona = persona.replace("\r\n", "\n").strip()
+        reply_language = str(
+            raw_changes.get("reply_language", current["reply_language"])
+        ).strip().lower()
+        self._validate_editable_fields(name, persona, reply_language)
+
+        updated = deepcopy(card)
+        if "name" in raw_changes:
+            updated["name"] = self._updated_name_map(card.get("name"), name)
+        if "persona" in raw_changes:
+            updated["character_setting"] = persona
+        if "reply_language" in raw_changes:
+            updated["reply_language"] = reply_language
+
+        if "model_id" in raw_changes:
+            requested_model = str(raw_changes.get("model_id") or "").strip()
+            model_id = (
+                requested_model
+                if requested_model == current["model_id"]
+                else self._validate_model_reference(requested_model)
+            )
+            live2d = updated.get("live2d")
+            if not isinstance(live2d, dict):
+                live2d = {}
+                updated["live2d"] = live2d
+            live2d["model"] = model_id
+        if "voice_id" in raw_changes:
+            requested_voice = str(raw_changes.get("voice_id") or "").strip()
+            voice_id = (
+                requested_voice
+                if requested_voice == current["voice_id"]
+                else self._validate_voice_reference(requested_voice)
+            )
+            tts = updated.get("tts")
+            if not isinstance(tts, dict):
+                tts = {}
+                updated["tts"] = tts
+            tts["voice_id"] = voice_id
+
+        index = self._index_with_updated_name(str(current["id"]), name)
+        card_path = directory / "character.json"
+        previous_card = card_path.read_bytes()
+        previous_index = self._index_path.read_bytes() if self._index_path.exists() else None
+        try:
+            self._atomic_text(
+                card_path,
+                json.dumps(updated, ensure_ascii=False, indent=2) + "\n",
+            )
+            self._atomic_text(
+                self._index_path,
+                yaml.safe_dump(index, allow_unicode=True, sort_keys=False),
+            )
+        except Exception:
+            card_path.write_bytes(previous_card)
+            if previous_index is None:
+                self._index_path.unlink(missing_ok=True)
+            else:
+                self._index_path.write_bytes(previous_index)
+            raise
+        return self._detail_from_card(directory, updated)
+
+    def _read_card_locked(
+        self,
+        character_id: str,
+    ) -> tuple[Path, dict[str, Any]]:
+        normalized = str(character_id or "").strip().lower()
+        if not self._ID.fullmatch(normalized):
+            raise ValueError("invalid character id")
+        directory = self._characters_dir / normalized
+        card_path = directory / "character.json"
+        if not card_path.is_file():
+            raise KeyError(f"character not found: {normalized}")
+        try:
+            card = json.loads(card_path.read_text("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid character card: {normalized}") from exc
+        if not isinstance(card, dict) or str(card.get("id", "")) != normalized:
+            raise ValueError(f"character card id mismatch: {normalized}")
+        return directory, card
+
+    def _detail_from_card(
+        self,
+        directory: Path,
+        card: dict[str, Any],
+    ) -> dict[str, Any]:
+        character_id = str(card["id"])
+        name = self._display_name(card.get("name"), character_id)
+        tts = card.get("tts") if isinstance(card.get("tts"), dict) else {}
+        live2d = card.get("live2d") if isinstance(card.get("live2d"), dict) else {}
+        voice_id = str(tts.get("voice_id", "")).strip()
+        embedded_voice = bool(tts.get("custom_model") or tts.get("ref_audio"))
+        reference_mode = bool(voice_id) and not embedded_voice
+        voice_name = str(tts.get("voice", "") or voice_id)
+        if reference_mode:
+            from app.character.voices import VoiceRegistry
+            try:
+                voice_name = str(VoiceRegistry(self._base).get(voice_id)["name"])
+            except (KeyError, ValueError):
+                pass
+        return {
+            "id": character_id,
+            "name": name,
+            "persona": str(
+                card.get("character_setting") or card.get("system_prompt", "")
+            ),
+            "reply_language": str(
+                card.get("reply_language") or tts.get("prompt_lang") or "en"
+            ),
+            "model_id": str(live2d.get("model", "")),
+            "voice_id": voice_id,
+            "voice_name": voice_name,
+            "resource_mode": "reference" if reference_mode else "embedded",
+            "resource_references_editable": reference_mode,
+            "live2d_model": str(live2d.get("model", "")),
+            "voice_configured": self._voice_configured(directory, tts),
+        }
+
+    @staticmethod
+    def _display_name(raw_name: Any, character_id: str) -> str:
+        if isinstance(raw_name, dict):
+            return next(
+                (str(value) for value in raw_name.values() if value),
+                character_id,
+            )
+        return str(raw_name or character_id)
+
+    @staticmethod
+    def _updated_name_map(raw_name: Any, name: str) -> dict[str, Any]:
+        if isinstance(raw_name, dict) and raw_name:
+            return {str(language): name for language in raw_name}
+        return {"zh": name, "en": name, "ja": name}
+
+    def _voice_configured(self, directory: Path, tts: dict[str, Any]) -> bool:
+        voice_id = str(tts.get("voice_id", "")).strip()
+        if voice_id:
+            from app.character.voices import VoiceRegistry
+            try:
+                return bool(VoiceRegistry(self._base).get(voice_id).get("configured"))
+            except (KeyError, ValueError):
+                return False
+        custom = tts.get("custom_model", {})
+        refs = tts.get("ref_audio", {})
+        voice_paths = [
+            refs.get("neutral", "") if isinstance(refs, dict) else "",
+            custom.get("t2s", "") if isinstance(custom, dict) else "",
+            custom.get("vits", "") if isinstance(custom, dict) else "",
+        ]
+        return all(
+            relative and (directory / relative).is_file()
+            for relative in voice_paths
+        )
+
+    @staticmethod
+    def _validate_editable_fields(name: str, persona: str, reply_language: str) -> None:
+        if not name or len(name) > 80:
+            raise ValueError("character name is required and must be at most 80 characters")
+        if not persona or len(persona) > 20_000:
+            raise ValueError("persona is required and must be at most 20000 characters")
+        if reply_language not in CharacterCatalog._LANGUAGES:
+            raise ValueError(f"unsupported reply language: {reply_language}")
+
+    def _validate_model_reference(self, raw_model_id: Any) -> str:
+        model_id = str(raw_model_id or "").strip()
+        if not model_id:
+            raise ValueError("model_id is required")
+        model_dir = self._models_dir / model_id
+        if not model_dir.is_dir() or not any(model_dir.glob("*.model3.json")):
+            raise ValueError(f"referenced Live2D model is not installed: {model_id}")
+        return model_id
+
+    def _validate_voice_reference(self, raw_voice_id: Any) -> str:
+        voice_id = str(raw_voice_id or "").strip()
+        if not voice_id:
+            raise ValueError("voice_id is required")
+        try:
+            from app.character.voices import VoiceRegistry
+            VoiceRegistry(self._base).resolve(voice_id)
+        except KeyError as exc:
+            raise ValueError(f"referenced voice is not installed: {voice_id}") from exc
+        return voice_id
+
+    def _index_with_updated_name(
+        self,
+        character_id: str,
+        name: str,
+    ) -> dict[str, Any]:
+        index: dict[str, Any] = {}
+        if self._index_path.exists():
+            loaded = yaml.safe_load(self._index_path.read_text("utf-8"))
+            if isinstance(loaded, dict):
+                index = loaded
+        characters = index.get("characters", [])
+        if not isinstance(characters, list):
+            characters = []
+        updated_characters: list[Any] = []
+        found = False
+        for item in characters:
+            if isinstance(item, dict) and item.get("id") == character_id:
+                replacement = deepcopy(item)
+                replacement["name"] = name
+                updated_characters.append(replacement)
+                found = True
+            else:
+                updated_characters.append(item)
+        if not found:
+            updated_characters.append({
+                "id": character_id,
+                "name": name,
+                "path": f"characters/{character_id}/character.json",
+            })
+        index["characters"] = updated_characters
+        index.setdefault("default", character_id)
+        return index
 
     def create(self, raw_spec: dict[str, Any]) -> dict[str, Any]:
         """Validate and atomically install one character.
@@ -251,28 +480,9 @@ class CharacterCatalog:
         name = str(raw_spec.get("name", "")).strip()
         persona = str(raw_spec.get("persona", "")).replace("\r\n", "\n").strip()
         reply_language = str(raw_spec.get("reply_language", "")).strip().lower()
-        if not name or len(name) > 80:
-            raise ValueError("character name is required and must be at most 80 characters")
-        if not persona or len(persona) > 20_000:
-            raise ValueError("persona is required and must be at most 20000 characters")
-        if reply_language not in self._LANGUAGES:
-            raise ValueError(f"unsupported reply language: {reply_language}")
-
-        model_id = str(raw_spec.get("model_id", "")).strip()
-        if not model_id:
-            raise ValueError("model_id is required")
-        model_dir = self._models_dir / model_id
-        if not model_dir.is_dir() or not any(model_dir.glob("*.model3.json")):
-            raise ValueError(f"referenced Live2D model is not installed: {model_id}")
-
-        voice_id = str(raw_spec.get("voice_id", "")).strip()
-        if not voice_id:
-            raise ValueError("voice_id is required")
-        try:
-            from app.character.voices import VoiceRegistry
-            VoiceRegistry(self._base).resolve(voice_id)
-        except KeyError as exc:
-            raise ValueError(f"referenced voice is not installed: {voice_id}") from exc
+        self._validate_editable_fields(name, persona, reply_language)
+        model_id = self._validate_model_reference(raw_spec.get("model_id"))
+        voice_id = self._validate_voice_reference(raw_spec.get("voice_id"))
 
         return {
             "id": character_id,

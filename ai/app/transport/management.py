@@ -49,6 +49,25 @@ class ManagementHandler:
     async def _execute(self, action: str, params: dict) -> dict[str, Any]:
         if action == "get_character_catalog":
             return await asyncio.to_thread(self._manager.get_character_catalog)
+        if action == "get_character_detail":
+            try:
+                return await asyncio.to_thread(
+                    self._manager.get_character_detail,
+                    str(params.get("character_id", "")),
+                )
+            except (KeyError, ValueError, OSError) as exc:
+                raise ManagementFailure("character_detail_unavailable", str(exc)) from exc
+        if action == "update_character":
+            changes = dict(params)
+            character_id = str(changes.pop("character_id", ""))
+            try:
+                return await asyncio.to_thread(
+                    self._manager.update_character,
+                    character_id,
+                    changes,
+                )
+            except (KeyError, ValueError, RuntimeError, OSError) as exc:
+                raise ManagementFailure("character_update_failed", str(exc)) from exc
         if action == "create_character":
             try:
                 return await asyncio.to_thread(self._manager.create_character, params)

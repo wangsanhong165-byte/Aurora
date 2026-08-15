@@ -549,3 +549,330 @@ def test_management_delete_character_switches_active_and_cleans_owned_state(
     assert store.list_memories(character_id="monika") == []
     assert history_uid not in manager._history_index
     assert "monika" not in runtime._conversations_by_character
+
+
+def test_character_detail_exposes_only_safe_editing_metadata(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "lantern", "name": "Lantern", "persona": "persona",
+        "reply_language": "zh", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+
+    assert catalog.get("lantern") == {
+        "id": "lantern",
+        "name": "Lantern",
+        "persona": "persona",
+        "reply_language": "zh",
+        "model_id": "testmodel",
+        "voice_id": "testvoice",
+        "voice_name": "Test Voice",
+        "resource_mode": "reference",
+        "resource_references_editable": True,
+        "live2d_model": "testmodel",
+        "voice_configured": True,
+    }
+
+
+def test_reference_character_update_preserves_unedited_card_and_index_fields(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "lantern", "name": "Lantern", "persona": "original persona",
+        "reply_language": "zh", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+    card_path = tmp_path / "config" / "characters" / "lantern" / "character.json"
+    card = json.loads(card_path.read_text("utf-8"))
+    card["future_extension"] = {"keep": True}
+    card["live2d"]["future_binding"] = "keep"
+    card["tts"]["future_voice_option"] = "keep"
+    card_path.write_text(json.dumps(card, ensure_ascii=False), encoding="utf-8")
+    index_path = tmp_path / "config" / "characters" / "index.yaml"
+    index = yaml.safe_load(index_path.read_text("utf-8"))
+    index["characters"][0]["future_index_option"] = "keep"
+    index_path.write_text(yaml.safe_dump(index, sort_keys=False), encoding="utf-8")
+
+    updated = catalog.update("lantern", {
+        "name": "Lantern Prime",
+        "persona": "updated persona",
+        "reply_language": "ja",
+        "model_id": "testmodel",
+        "voice_id": "testvoice",
+    })
+
+    stored = json.loads(card_path.read_text("utf-8"))
+    stored_index = yaml.safe_load(index_path.read_text("utf-8"))
+    assert updated["name"] == "Lantern Prime"
+    assert stored["id"] == "lantern"
+    assert stored["character_setting"] == "updated persona"
+    assert stored["identity"] == "original persona"
+    assert stored["future_extension"] == {"keep": True}
+    assert stored["live2d"]["future_binding"] == "keep"
+    assert stored["tts"]["future_voice_option"] == "keep"
+    assert stored_index["characters"][0]["name"] == "Lantern Prime"
+    assert stored_index["characters"][0]["future_index_option"] == "keep"
+
+
+def test_embedded_character_update_locks_resources_and_preserves_pack_fields(tmp_path):
+    assets = _write_complete_asset_sources(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "lantern", "name": "Lantern", "reply_language": "zh",
+        "persona": "original persona", "assets": assets,
+        "voice": {"prompt_text": "reference", "prompt_language": "en"},
+    })
+    before = json.loads(
+        (tmp_path / "config" / "characters" / "lantern" / "character.json")
+        .read_text("utf-8")
+    )
+
+    detail = catalog.update("lantern", {
+        "name": "Lantern Prime", "persona": "updated persona",
+        "reply_language": "ja",
+    })
+    after = json.loads(
+        (tmp_path / "config" / "characters" / "lantern" / "character.json")
+        .read_text("utf-8")
+    )
+
+    assert detail["resource_mode"] == "embedded"
+    assert detail["resource_references_editable"] is False
+    assert after["tts"] == before["tts"]
+    assert after["live2d"] == before["live2d"]
+    assert after["rules"] == before["rules"]
+    with pytest.raises(ValueError, match="embedded character resources are read-only"):
+        catalog.update("lantern", {"model_id": "another-model"})
+
+
+def test_character_update_rejects_id_and_unknown_fields(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "lantern", "name": "Lantern", "persona": "persona",
+        "reply_language": "zh", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+
+    with pytest.raises(ValueError, match="character id is read-only"):
+        catalog.update("lantern", {"id": "renamed"})
+    with pytest.raises(ValueError, match="unsupported character update fields"):
+        catalog.update("lantern", {"rules": {"avoid": []}})
+
+
+def test_character_update_restores_card_and_index_when_index_write_fails(
+    tmp_path, monkeypatch,
+):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "lantern", "name": "Lantern", "persona": "persona",
+        "reply_language": "zh", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+    card_path = tmp_path / "config" / "characters" / "lantern" / "character.json"
+    index_path = tmp_path / "config" / "characters" / "index.yaml"
+    previous_card = card_path.read_bytes()
+    previous_index = index_path.read_bytes()
+    real_atomic_text = catalog._atomic_text
+
+    def fail_index(path, content):
+        if path == index_path:
+            raise OSError("index locked")
+        return real_atomic_text(path, content)
+
+    monkeypatch.setattr(catalog, "_atomic_text", fail_index)
+    with pytest.raises(OSError, match="index locked"):
+        catalog.update("lantern", {"name": "Broken Update"})
+
+    assert card_path.read_bytes() == previous_card
+    assert index_path.read_bytes() == previous_index
+
+
+def test_management_character_detail_reports_persona_override(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "lantern", "name": "Lantern", "persona": "persona",
+        "reply_language": "zh", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+    manager = RuntimeManager(base_dir=tmp_path, runtime=_Runtime())
+    manager.set_prompt_config(
+        "lantern", {"persona": {"mode": "replace", "content": "override"}}, "",
+    )
+    handler = ManagementHandler()
+    handler._manager = manager
+
+    event = asyncio.run(handler.handle(
+        "get_character_detail", {"character_id": "lantern"}, "detail-1",
+    ))[0]
+
+    assert event.payload.data["character"]["persona_override_active"] is True
+
+
+def test_management_updates_current_character_through_existing_reload_chain(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "monika", "name": "Monika", "persona": "old persona",
+        "reply_language": "en", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+
+    class _EditableRuntime:
+        def __init__(self):
+            self._runtime_idle = True
+            self._character_registry = CharacterRegistry(tmp_path)
+            self._conversations_by_character = {"monika": object()}
+            self.providers = {}
+            self.switches = []
+
+        def get_character_info(self):
+            card = self._character_registry.get("monika")
+            return {"card": card, "name": card["name"]["zh"]}
+
+        def switch_character(self, character_id):
+            self.switches.append(character_id)
+            self._character_registry.refresh()
+            self._character_registry.activate(character_id)
+            return {"character_id": character_id}
+
+    runtime = _EditableRuntime()
+    manager = RuntimeManager(base_dir=tmp_path, runtime=runtime)
+    handler = ManagementHandler()
+    handler._manager = manager
+
+    event = asyncio.run(handler.handle("update_character", {
+        "character_id": "monika", "name": "Monika Prime",
+        "persona": "new persona", "reply_language": "ja",
+        "model_id": "testmodel", "voice_id": "testvoice",
+    }, "update-1"))[0]
+
+    assert runtime.switches == ["monika"]
+    assert event.payload.data["runtime_reloaded"] is True
+    assert event.payload.data["character"]["name"] == "Monika Prime"
+    assert runtime.get_character_info()["card"]["character_setting"] == "new persona"
+
+
+def test_management_rejects_busy_current_character_update_without_disk_changes(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "monika", "name": "Monika", "persona": "old persona",
+        "reply_language": "en", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+    card_path = tmp_path / "config" / "characters" / "monika" / "character.json"
+    previous = card_path.read_bytes()
+
+    class _BusyRuntime:
+        _runtime_idle = False
+
+        def get_character_info(self):
+            return {"card": {"id": "monika"}, "name": "Monika"}
+
+    manager = RuntimeManager(base_dir=tmp_path, runtime=_BusyRuntime())
+    handler = ManagementHandler()
+    handler._manager = manager
+    event = asyncio.run(handler.handle("update_character", {
+        "character_id": "monika", "name": "Should Not Persist",
+    }, "update-busy"))[0]
+
+    assert event.event_type == "management.failed"
+    assert "processing a turn" in event.payload.message
+    assert card_path.read_bytes() == previous
+
+
+def test_management_updates_non_current_character_without_switching_runtime(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    for character_id in ("monika", "alice"):
+        catalog.create({
+            "id": character_id, "name": character_id.title(), "persona": "old persona",
+            "reply_language": "en", "model_id": "testmodel", "voice_id": "testvoice",
+        })
+
+    class _NonCurrentRuntime:
+        _runtime_idle = True
+
+        def __init__(self):
+            self._character_registry = CharacterRegistry(tmp_path)
+            self.switches = []
+
+        def get_character_info(self):
+            return {"card": self._character_registry.get("monika"), "name": "Monika"}
+
+        def switch_character(self, character_id):
+            self.switches.append(character_id)
+            return {"character_id": character_id}
+
+    runtime = _NonCurrentRuntime()
+    manager = RuntimeManager(base_dir=tmp_path, runtime=runtime)
+
+    result = manager.update_character("alice", {
+        "name": "Alice Prime", "persona": "new persona", "reply_language": "zh",
+    })
+
+    assert runtime.switches == []
+    assert result["runtime_reloaded"] is False
+    assert result["active_character_id"] == "monika"
+    assert runtime._character_registry.get("alice")["character_setting"] == "new persona"
+
+
+def test_management_restores_current_character_when_runtime_reload_fails(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "monika", "name": "Monika", "persona": "old persona",
+        "reply_language": "en", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+    card_path = tmp_path / "config" / "characters" / "monika" / "character.json"
+    index_path = tmp_path / "config" / "characters" / "index.yaml"
+    previous_card = card_path.read_bytes()
+    previous_index = index_path.read_bytes()
+
+    class _FailingRuntime:
+        _runtime_idle = True
+
+        def __init__(self):
+            self._character_registry = CharacterRegistry(tmp_path)
+
+        def get_character_info(self):
+            return {"card": self._character_registry.get("monika"), "name": "Monika"}
+
+        def switch_character(self, character_id):
+            return {"character_id": character_id, "error": "restore failed"}
+
+    manager = RuntimeManager(base_dir=tmp_path, runtime=_FailingRuntime())
+
+    with pytest.raises(RuntimeError, match="restore failed"):
+        manager.update_character("monika", {
+            "name": "Should Roll Back", "persona": "new persona",
+            "reply_language": "ja",
+        })
+
+    assert card_path.read_bytes() == previous_card
+    assert index_path.read_bytes() == previous_index
+
+
+def test_reference_character_update_validates_replacement_resources(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    catalog.create({
+        "id": "lantern", "name": "Lantern", "persona": "persona",
+        "reply_language": "zh", "model_id": "testmodel", "voice_id": "testvoice",
+    })
+    card_path = tmp_path / "config" / "characters" / "lantern" / "character.json"
+    previous = card_path.read_bytes()
+
+    with pytest.raises(ValueError, match="model is not installed"):
+        catalog.update("lantern", {"model_id": "missing-model"})
+    with pytest.raises(ValueError, match="voice is not installed"):
+        catalog.update("lantern", {"voice_id": "missing-voice"})
+
+    assert card_path.read_bytes() == previous

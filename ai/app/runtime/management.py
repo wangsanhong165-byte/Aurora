@@ -852,6 +852,85 @@ class RuntimeManager:
             "characters": self._character_catalog.list(),
         }
 
+    def get_character_detail(self, character_id: str) -> dict[str, Any]:
+        """Return one character's safe editing projection and prompt status."""
+        detail = self._character_catalog.get(character_id)
+        return {"character": self._decorate_character_detail(detail)}
+
+    def update_character(
+        self,
+        character_id: str,
+        changes: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist an editable character patch and reload the active role."""
+        target = str(character_id or "").strip().lower()
+        is_active = self.get_character_id() == target
+        if is_active and not bool(getattr(self._runtime, "_runtime_idle", True)):
+            raise RuntimeError("runtime is processing a turn")
+
+        previous = self._character_catalog.get(target)
+        registry = getattr(self._runtime, "_character_registry", None)
+        persisted = False
+        try:
+            updated = self._character_catalog.update(target, changes)
+            persisted = True
+            if registry is not None and hasattr(registry, "refresh"):
+                registry.refresh()
+
+            runtime_reloaded = False
+            if is_active:
+                switched = self.switch_character(target)
+                if "error" in switched:
+                    raise RuntimeError(str(switched["error"]))
+                runtime_reloaded = True
+        except Exception:
+            if persisted:
+                try:
+                    self._character_catalog.update(
+                        target,
+                        self._update_patch_from_detail(previous),
+                    )
+                    if registry is not None and hasattr(registry, "refresh"):
+                        registry.refresh()
+                except Exception:
+                    logger.exception(
+                        "[CharacterCatalog] Failed to roll back update for %s",
+                        target,
+                    )
+            raise
+
+        decorated = self._decorate_character_detail(updated)
+        logger.info("[CharacterCatalog] Updated character: %s", target)
+        return {
+            "character": decorated,
+            "active_character_id": self.get_character_id(),
+            "runtime_reloaded": runtime_reloaded,
+        }
+
+    def _decorate_character_detail(
+        self,
+        detail: dict[str, Any],
+    ) -> dict[str, Any]:
+        character_id = str(detail.get("id", ""))
+        prompt_rules = self._prompt_configs.get(character_id)
+        persona_rule = prompt_rules.get("persona", {})
+        return {
+            **detail,
+            "persona_override_active": persona_rule.get("mode") == "replace",
+        }
+
+    @staticmethod
+    def _update_patch_from_detail(detail: dict[str, Any]) -> dict[str, Any]:
+        patch = {
+            "name": detail["name"],
+            "persona": detail["persona"],
+            "reply_language": detail["reply_language"],
+        }
+        if detail.get("resource_references_editable"):
+            patch["model_id"] = detail["model_id"]
+            patch["voice_id"] = detail["voice_id"]
+        return patch
+
     def create_character(self, specification: dict[str, Any]) -> dict[str, Any]:
         character = self._character_catalog.create(specification)
         registry = getattr(self._runtime, "_character_registry", None)

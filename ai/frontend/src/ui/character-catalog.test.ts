@@ -3,8 +3,10 @@ import test from 'node:test'
 
 import {
   buildCharacterPayload,
+  buildCharacterUpdatePayload,
   buildVoicePayload,
   readCharacterCatalog,
+  readCharacterDetail,
   readModelCatalog,
   readVoiceCatalog,
 } from './character-catalog.ts'
@@ -67,4 +69,41 @@ test('reads model descriptors with registration state', () => {
     { id: 'Design_genius_White', hasModel3: true, profile: true },
     { id: 'new_model', hasModel3: true, profile: false },
   ])
+})
+
+test('reads editable character detail without exposing the raw character card', () => {
+  assert.deepEqual(readCharacterDetail({
+    character: {
+      id: 'lantern', name: 'Lantern', persona: 'A concise persona.',
+      reply_language: 'zh', model_id: 'Design_genius_White', voice_id: 'monika',
+      voice_name: 'Monika', resource_mode: 'reference',
+      resource_references_editable: true, persona_override_active: true,
+      live2d_model: 'Design_genius_White', voice_configured: true,
+    },
+  }), {
+    id: 'lantern', name: 'Lantern', persona: 'A concise persona.',
+    replyLanguage: 'zh', modelId: 'Design_genius_White', voiceId: 'monika',
+    voiceName: 'Monika', resourceMode: 'reference',
+    resourceReferencesEditable: true, personaOverrideActive: true,
+    live2dModel: 'Design_genius_White', voiceConfigured: true,
+  })
+})
+
+test('builds a reference-character update without a mutable character id', () => {
+  assert.deepEqual(buildCharacterUpdatePayload({
+    id: 'lantern', name: 'Lantern Prime', persona: 'Updated persona.',
+    replyLanguage: 'ja', modelId: 'new-model', voiceId: 'new-voice',
+  }, true), {
+    name: 'Lantern Prime', persona: 'Updated persona.', reply_language: 'ja',
+    model_id: 'new-model', voice_id: 'new-voice',
+  })
+})
+
+test('omits locked embedded resources from a character update', () => {
+  assert.deepEqual(buildCharacterUpdatePayload({
+    id: 'lantern', name: 'Lantern Prime', persona: 'Updated persona.',
+    replyLanguage: 'ja', modelId: 'embedded-model', voiceId: '',
+  }, false), {
+    name: 'Lantern Prime', persona: 'Updated persona.', reply_language: 'ja',
+  })
 })

@@ -15,6 +15,16 @@ export type CharacterForm = {
   voiceId: string
 }
 
+export type CharacterDetail = CharacterDescriptor & {
+  persona: string
+  modelId: string
+  voiceId: string
+  voiceName: string
+  resourceMode: 'reference' | 'embedded'
+  resourceReferencesEditable: boolean
+  personaOverrideActive: boolean
+}
+
 export type VoiceDescriptor = {
   id: string
   name: string
@@ -50,6 +60,22 @@ export function buildCharacterPayload(form: CharacterForm) {
   }
 }
 
+export function buildCharacterUpdatePayload(
+  form: CharacterForm,
+  resourceReferencesEditable: boolean,
+) {
+  const payload: Record<string, string> = {
+    name: form.name.trim(),
+    persona: form.persona.trim(),
+    reply_language: form.replyLanguage,
+  }
+  if (resourceReferencesEditable) {
+    payload.model_id = form.modelId
+    payload.voice_id = form.voiceId
+  }
+  return payload
+}
+
 export function buildVoicePayload(form: VoiceForm) {
   return {
     id: form.id.trim().toLowerCase(),
@@ -82,6 +108,32 @@ export function readCharacterCatalog(raw: Record<string, unknown>): {
   return {
     activeCharacterId: String(raw.active_character_id || ''),
     characters,
+  }
+}
+
+export function readCharacterDetail(raw: Record<string, unknown>): CharacterDetail {
+  const nested = raw.character
+  if (!nested || typeof nested !== 'object') {
+    throw new Error('角色详情响应无效')
+  }
+  const value = nested as Record<string, unknown>
+  if (typeof value.id !== 'string' || typeof value.name !== 'string') {
+    throw new Error('角色详情缺少 ID 或名称')
+  }
+  const resourceMode = value.resource_mode === 'reference' ? 'reference' : 'embedded'
+  return {
+    id: value.id,
+    name: value.name,
+    persona: String(value.persona || ''),
+    replyLanguage: String(value.reply_language || 'en'),
+    modelId: String(value.model_id || value.live2d_model || ''),
+    voiceId: String(value.voice_id || ''),
+    voiceName: String(value.voice_name || value.voice_id || ''),
+    resourceMode,
+    resourceReferencesEditable: value.resource_references_editable === true,
+    personaOverrideActive: value.persona_override_active === true,
+    live2dModel: String(value.live2d_model || value.model_id || ''),
+    voiceConfigured: value.voice_configured === true,
   }
 }
 

@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { FolderOpen, RefreshCw, Trash2, Upload } from 'lucide-react'
+import { FolderOpen, Pencil, RefreshCw, Trash2, Upload } from 'lucide-react'
 
 import {
   buildCharacterPayload,
+  buildCharacterUpdatePayload,
   buildVoicePayload,
   readCharacterCatalog,
+  readCharacterDetail,
   readModelCatalog,
   readVoiceCatalog,
+  type CharacterDetail,
   type CharacterDescriptor,
   type CharacterForm,
   type ModelDescriptor,
@@ -47,6 +50,7 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
   const [busy, setBusy] = useState(false)
   const [showCharacterForm, setShowCharacterForm] = useState(false)
   const [showVoiceForm, setShowVoiceForm] = useState(false)
+  const [editingCharacter, setEditingCharacter] = useState<CharacterDetail | null>(null)
   const [message, setMessage] = useState('')
 
   // requestCommand is an inline prop that the provider recreates on every
@@ -120,6 +124,49 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
     }
   }
 
+  const closeCharacterForm = () => {
+    setCharacterForm(EMPTY_CHARACTER)
+    setEditingCharacter(null)
+    setShowCharacterForm(false)
+    setMessage('')
+  }
+
+  const toggleCreateCharacter = () => {
+    if (showCharacterForm) {
+      closeCharacterForm()
+      return
+    }
+    setEditingCharacter(null)
+    setCharacterForm(EMPTY_CHARACTER)
+    setShowCharacterForm(true)
+  }
+
+  const editCharacter = async (character: CharacterDescriptor) => {
+    setBusy(true)
+    setMessage(`正在读取 ${character.name} 的角色卡…`)
+    try {
+      const response = await requestRef.current('get_character_detail', {
+        character_id: character.id,
+      })
+      const detail = readCharacterDetail(response)
+      setEditingCharacter(detail)
+      setCharacterForm({
+        id: detail.id,
+        name: detail.name,
+        persona: detail.persona,
+        replyLanguage: detail.replyLanguage,
+        modelId: detail.modelId,
+        voiceId: detail.voiceId,
+      })
+      setShowCharacterForm(true)
+      setMessage(`正在编辑 ${detail.name}`)
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : '角色详情读取失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const removeCharacter = async (character: CharacterDescriptor) => {
     if (characters.length <= 1) {
       setMessage('至少需要保留一个角色')
@@ -171,9 +218,41 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
 
   const submitCharacter = async () => {
     setBusy(true)
-    setMessage('正在创建角色…')
+    setMessage(editingCharacter ? '正在保存角色卡…' : '正在创建角色…')
     try {
-      const response = await requestRef.current('create_character', buildCharacterPayload(characterForm))
+      if (editingCharacter) {
+        const response = await requestRef.current('update_character', {
+          character_id: editingCharacter.id,
+          ...buildCharacterUpdatePayload(
+            characterForm,
+            editingCharacter.resourceReferencesEditable,
+          ),
+        })
+        const detail = readCharacterDetail(response)
+        const character: CharacterDescriptor = detail
+        setCharacters(current => current.map(item => (
+          item.id === character.id ? character : item
+        )))
+        let syncWarning = ''
+        if (character.id === activeId && response.runtime_reloaded === true) {
+          try {
+            await onActivate(character, true)
+          } catch (error) {
+            syncWarning = error instanceof Error ? error.message : String(error)
+          }
+        }
+        closeCharacterForm()
+        await refresh()
+        setMessage(syncWarning
+          ? `角色 ${character.name} 已保存，但界面同步失败：${syncWarning}`
+          : `角色 ${character.name} 已保存`)
+        return
+      }
+
+      const response = await requestRef.current(
+        'create_character',
+        buildCharacterPayload(characterForm),
+      )
       const raw = response.character as Record<string, unknown> | undefined
       if (!raw?.id) throw new Error('创建完成但未返回角色信息')
       const character: CharacterDescriptor = {
@@ -184,8 +263,7 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
       }
       setCharacters(current => [...current.filter(item => item.id !== character.id), character])
       await activate(character)
-      setCharacterForm(EMPTY_CHARACTER)
-      setShowCharacterForm(false)
+      closeCharacterForm()
       setMessage(`角色 ${character.name} 已创建并启用`)
     } catch (error) {
       setMessage(error instanceof Error ? error.message : '角色创建失败')
@@ -235,7 +313,11 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
 
   const characterComplete = Boolean(
     characterForm.id.trim() && characterForm.name.trim() && characterForm.persona.trim()
-    && characterForm.modelId && characterForm.voiceId,
+    && (
+      editingCharacter && !editingCharacter.resourceReferencesEditable
+        ? true
+        : characterForm.modelId && characterForm.voiceId
+    ),
   )
   const voiceComplete = Boolean(
     voiceForm.id.trim() && voiceForm.name.trim() && voiceForm.promptText.trim()
@@ -277,37 +359,63 @@ export function CharacterManagerPanel({ requestCommand, onActivate }: Props) {
                   </span>
                   <em>{character.id === activeId ? '使用中' : '切换'}</em>
                 </button>
-                <button
-                  className="character-delete-button"
-                  disabled={busy || characters.length <= 1}
-                  onClick={() => { void removeCharacter(character) }}
-                  title="删除角色（保留共享模型与声线）"
-                  aria-label={`删除角色 ${character.name}`}
-                >
-                  <Trash2 size={15} />
-                </button>
+                <div className="character-library-actions">
+                  <button
+                    className="character-row-action"
+                    disabled={busy}
+                    onClick={() => { void editCharacter(character) }}
+                    title="编辑角色卡"
+                    aria-label={`编辑角色 ${character.name}`}
+                  >
+                    <Pencil size={14} />
+                  </button>
+                  <button
+                    className="character-row-action is-danger"
+                    disabled={busy || characters.length <= 1}
+                    onClick={() => { void removeCharacter(character) }}
+                    title="删除角色（保留共享模型与声线）"
+                    aria-label={`删除角色 ${character.name}`}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>
 
-          <button className="character-import-toggle" onClick={() => setShowCharacterForm(value => !value)}>
-            <Upload size={16} /> {showCharacterForm ? '收起创建表单' : '创建角色（引用模型与声线）'}
+          <button className="character-import-toggle" onClick={toggleCreateCharacter}>
+            <Upload size={16} /> {showCharacterForm
+              ? (editingCharacter ? '取消编辑' : '收起创建表单')
+              : '创建角色（引用模型与声线）'}
           </button>
 
           {showCharacterForm && (
             <div className="character-import-form">
-              <h3>基础信息</h3>
+              <h3>{editingCharacter ? `编辑角色：${editingCharacter.name}` : '基础信息'}</h3>
               <div className="character-form-grid">
-                <label>角色 ID<input value={characterForm.id} onChange={event => updateCharacter('id', event.target.value)} placeholder="例如 lantern（小写英文）" /></label>
+                <label>角色 ID<input value={characterForm.id} disabled={Boolean(editingCharacter)} onChange={event => updateCharacter('id', event.target.value)} placeholder="例如 lantern（小写英文）" /></label>
                 <label>显示名称<input value={characterForm.name} onChange={event => updateCharacter('name', event.target.value)} placeholder="角色名称" /></label>
                 <label>回复语言<select value={characterForm.replyLanguage} onChange={event => updateCharacter('replyLanguage', event.target.value)}><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="yue">粤语</option></select></label>
-                <label>Live2D 模型<select value={characterForm.modelId} onChange={event => updateCharacter('modelId', event.target.value)}>{models.map(model => <option key={model.id} value={model.id}>{model.id}{model.profile ? '' : '（未注册）'}</option>)}</select></label>
-                <label>声线<select value={characterForm.voiceId} onChange={event => updateCharacter('voiceId', event.target.value)}>{voices.map(voice => <option key={voice.id} value={voice.id}>{voice.name}（{voice.promptLang}）</option>)}</select></label>
+                <label>Live2D 模型{editingCharacter && !editingCharacter.resourceReferencesEditable
+                  ? <input value={characterForm.modelId} disabled />
+                  : <select value={characterForm.modelId} onChange={event => updateCharacter('modelId', event.target.value)}>{models.map(model => <option key={model.id} value={model.id}>{model.id}{model.profile ? '' : '（未注册）'}</option>)}</select>}</label>
+                <label>声线{editingCharacter && !editingCharacter.resourceReferencesEditable
+                  ? <input value={editingCharacter.voiceName || '角色包内嵌声线'} disabled />
+                  : <select value={characterForm.voiceId} onChange={event => updateCharacter('voiceId', event.target.value)}>{voices.map(voice => <option key={voice.id} value={voice.id}>{voice.name}（{voice.promptLang}）</option>)}</select>}</label>
               </div>
               <label>角色设定<textarea value={characterForm.persona} onChange={event => updateCharacter('persona', event.target.value)} placeholder="身份、语气、背景与行为边界" /></label>
-              <p className="character-import-note">创建角色不会复制模型或声线资源；先在"声线/模型"标签页添加系统级资源。</p>
+              {editingCharacter?.personaOverrideActive && (
+                <p className="character-edit-warning">此角色当前存在“角色设定替换”。保存角色卡后，提示词面板中的替换内容仍然优先生效。</p>
+              )}
+              <p className="character-import-note">{editingCharacter
+                ? (editingCharacter.resourceReferencesEditable
+                    ? '编辑只会更新角色卡引用，不会修改或删除共享模型与声线。'
+                    : '这是完整导入角色包：模型与声线资源保持只读，本次只编辑名称、设定和回复语言。')
+                : '创建角色不会复制模型或声线资源；先在“声线/模型”标签页添加系统级资源。'}</p>
               <button className="character-import-submit" disabled={!characterComplete || busy} onClick={() => void submitCharacter()}>
-                {busy ? '正在创建…' : '创建并启用角色'}
+                {busy
+                  ? (editingCharacter ? '正在保存…' : '正在创建…')
+                  : (editingCharacter ? '保存角色卡' : '创建并启用角色')}
               </button>
             </div>
           )}
