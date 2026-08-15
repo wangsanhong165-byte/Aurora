@@ -57,7 +57,14 @@ class _RecordingLLM:
 
     async def generate(self, messages, **kwargs):
         self.calls.append(messages)
-        return LLMResponse(reply="好的")
+        return LLMResponse(
+            reply="好的",
+            segments=[{
+                "text": "好的",
+                "emotion": "neutral",
+                "behavior": "speak",
+            }],
+        )
 
 
 class _RecordingPlanner:

@@ -261,13 +261,98 @@ def test_validator_marks_whitespace_only_reply_invalid():
     assert newline_result.segments == []
 
 
-def test_validator_keeps_non_empty_reply_valid():
+def test_validator_requires_semantic_segments_for_non_empty_reply():
     from app.runtime.response_validator import ResponseValidator
 
-    assert ResponseValidator().validate("hello", []).valid is True
+    plain = ResponseValidator().validate("hello", [])
+    assert plain.valid is False
+    assert plain.reply == "hello"
+    assert plain.segments[0]["contextTags"] == ["semantic_recovery"]
     assert ResponseValidator().validate(
         "", [{"text": "hello", "emotion": "neutral", "behavior": "speak"}]
     ).valid is True
+
+
+def test_validator_recovers_all_supported_expression_families_from_plain_text():
+    from app.runtime.response_validator import ResponseValidator
+
+    cases = {
+        "我眨眨眼逗你一下。": "playful",
+        "有点委屈，真的想哭。": "cry",
+        "我有点不满，撅嘴了。": "pout",
+        "我真的生气了。": "angry",
+        "吓了一跳，好惊讶。": "surprised",
+        "我有点疑惑，没明白。": "confused",
+        "被你夸得不好意思了。": "shy",
+        "我真的很喜欢你。": "love",
+        "今天很开心。": "happy",
+    }
+
+    for reply, emotion in cases.items():
+        recovered = ResponseValidator().validate(reply, [])
+        assert recovered.segments[0]["emotion"] == emotion, reply
+
+
+def test_validator_recovers_supported_body_language_behaviors_from_plain_text():
+    from app.runtime.response_validator import ResponseValidator
+
+    cases = {
+        "嗯，我同意。": "agree",
+        "不，我不同意。": "disagree",
+        "让我想一想。": "think",
+        "哈哈，太有趣了。": "laugh",
+        "没关系，慢慢来。": "comfort",
+        "我点点头。": "nod",
+        "我歪头看着你。": "tilt",
+        "我耸耸肩。": "shrug",
+        "我挥挥手。": "wave",
+    }
+
+    for reply, behavior in cases.items():
+        recovered = ResponseValidator().validate(reply, [])
+        assert recovered.segments[0]["behavior"] == behavior, reply
+
+
+def test_validator_keeps_visible_stage_directions_out_of_spoken_text():
+    from app.runtime.response_validator import ResponseValidator
+
+    plain = ResponseValidator().validate(
+        "呜……（做出委屈巴巴的哭哭脸）你看，我都这么可怜了。",
+        [],
+    )
+    structured = ResponseValidator().validate(
+        "呜……（做出委屈巴巴的哭哭脸）你看，我都这么可怜了。",
+        [{
+            "text": "呜……（做出委屈巴巴的哭哭脸）你看，我都这么可怜了。",
+            "emotion": "cry",
+            "behavior": "speak",
+        }],
+    )
+
+    assert plain.valid is False
+    assert plain.reply == "呜……你看，我都这么可怜了。"
+    assert plain.segments[0]["emotion"] == "cry"
+    assert structured.valid is False
+    assert structured.reply == "呜……你看，我都这么可怜了。"
+    assert structured.segments[0]["text"] == "呜……你看，我都这么可怜了。"
+
+
+def test_validator_preserves_non_action_parentheses_and_keeps_action_only_reply_spoken():
+    from app.runtime.response_validator import ResponseValidator
+
+    ordinary = ResponseValidator().validate(
+        "这个方案（仅限测试环境）和说明（笑话示例、表情识别模块）可以使用。",
+        [{
+            "text": "这个方案（仅限测试环境）和说明（笑话示例、表情识别模块）可以使用。",
+            "emotion": "neutral",
+        }],
+    )
+    action_only = ResponseValidator().validate("（眨眨眼）", [])
+
+    assert ordinary.valid is True
+    assert ordinary.reply == "这个方案（仅限测试环境）和说明（笑话示例、表情识别模块）可以使用。"
+    assert action_only.reply == "这样可以吗？"
+    assert action_only.segments[0]["emotion"] == "playful"
 
 
 def test_llm_response_finish_reason_defaults_to_empty():
@@ -297,6 +382,44 @@ def test_decision_step_repairs_truncated_empty_reply_once():
 
     assert llm.calls == 2
     assert ctx.reply_text == "fixed"
+
+
+def test_decision_step_repairs_single_sentence_plain_text_into_presentation_once():
+    class PlainTextThenStructuredLLM:
+        def __init__(self):
+            self.calls = []
+
+        async def generate(self, messages, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return LLMResponse(reply="那我眨眨眼给你看。")
+            return LLMResponse(
+                reply="这样可以吗？",
+                segments=[{
+                    "text": "这样可以吗？",
+                    "emotion": "playful",
+                    "behavior": "tilt",
+                    "motionPlan": {
+                        "durationMs": 1200,
+                        "steps": [{
+                            "atMs": 0,
+                            "durationMs": 600,
+                            "primitive": "tilt_right",
+                            "intensity": 0.5,
+                        }],
+                    },
+                }],
+            )
+
+    llm = PlainTextThenStructuredLLM()
+    ctx = CharacterTurn(input=TurnInput(text="卖个萌吧"))
+    run(DecisionStep(llm).run(ctx))
+
+    assert len(llm.calls) == 2
+    assert llm.calls[1]["tools"] is None
+    assert ctx.reply_text == "这样可以吗？"
+    assert ctx.output.performance.emotion == "playful"
+    assert ctx.output.performance.motion_plan["steps"][0]["primitive"] == "tilt_right"
 
 
 def test_decision_step_falls_back_when_repair_is_also_empty():
@@ -396,7 +519,7 @@ def test_decision_step_does_not_repair_a_normal_reply():
 
 
 def test_default_planner_requires_nonempty_reply():
-    """The output protocol must forbid empty/whitespace-only replies."""
+    """The output protocol keeps speech nonempty and visible actions out of it."""
     from app.runtime.default_planner import DefaultPlanner
     from app.domain.character import Character
 
@@ -409,6 +532,9 @@ def test_default_planner_requires_nonempty_reply():
         m["content"] for m in plan.messages if m["role"] == "system"
     )
     assert "Never return empty, blank, or whitespace-only content" in prompt
+    assert "only words the character actually says aloud" in prompt
+    assert "Visible performance belongs only in" in prompt
+    assert "do not claim that it happened" in prompt
 
 
 def test_decision_step_fallback_not_written_to_conversation_history():
@@ -445,8 +571,9 @@ def test_decision_step_keeps_plain_text_reply_when_repair_fails():
     """A usable plain-text reply survives a failed repair — no fallback line.
 
     When tools are present the adapter stops forcing JSON output, so DeepSeek
-    answers in prose. The validator rejects multi-sentence prose as
-    "unstructured", but discarding it for a failed repair would lose the reply.
+    can answer with a single prose sentence. The validator requests one
+    structured repair, but discarding the original after a failed repair would
+    lose an otherwise usable spoken reply.
     """
 
     class PlainTextThenEmptyLLM:
@@ -456,7 +583,7 @@ def test_decision_step_keeps_plain_text_reply_when_repair_fails():
         async def generate(self, messages, **kwargs):
             self.calls += 1
             if self.calls == 1:
-                return LLMResponse(reply="嗨，我在呢。刚不是还在聊鬼的事嘛，今天想写点啥？")
+                return LLMResponse(reply="那我眨眨眼给你看。")
             return LLMResponse(reply="", finish_reason="stop")
 
     llm = PlainTextThenEmptyLLM()
@@ -464,6 +591,30 @@ def test_decision_step_keeps_plain_text_reply_when_repair_fails():
     run(DecisionStep(llm).run(ctx))
 
     assert llm.calls == 2
-    assert ctx.reply_text == "嗨，我在呢。刚不是还在聊鬼的事嘛，今天想写点啥？"
+    assert ctx.reply_text == "那我眨眨眼给你看。"
+    assert "assistant_reply_recovered" in ctx.warnings
+    assert not any(w.startswith("assistant_reply_fallback") for w in ctx.warnings)
+
+
+def test_decision_step_sanitizes_stage_direction_when_repair_fails():
+    class NarratedActionThenEmptyLLM:
+        def __init__(self):
+            self.calls = 0
+
+        async def generate(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return LLMResponse(
+                    reply="呜……（做出委屈巴巴的哭哭脸）你看，我都这么可怜了。"
+                )
+            return LLMResponse(reply="", finish_reason="stop")
+
+    llm = NarratedActionThenEmptyLLM()
+    ctx = CharacterTurn(input=TurnInput(text="做个哭哭脸吧"))
+    run(DecisionStep(llm).run(ctx))
+
+    assert llm.calls == 2
+    assert ctx.reply_text == "呜……你看，我都这么可怜了。"
+    assert ctx.output.performance.emotion == "cry"
     assert "assistant_reply_recovered" in ctx.warnings
     assert not any(w.startswith("assistant_reply_fallback") for w in ctx.warnings)

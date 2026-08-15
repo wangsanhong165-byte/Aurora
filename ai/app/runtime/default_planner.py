@@ -156,7 +156,7 @@ class DefaultPlanner:
             '9. Leave tool_calls as [] when not needed.\n'
             '10. Do NOT use [keyword] tags for emotions — use the "emotion" field in JSON segments instead.\n'
             '11. Do not output model names, expression files, motion names, Cubism IDs, bindings, or implementation details.\n'
-            '12. ALWAYS produce a spoken reply: "final_reply" and every segment "text" must be non-empty natural language. Never return empty, blank, or whitespace-only content — even for very short or unclear user input, respond naturally.\n'
+            '12. SPOKEN TEXT ONLY: ALWAYS produce a spoken reply. "final_reply" and every segment "text" must be non-empty natural language containing only words the character actually says aloud. Never narrate, announce, or claim visible actions in spoken text (for example, blinking, leaning closer, or making a face). Visible performance belongs only in "emotion", "behavior", "naturalVAD", and "motionPlan". If those fields cannot represent an action, do not claim that it happened. Never return empty, blank, or whitespace-only content — even for very short or unclear user input, respond naturally.\n'
         )
         append_system("output_protocol", format_instruction)
 

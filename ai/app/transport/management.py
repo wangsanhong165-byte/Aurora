@@ -67,7 +67,7 @@ class ManagementHandler:
                     changes,
                 )
             except (KeyError, ValueError, RuntimeError, OSError) as exc:
-                raise ManagementFailure("character_update_failed", str(exc)) from exc
+                raise ManagementFailure("character_edit_failed", str(exc)) from exc
         if action == "create_character":
             try:
                 return await asyncio.to_thread(self._manager.create_character, params)

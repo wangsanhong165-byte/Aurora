@@ -781,6 +781,7 @@ def test_management_rejects_busy_current_character_update_without_disk_changes(t
     }, "update-busy"))[0]
 
     assert event.event_type == "management.failed"
+    assert event.payload.code == "character_edit_failed"
     assert "processing a turn" in event.payload.message
     assert card_path.read_bytes() == previous
 

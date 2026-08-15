@@ -1,4 +1,4 @@
-﻿recordings/
+recordings/
 memory.short.jsonl
 
 # Large model/character files (exceed GitHub 100MB limit)
@@ -54,3 +54,6 @@ data/pids/
 # Local Pi delegation runtime data
 .agent-runs/logs/
 .agent-runs/results/
+
+# Agent scratch files (DSH session artifacts)
+.agent-runs/scratch/
