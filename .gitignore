@@ -3,6 +3,9 @@
 /code/
 /dev c++/
 /python/
+/person/
+/ai-backup-*/
+/ai-db-backup-*/
 
 # IDE and cache
 .idea/
