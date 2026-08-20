@@ -65,6 +65,40 @@ def test_registry_serializes_concurrent_writers_without_losing_entries(tmp_path:
     assert set(stored) == {f"service{index}" for index in range(40)}
 
 
+def test_status_prunes_registry_entry_after_the_process_has_exited(tmp_path: Path):
+    path = tmp_path / "services.json"
+    path.write_text(json.dumps({
+        "bridge": {
+            "port": 9528,
+            "command": {"module": "bridge"},
+            "profiles": ["backend"],
+        }
+    }), encoding="utf-8")
+    registry = ProcessRegistry(tmp_path / "pids.json")
+    registry.put(
+        "bridge",
+        ProcessIdentity(99, 1.0, "python.exe", ("python", "-m", "bridge"), 9528),
+    )
+
+    class Platform:
+        def port_owner(self, _port):
+            return None
+
+        def identity(self, _pid, _port):
+            return None
+
+    orchestrator = LifecycleOrchestrator(
+        tmp_path,
+        ServiceManifest.load(path),
+        registry=registry,
+        platform=Platform(),
+    )
+
+    orchestrator.status()
+
+    assert registry.get("bridge") is None
+
+
 def test_orchestrator_does_not_kill_unknown_port_owner(tmp_path: Path):
     path = tmp_path / "services.json"
     path.write_text(json.dumps({

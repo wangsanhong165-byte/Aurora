@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import time
@@ -48,7 +49,14 @@ class TurnRecorder:
         retention_days: int = 30,
     ):
         root = Path(__file__).resolve().parents[2]
-        self.path = path or root / "data" / "runtime" / "turns.db"
+        configured_path = os.environ.get("SOULLINK_TURN_TRACE_DB", "").strip()
+        self.path = (
+            Path(path)
+            if path is not None
+            else Path(configured_path)
+            if configured_path
+            else root / "data" / "runtime" / "turns.db"
+        )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.max_turns = max(1, int(max_turns))
         self.retention_days = max(1, int(retention_days))

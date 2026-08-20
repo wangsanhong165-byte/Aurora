@@ -314,7 +314,17 @@ class CharacterCatalog:
         model_id = str(raw_model_id or "").strip()
         if not model_id:
             raise ValueError("model_id is required")
-        model_dir = self._models_dir / model_id
+        relative = Path(model_id)
+        if relative.is_absolute() or len(relative.parts) != 1 or relative.name != model_id:
+            raise ValueError("model_id must name one installed model directory")
+        models_root = self._models_dir.resolve()
+        model_dir = (models_root / relative).resolve()
+        try:
+            contained = model_dir.relative_to(models_root)
+        except ValueError as exc:
+            raise ValueError("model_id must stay inside the model directory") from exc
+        if len(contained.parts) != 1:
+            raise ValueError("model_id must name one installed model directory")
         if not model_dir.is_dir() or not any(model_dir.glob("*.model3.json")):
             raise ValueError(f"referenced Live2D model is not installed: {model_id}")
         return model_id

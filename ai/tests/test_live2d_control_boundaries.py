@@ -126,7 +126,10 @@ def test_only_one_frontend_expression_parameter_controller_remains():
 
     assert "LegacyParameterController" not in controllers
     assert "legacyExpressionTargetForBlend" not in controllers
-    assert "this._ctrl.exprCtrl.apply" in explicit
+    assert "this._ctrl.exprCtrl.apply" not in explicit
+    assert "this._ctrl.motionArbiter.play" not in explicit
+    assert "this._ctrl.applyAvatarExpression" in explicit
+    assert "this._ctrl.applyAvatarMotion" in explicit
     assert "this._ctrl.paramCtrl.applyExpression" not in explicit
 
 

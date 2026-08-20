@@ -212,31 +212,20 @@
     "prompt_emotions": [
       "neutral",
       "happy",
-      "joyful",
-      "cheerful",
-      "laughing",
       "playful",
-      "smile",
       "love",
-      "angry",
-      "pout",
       "sad",
-      "cry",
-      "worried",
+      "angry",
       "surprised",
-      "confused",
-      "shy",
-      "embarrassed",
-      "calm",
-      "blank"
+      "shy"
     ],
     "emotion_map": {
       "neutral": "重置",
       "calm": "重置",
       "blank": "",
-      "happy": "心心眼",
-      "joyful": "心心眼",
-      "smile": "心心眼",
+      "happy": "",
+      "joyful": "",
+      "smile": "",
       "love": "心心眼",
       "cheerful": "星星眼",
       "laughing": "星星眼",
@@ -251,8 +240,22 @@
       "shy": "鸡爪眼",
       "embarrassed": "鸡爪眼"
     },
-    "behaviors": [],
-    "behavior_map": {},
+    "behaviors": [
+      "speak", "greet", "agree", "disagree", "think", "laugh",
+      "comfort", "wave", "nod", "tilt", "shrug"
+    ],
+    "behavior_map": {
+      "greet": { "motion": "sway", "expression": "happy", "motionIntensityScale": 0.92 },
+      "agree": { "motion": "nod" },
+      "disagree": { "motion": "tilt" },
+      "think": { "motion": "tilt", "suppressIdle": true },
+      "laugh": { "motion": "sway", "expression": "playful", "motionIntensityScale": 1.08 },
+      "comfort": { "motion": "tilt", "motionIntensityScale": 0.72 },
+      "wave": { "motion": "sway" },
+      "nod": { "motion": "nod" },
+      "tilt": { "motion": "tilt" },
+      "shrug": { "motion": "tilt", "motionIntensityScale": 0.78 }
+    },
     "accessories": {
       "丸子头": "丸子头",
       "猫耳": "猫耳",

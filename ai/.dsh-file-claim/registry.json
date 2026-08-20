@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "sessions": {
+    "session-4577b5e2-88ef-4998-85b0-b5f4302b2d29": {
+      "startedAt": 1786797518145,
+      "claims": [],
+      "lastSeenAt": 1786905427949
+    },
+    "session-03d30616-88ac-4b58-80bc-43c5bc8b0689": {
+      "startedAt": 1786799089145,
+      "claims": [],
+      "lastSeenAt": 1786905427949
+    },
+    "session-e23d7dba-0611-41b6-a288-77c615ab426d": {
+      "startedAt": 1786816355560,
+      "claims": [],
+      "lastSeenAt": 1786905427948
+    },
+    "session-ca18929c-47aa-48b6-927c-97a6ed4ded37": {
+      "startedAt": 1786817130155,
+      "claims": [],
+      "lastSeenAt": 1786905427949
+    },
+    "session-99cebd9a-0a24-485e-8486-c5dba77c4bf9": {
+      "startedAt": 1786817130882,
+      "claims": [],
+      "lastSeenAt": 1786905427949
+    }
+  }
+}

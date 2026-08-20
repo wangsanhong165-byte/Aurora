@@ -293,6 +293,26 @@ def test_validator_recovers_all_supported_expression_families_from_plain_text():
         assert recovered.segments[0]["emotion"] == emotion, reply
 
 
+def test_validator_uses_user_intent_and_collapses_aliases_to_model_palette():
+    from app.runtime.response_validator import ResponseValidator
+
+    crying = ResponseValidator().validate(
+        "好呀。",
+        [],
+        allowed_emotions=["neutral", "sad", "playful"],
+        semantic_context="做个哭哭脸吧",
+    )
+    playful = ResponseValidator().validate(
+        "好呀。",
+        [],
+        allowed_emotions=["neutral", "sad", "playful"],
+        semantic_context="向我卖个萌",
+    )
+
+    assert crying.segments[0]["emotion"] == "sad"
+    assert playful.segments[0]["emotion"] == "playful"
+
+
 def test_validator_recovers_supported_body_language_behaviors_from_plain_text():
     from app.runtime.response_validator import ResponseValidator
 
@@ -335,6 +355,24 @@ def test_validator_keeps_visible_stage_directions_out_of_spoken_text():
     assert structured.valid is False
     assert structured.reply == "呜……你看，我都这么可怜了。"
     assert structured.segments[0]["text"] == "呜……你看，我都这么可怜了。"
+
+
+def test_validator_strips_unbracketed_performance_narration_from_tts():
+    from app.runtime.response_validator import ResponseValidator
+
+    result = ResponseValidator().validate(
+        "那我这就做给你看~ 呜呜呜，装出一副可怜巴巴的样子，"
+        "眼角都往下耷拉着。这样够不够惨？要不要再配点抽搭声给你？",
+        [],
+        allowed_emotions=["neutral", "sad", "playful"],
+        semantic_context="哭哭好",
+    )
+
+    assert "装出" not in result.reply
+    assert "眼角" not in result.reply
+    assert "配点抽搭声" not in result.reply
+    assert result.reply == "那我这就做给你看~ 呜呜呜。这样够不够惨？"
+    assert result.segments[0]["emotion"] == "sad"
 
 
 def test_validator_preserves_non_action_parentheses_and_keeps_action_only_reply_spoken():
@@ -384,42 +422,25 @@ def test_decision_step_repairs_truncated_empty_reply_once():
     assert ctx.reply_text == "fixed"
 
 
-def test_decision_step_repairs_single_sentence_plain_text_into_presentation_once():
-    class PlainTextThenStructuredLLM:
+def test_decision_step_recovers_plain_text_presentation_without_a_second_llm_call():
+    class PlainTextLLM:
         def __init__(self):
             self.calls = []
 
         async def generate(self, messages, **kwargs):
             self.calls.append(kwargs)
-            if len(self.calls) == 1:
-                return LLMResponse(reply="那我眨眨眼给你看。")
-            return LLMResponse(
-                reply="这样可以吗？",
-                segments=[{
-                    "text": "这样可以吗？",
-                    "emotion": "playful",
-                    "behavior": "tilt",
-                    "motionPlan": {
-                        "durationMs": 1200,
-                        "steps": [{
-                            "atMs": 0,
-                            "durationMs": 600,
-                            "primitive": "tilt_right",
-                            "intensity": 0.5,
-                        }],
-                    },
-                }],
-            )
+            return LLMResponse(reply="那我眨眨眼给你看。")
 
-    llm = PlainTextThenStructuredLLM()
+    llm = PlainTextLLM()
     ctx = CharacterTurn(input=TurnInput(text="卖个萌吧"))
     run(DecisionStep(llm).run(ctx))
 
-    assert len(llm.calls) == 2
-    assert llm.calls[1]["tools"] is None
+    assert len(llm.calls) == 1
     assert ctx.reply_text == "这样可以吗？"
     assert ctx.output.performance.emotion == "playful"
-    assert ctx.output.performance.motion_plan["steps"][0]["primitive"] == "tilt_right"
+    assert ctx.output.performance.behavior == "speak"
+    assert "assistant_reply_semantic_recovered" in ctx.warnings
+    assert "assistant_reply_sanitized" in ctx.warnings
 
 
 def test_decision_step_falls_back_when_repair_is_also_empty():
@@ -567,8 +588,8 @@ def test_decision_step_fallback_not_written_to_conversation_history():
     assert any(w.startswith("assistant_reply_fallback") for w in ctx.warnings)
 
 
-def test_decision_step_keeps_plain_text_reply_when_repair_fails():
-    """A usable plain-text reply survives a failed repair — no fallback line.
+def test_decision_step_keeps_plain_text_reply_without_a_repair_round_trip():
+    """A usable plain-text reply is locally recovered without added latency.
 
     When tools are present the adapter stops forcing JSON output, so DeepSeek
     can answer with a single prose sentence. The validator requests one
@@ -576,45 +597,42 @@ def test_decision_step_keeps_plain_text_reply_when_repair_fails():
     lose an otherwise usable spoken reply.
     """
 
-    class PlainTextThenEmptyLLM:
+    class PlainTextLLM:
         def __init__(self):
             self.calls = 0
 
         async def generate(self, messages, **kwargs):
             self.calls += 1
-            if self.calls == 1:
-                return LLMResponse(reply="那我眨眨眼给你看。")
-            return LLMResponse(reply="", finish_reason="stop")
+            return LLMResponse(reply="当然可以，交给我吧。")
 
-    llm = PlainTextThenEmptyLLM()
+    llm = PlainTextLLM()
     ctx = CharacterTurn(input=TurnInput(text="hi"))
     run(DecisionStep(llm).run(ctx))
 
-    assert llm.calls == 2
-    assert ctx.reply_text == "那我眨眨眼给你看。"
-    assert "assistant_reply_recovered" in ctx.warnings
+    assert llm.calls == 1
+    assert ctx.reply_text == "当然可以，交给我吧。"
+    assert "assistant_reply_semantic_recovered" in ctx.warnings
     assert not any(w.startswith("assistant_reply_fallback") for w in ctx.warnings)
 
 
-def test_decision_step_sanitizes_stage_direction_when_repair_fails():
-    class NarratedActionThenEmptyLLM:
+def test_decision_step_sanitizes_stage_direction_without_repair_latency():
+    class NarratedActionLLM:
         def __init__(self):
             self.calls = 0
 
         async def generate(self, messages, **kwargs):
             self.calls += 1
-            if self.calls == 1:
-                return LLMResponse(
-                    reply="呜……（做出委屈巴巴的哭哭脸）你看，我都这么可怜了。"
-                )
-            return LLMResponse(reply="", finish_reason="stop")
+            return LLMResponse(
+                reply="呜……（做出委屈巴巴的哭哭脸）你看，我都这么可怜了。"
+            )
 
-    llm = NarratedActionThenEmptyLLM()
+    llm = NarratedActionLLM()
     ctx = CharacterTurn(input=TurnInput(text="做个哭哭脸吧"))
     run(DecisionStep(llm).run(ctx))
 
-    assert llm.calls == 2
+    assert llm.calls == 1
     assert ctx.reply_text == "呜……你看，我都这么可怜了。"
     assert ctx.output.performance.emotion == "cry"
-    assert "assistant_reply_recovered" in ctx.warnings
+    assert "assistant_reply_semantic_recovered" in ctx.warnings
+    assert "assistant_reply_sanitized" in ctx.warnings
     assert not any(w.startswith("assistant_reply_fallback") for w in ctx.warnings)

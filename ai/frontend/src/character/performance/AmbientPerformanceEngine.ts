@@ -159,11 +159,11 @@ export class AmbientPerformanceEngine {
     gain: number,
     enabled: boolean,
   ): Record<string, number> {
-    const activityRate = this.activity === 'speaking' ? 1.24 : 0.82
+    const activityRate = this.activity === 'speaking' ? 1.12 : 0.74
     this.tailPhase += dt * activityRate
-    const autonomous = Math.sin(this.tailPhase) * 6.2
-      + Math.sin(this.tailPhase * 0.47 + 1.3) * 1.35
-    const bodyInertia = -(pose['body.x'] ?? 0) * 1.35 - (pose['head.z'] ?? 0) * 0.72
+    const autonomous = Math.sin(this.tailPhase) * 5.4
+      + Math.sin(this.tailPhase * 0.43 + 1.3) * 1.55
+    const bodyInertia = -(pose['body.x'] ?? 0) * 1.42 - (pose['head.z'] ?? 0) * 0.76
     const speechPulse = this.activity === 'speaking'
       ? Math.sin(this.tailPhase * 2.35 + 0.4) * (0.8 + clamp(audioLevel, 0, 1) * 2.4)
       : 0
@@ -173,21 +173,25 @@ export class AmbientPerformanceEngine {
 
     // Root establishes direction only. Most of the silhouette change belongs
     // to the skinning chain below.
-    const rootTarget = driver * 0.24
-    const rootAcceleration = (rootTarget - this.tailRootValue) * 17 - this.tailRootVelocity * 6.8
+    const rootTarget = driver * 0.18
+    const rootAcceleration = (rootTarget - this.tailRootValue) * 15 - this.tailRootVelocity * 6.6
     this.tailRootVelocity += rootAcceleration * dt
     this.tailRootValue = clamp(this.tailRootValue + this.tailRootVelocity * dt, -3, 3)
 
-    let parent = driver
+    let parent = driver * 0.82
     for (let index = 0; index < this.tailSegmentValues.length; index += 1) {
       // Each stage follows the previous stage rather than the shared driver.
       // A small travelling bias prevents all segments from becoming parallel,
       // while attenuation keeps the tip soft instead of whip-like.
-      const attenuation = 0.965 - index * 0.006
-      const travellingBias = Math.sin(this.tailPhase - index * 0.19) * (0.18 + index * 0.025)
-      const desired = clamp(parent * attenuation + travellingBias, -10, 10)
-      const stiffness = Math.max(9.5, 17 - index * 0.42)
-      const damping = Math.max(4.4, 6.4 - index * 0.12)
+      const progress = index / Math.max(1, this.tailSegmentValues.length - 1)
+      const attenuation = 0.94 - index * 0.008
+      const travellingWave = Math.sin(this.tailPhase * 1.08 - index * 0.21)
+        * (0.22 + progress * 0.72)
+      const counterWave = Math.sin(this.tailPhase * 0.51 + index * 0.11 + 0.8)
+        * (0.08 + progress * 0.24)
+      const desired = clamp(parent * attenuation + travellingWave + counterWave, -10, 10)
+      const stiffness = Math.max(8.4, 15.5 - index * 0.5)
+      const damping = Math.max(4.45, 6.15 - index * 0.115)
       const acceleration = (desired - this.tailSegmentValues[index]) * stiffness
         - this.tailSegmentVelocities[index] * damping
       this.tailSegmentVelocities[index] += acceleration * dt

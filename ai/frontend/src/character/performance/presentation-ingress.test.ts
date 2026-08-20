@@ -16,12 +16,12 @@ test('higher-authority interaction temporarily blocks only its claimed channels'
     intent: { emotion: 'sad', behavior: 'speak', motionPlan: { durationMs: 600, steps: [] } },
   })
 
-  assert.deepEqual([...llm!.channels], ['motion', 'activity'])
+  assert.deepEqual([...llm!.channels], ['motion'])
   now = 601
   const afterExpiry = ingress.submit({
     source: 'llm', owner: 'turn:1', turnId: '1', intent: { emotion: 'sad' },
   })
-  assert.deepEqual([...afterExpiry!.channels], ['expression', 'motion', 'attention', 'activity'])
+  assert.deepEqual([...afterExpiry!.channels], ['expression', 'motion', 'attention'])
 })
 
 test('releasing a completed turn prevents stale ownership leaking forward', () => {
@@ -30,5 +30,5 @@ test('releasing a completed turn prevents stale ownership leaking forward', () =
   ingress.releaseTurn('old')
 
   const next = ingress.submit({ source: 'llm', owner: 'turn:new', turnId: 'new', intent: {} })
-  assert.equal(next!.channels.size, 4)
+  assert.equal(next!.channels.size, 3)
 })

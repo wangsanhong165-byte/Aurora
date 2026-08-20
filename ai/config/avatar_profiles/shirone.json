@@ -3,13 +3,14 @@
   "expressions": [
     "neutral",
     "happy",
+    "playful",
+    "love",
     "sad",
     "angry",
     "surprised",
-    "shy",
-    "love"
+    "shy"
   ],
-  "motions": [],
+  "motions": ["nod", "tilt", "sway", "thinking"],
   "sequences": [],
   "parameters": {
     "eye": {
@@ -36,25 +37,25 @@
     "body.z": "ParamBodyAngleZ",
     "tail.z": {
       "target": "Param_Angle_Rotation_1_ArtMesh572",
-      "scale": 0.3,
-      "min": -3,
-      "max": 3
+      "scale": 0.2,
+      "min": -2.2,
+      "max": 2.2
     },
-    "tail.segment01": { "target": "Param_Angle_Rotation_1_ArtMesh571", "scale": 0.56 },
-    "tail.segment02": { "target": "Param_Angle_Rotation_2_ArtMesh571", "scale": 0.58 },
-    "tail.segment03": { "target": "Param_Angle_Rotation_3_ArtMesh571", "scale": 0.60 },
-    "tail.segment04": { "target": "Param_Angle_Rotation_4_ArtMesh571", "scale": 0.62 },
-    "tail.segment05": { "target": "Param_Angle_Rotation_5_ArtMesh571", "scale": 0.64 },
-    "tail.segment06": { "target": "Param_Angle_Rotation_6_ArtMesh571", "scale": 0.66 },
-    "tail.segment07": { "target": "Param_Angle_Rotation_7_ArtMesh571", "scale": 0.68 },
-    "tail.segment08": { "target": "Param_Angle_Rotation_8_ArtMesh571", "scale": 0.70 },
-    "tail.segment09": { "target": "Param_Angle_Rotation_9_ArtMesh571", "scale": 0.72 },
-    "tail.segment10": { "target": "Param_Angle_Rotation_10_ArtMesh571", "scale": 0.74 },
-    "tail.segment11": { "target": "Param_Angle_Rotation_11_ArtMesh571", "scale": 0.76 },
-    "tail.segment12": { "target": "Param_Angle_Rotation_12_ArtMesh571", "scale": 0.78 },
-    "tail.segment13": { "target": "Param_Angle_Rotation_13_ArtMesh571", "scale": 0.80 },
-    "tail.segment14": { "target": "Param_Angle_Rotation_14_ArtMesh571", "scale": 0.82 },
-    "tail.segment15": { "target": "Param_Angle_Rotation_15_ArtMesh571", "scale": 0.84 },
+    "tail.segment01": { "target": "Param_Angle_Rotation_1_ArtMesh571", "scale": 0.64 },
+    "tail.segment02": { "target": "Param_Angle_Rotation_2_ArtMesh571", "scale": 0.67 },
+    "tail.segment03": { "target": "Param_Angle_Rotation_3_ArtMesh571", "scale": 0.70 },
+    "tail.segment04": { "target": "Param_Angle_Rotation_4_ArtMesh571", "scale": 0.73 },
+    "tail.segment05": { "target": "Param_Angle_Rotation_5_ArtMesh571", "scale": 0.76 },
+    "tail.segment06": { "target": "Param_Angle_Rotation_6_ArtMesh571", "scale": 0.79 },
+    "tail.segment07": { "target": "Param_Angle_Rotation_7_ArtMesh571", "scale": 0.82 },
+    "tail.segment08": { "target": "Param_Angle_Rotation_8_ArtMesh571", "scale": 0.85 },
+    "tail.segment09": { "target": "Param_Angle_Rotation_9_ArtMesh571", "scale": 0.88 },
+    "tail.segment10": { "target": "Param_Angle_Rotation_10_ArtMesh571", "scale": 0.91 },
+    "tail.segment11": { "target": "Param_Angle_Rotation_11_ArtMesh571", "scale": 0.94 },
+    "tail.segment12": { "target": "Param_Angle_Rotation_12_ArtMesh571", "scale": 0.97 },
+    "tail.segment13": { "target": "Param_Angle_Rotation_13_ArtMesh571", "scale": 1.00 },
+    "tail.segment14": { "target": "Param_Angle_Rotation_14_ArtMesh571", "scale": 1.03 },
+    "tail.segment15": { "target": "Param_Angle_Rotation_15_ArtMesh571", "scale": 1.06 },
     "mouth.open": "ParamMouthOpenY",
     "mouth.form": "ParamMouthForm",
     "breath": "ParamBreath",
@@ -63,10 +64,14 @@
   },
   "motionStyle": {
     "preset": "natural",
-    "microMotionGain": 1.0,
-    "idleActionGain": 1.0,
-    "gestureFrequency": 1.0,
-    "speechAccentGain": 1.22
+    "spontaneity": 1.18,
+    "gestureFrequency": 1.18,
+    "gazeStability": 0.62,
+    "microMotionGain": 1.1,
+    "idleActionGain": 1.14,
+    "bodyMotionGain": 1.18,
+    "avoidRepeatWindow": 4,
+    "speechAccentGain": 1.38
   },
   "personality": {
     "expressiveness": 0.88,
@@ -97,15 +102,12 @@
       "Param217", "Param219"
     ]]
   },
-  "parameterGain": 1.3,
-  "bodyMotionGain": 1.2,
+  "parameterGain": 1.32,
+  "bodyMotionGain": 1.34,
   "motionMap": {
     "idle": "Idle"
   },
   "expressionMap": {
-    "happy": "心心眼",
-    "joyful": "心心眼",
-    "smile": "心心眼",
     "cheerful": "星星眼",
     "laughing": "星星眼",
     "playful": "星星眼",

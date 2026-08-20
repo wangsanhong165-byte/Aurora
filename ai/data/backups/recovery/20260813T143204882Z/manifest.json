@@ -1,0 +1,14 @@
+{
+  "source": "C:\\Users\\LENOVO\\Desktop\\c++\\ai\\data\\memory\\memory.db",
+  "created_at_utc": "2026-08-13T14:32:05.038522+00:00",
+  "files": {
+    "memory.db": {
+      "size": 1609728,
+      "sha256": "1315a9fb1bcaa1fb1b2f508ba182796b3ec0bb477898075b1c173026420b904a"
+    },
+    "turns.db": {
+      "size": 2150400,
+      "sha256": "76876069b3e3b5b67e0d9642f092281aa4374b7631476e0d19fc131eebac32a1"
+    }
+  }
+}

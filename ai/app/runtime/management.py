@@ -70,7 +70,17 @@ class RuntimeManager:
             memory_store=self._memory_store,
             delete_histories=self._delete_character_histories,
             delete_compiled_data=delete_character_compiled_data,
+            pending_cleanup_path=(
+                self._base_dir / "data" / "runtime"
+                / "pending-character-cleanup.json"
+            ),
         )
+        cleanup_retry = self._character_lifecycle.retry_pending_cleanups()
+        if cleanup_retry["pending"]:
+            logger.warning(
+                "[CharacterCatalog] Pending cleanup remains for: %s",
+                ", ".join(cleanup_retry["pending"]),
+            )
 
     # ── Initialization ──────────────────────────────────────────────
 

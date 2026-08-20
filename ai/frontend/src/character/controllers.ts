@@ -485,7 +485,7 @@ export class CharacterController {
         if (!this.stateMachine.isCurrentTurn(turnId)) return
         this.submitPresentation({
           source: 'lifecycle', owner: `turn:${turnId}:asr`, turnId, leaseMs: 500,
-          channels: ['expression', 'attention', 'activity'],
+          channels: ['expression', 'attention'],
           intent: { turnId, emotion: 'neutral', behavior: 'listen', intensity: 0.35, attention: 'user', energy: 0.25 },
         })
         this.onActivityChange('thinking', turnId)
@@ -611,14 +611,56 @@ export class CharacterController {
     if (accepted) this.applyIntent(accepted.intent, accepted.channels)
   }
 
+  /** Preserve avatar-protocol expression names while enforcing ingress ownership. */
+  applyAvatarExpression(
+    name: string,
+    intensity: number,
+    controller = 'avatar',
+    authority = 100,
+    transitionMs = 500,
+  ): boolean {
+    const accepted = this.presentationIngress.submit({
+      source: 'explicit',
+      owner: `avatar:${controller}:expression`,
+      authority,
+      leaseMs: 1_500,
+      channels: ['expression'],
+      intent: { emotion: name, intensity },
+    })
+    if (!accepted?.channels.has('expression')) return false
+    this.exprCtrl.apply(name, intensity, transitionMs)
+    return true
+  }
+
+  /** Preserve authored avatar motion names while enforcing ingress ownership. */
+  applyAvatarMotion(
+    name: string,
+    controller = 'avatar',
+    authority = 100,
+  ): boolean {
+    const accepted = this.presentationIngress.submit({
+      source: 'explicit',
+      owner: `avatar:${controller}:motion`,
+      authority,
+      leaseMs: 1_500,
+      channels: ['motion'],
+      intent: { behavior: name },
+    })
+    if (!accepted?.channels.has('motion')) return false
+    this.motionArbiter.play(name)
+    return true
+  }
+
   /** Execute one accepted semantic plan through existing expression/motion controllers. */
   private applyIntent(
     intent: import('./CharacterBehaviorResolver').CharacterIntent,
-    channels: ReadonlySet<PresentationChannel> = new Set(['expression', 'motion', 'attention', 'activity']),
+    channels: ReadonlySet<PresentationChannel> = new Set(['expression', 'motion', 'attention']),
   ): void {
     const activeIntent = {
       ...intent,
-      activity: intent.activity ?? this.currentActivity,
+      // Runtime/audio state is the sole activity authority. Presentation
+      // requests may shape expression, motion, and attention only.
+      activity: this.currentActivity,
     }
     if (channels.has('expression')) {
       this._currentEmotion = activeIntent.emotion || 'neutral'

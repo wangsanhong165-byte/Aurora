@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Thin Codex -> Pi -> OpenCode Go -> DeepSeek V4 Flash delegation layer."""
+"""Thin 主 Agent -> Pi -> OpenCode Go -> DeepSeek V4 Flash delegation layer."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ RESULTS_DIR = RUN_ROOT / "results"
 
 FIXED_PROVIDER = "opencode-go"
 FIXED_MODEL = "deepseek-v4-flash"
-THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+THINKING_LEVELS = {"max"}  # 质量优先：固定 max，禁止降档
 TASK_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 SENSITIVE_PATTERN = re.compile(
     r"(?i)(authorization\s*:\s*bearer\s+)([^\s\"',}]+)"
@@ -83,7 +83,7 @@ def validate_thinking(value: str) -> str:
     if value not in THINKING_LEVELS:
         raise DelegationError(
             "invalid_task",
-            f"不支持的 thinking 等级：{value}；允许值为 {sorted(THINKING_LEVELS)}",
+            f"为保障代码质量，thinking 固定为 max，禁止降档（收到：{value}）；允许值：{sorted(THINKING_LEVELS)}",
         )
     return value
 
@@ -246,7 +246,7 @@ def build_pi_command(
     validate_config(config)
     chosen_thinking = validate_thinking(thinking or str(config["thinking"]))
     relative_task = task_path.resolve().relative_to(project_root.resolve()).as_posix()
-    prompt = f"""你是由 Codex 委派的受限执行 Agent。
+    prompt = f"""你是由主 Agent 委派的受限执行 Agent。
 
 读取任务规范文件 {relative_task} 并完成其中目标。
 

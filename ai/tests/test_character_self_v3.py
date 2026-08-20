@@ -1,3 +1,4 @@
+from app.domain.character import Character
 from app.domain.character_self import CharacterSelf
 
 
@@ -94,3 +95,18 @@ def test_character_self_rolls_back_all_mutations_from_a_failed_turn():
 
     assert aggregate.snapshot() == {"mood": {"current": "neutral", "valence": 0.0}}
     assert character.state == aggregate.snapshot()
+
+
+def test_character_self_transaction_keeps_interaction_history_across_turns():
+    aggregate = CharacterSelf(Character({"id": "monika", "name": {"zh": "Monika"}}))
+
+    aggregate.begin_turn()
+    aggregate.commit_turn("第一轮")
+    aggregate.begin_turn()
+    state = aggregate.commit_turn("第二轮")
+
+    assert state["interaction_count"] == 2
+    assert state["recent_focus"] == [
+        "刚刚聊到：第二轮",
+        "刚刚聊到：第一轮",
+    ]

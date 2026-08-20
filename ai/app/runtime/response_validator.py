@@ -21,6 +21,7 @@ class ResponseValidator:
         segments: list[dict] | None,
         *,
         allowed_emotions: Iterable[str] | None = None,
+        semantic_context: str = "",
     ) -> ValidatedResponse:
         accepted_emotions = CharacterIntent._accepted_emotions(allowed_emotions)
         raw_reply = str(reply or "")
@@ -73,7 +74,10 @@ class ResponseValidator:
                 if raw_reply.lstrip().startswith(("{", "[")):
                     reply = "I couldn't format that response safely."
                 normalized = self._recover_semantic_segments(
-                    reply, accepted_emotions, semantic_text=raw_reply,
+                    reply,
+                    accepted_emotions,
+                    semantic_text=raw_reply,
+                    semantic_context=semantic_context,
                 )
         # An empty reply (no spoken text and no non-empty segments) is never a
         # legitimate completion for a voice companion: it is either truncation
@@ -97,6 +101,7 @@ class ResponseValidator:
         accepted_emotions: set[str] | None = None,
         *,
         semantic_text: str = "",
+        semantic_context: str = "",
     ) -> list[dict]:
         """Conservative fallback when a provider drops the JSON envelope.
 
@@ -114,15 +119,39 @@ class ResponseValidator:
         recovered = [
             cls._recover_sentence(
                 sentence,
-                semantic_sentences[index] if semantic_sentences else sentence,
+                "\n".join(filter(None, (
+                    semantic_context.strip(),
+                    semantic_sentences[index] if semantic_sentences else sentence,
+                ))),
             )
             for index, sentence in enumerate(sentences)
         ]
         if accepted_emotions is not None:
             for item in recovered:
                 if item["emotion"] not in accepted_emotions:
-                    item["emotion"] = "neutral"
+                    item["emotion"] = cls._supported_emotion(
+                        item["emotion"], accepted_emotions,
+                    )
         return recovered
+
+    @staticmethod
+    def _supported_emotion(emotion: str, accepted_emotions: set[str]) -> str:
+        """Collapse semantic aliases onto the model's real visual palette."""
+        families = {
+            "cry": ("sad",),
+            "worried": ("sad",),
+            "pout": ("angry",),
+            "confused": ("surprised",),
+            "embarrassed": ("shy",),
+            "joyful": ("happy",),
+            "cheerful": ("happy",),
+            "laughing": ("happy",),
+            "smile": ("happy",),
+        }
+        for candidate in families.get(emotion, ()):
+            if candidate in accepted_emotions:
+                return candidate
+        return "neutral"
 
     @staticmethod
     def _split_sentences(reply: str) -> list[str]:
@@ -141,7 +170,7 @@ class ResponseValidator:
         intensity = 0.5
 
         if any(token in lowered for token in (
-            "哭哭脸", "想哭", "哭了", "流泪", "眼泪", "委屈", "泪汪汪",
+            "哭哭", "哭哭脸", "想哭", "哭了", "流泪", "眼泪", "委屈", "泪汪汪",
             "cry", "tearful",
         )):
             emotion, energy, intensity = "cry", 0.28, 0.65
@@ -152,7 +181,7 @@ class ResponseValidator:
         elif any(token in lowered for token in ("生气", "愤怒", "恼火", "angry", "mad")):
             emotion, energy, intensity = "angry", 0.75, 0.68
         elif any(token in lowered for token in (
-            "惊讶", "震惊", "吓一跳", "没想到", "surprised", "shocked",
+            "惊讶", "惊喜", "震惊", "吓一跳", "没想到", "surprised", "shocked",
         )):
             emotion, energy, intensity = "surprised", 0.78, 0.72
         elif any(token in lowered for token in (
@@ -162,7 +191,7 @@ class ResponseValidator:
         elif any(token in lowered for token in ("害羞", "紧张", "不好意思", "脸红", "shy", "nervous")):
             emotion, energy, intensity = "shy", 0.35, 0.48
         elif any(token in lowered for token in (
-            "卖萌", "眨眼", "眨眨眼", "调皮", "俏皮", "逗你", "搞怪",
+            "卖萌", "卖个萌", "眨眼", "眨眨眼", "调皮", "俏皮", "逗你", "逗我", "搞怪",
             "playful", "tease",
         )):
             emotion, energy, intensity = "playful", 0.67, 0.62
@@ -170,7 +199,10 @@ class ResponseValidator:
             "喜欢你", "爱你", "心动", "很喜欢", "love you",
         )):
             emotion, energy, intensity = "love", 0.58, 0.7
-        elif any(token in lowered for token in ("开心", "高兴", "乐意", "期待", "happy", "glad", "excited")):
+        elif any(token in lowered for token in (
+            "开心", "高兴", "乐意", "期待", "庆祝", "太好了",
+            "happy", "glad", "excited", "celebrate",
+        )):
             emotion, energy, intensity = "happy", 0.68, 0.62
         elif any(token in lowered for token in ("难过", "伤心", "悲伤", "sad", "sorry to hear")):
             emotion, energy, intensity = "sad", 0.3, 0.55
@@ -240,7 +272,33 @@ class ResponseValidator:
             return match.group(0)
 
         spoken = pattern.sub(replace, str(value or "")).strip()
+        # Models sometimes put the same visible performance directly into
+        # prose instead of brackets ("我眨眨眼给你看", "装出哭哭脸").  Those
+        # clauses must never reach TTS: the renderer performs them through the
+        # semantic segment while the character says only the remaining words.
+        plain_action_patterns = (
+            r"(?:那)?(?:我|咱)(?:这就|现在|再|先|来)?(?:给你)?"
+            r"(?:眨(?:眨)?眼|凑近|靠近|点(?:点)?头|摇(?:摇)?头|歪头|侧头|"
+            r"低(?:下)?头|抬头|挥(?:挥)?手|耸(?:耸)?肩|笑(?:一)?笑|哭(?:一)?哭)"
+            r"[^，。！？!?；;]{0,24}",
+            r"(?:装出|摆出|露出|做出)[^，。！？!?；;]{0,36}"
+            r"(?:样子|表情|神情|笑脸|哭脸)",
+            r"(?:眼角|嘴角|眉眼|眉毛)[^，。！？!?；;]{0,30}"
+            r"(?:耷拉(?:着)?|弯起|扬起|垂下|皱起|挑起)",
+            r"(?:看好了|你看)(?:，|,)?(?:我|这边)(?:这就|现在)?[^，。！？!?；;]{0,24}"
+            r"(?:眨眼|点头|摇头|歪头|笑|哭|表情|样子)",
+            r"(?:要不要|我)?(?:再)?(?:给你)?配[^，。！？!?；;]{0,20}(?:声|声音)(?:给你)?",
+        )
+        for action_pattern in plain_action_patterns:
+            spoken, count = re.subn(action_pattern, "", spoken, flags=re.IGNORECASE)
+            removed = removed or bool(count)
         spoken = re.sub(r"[ \t]{2,}", " ", spoken)
+        spoken = re.sub(r"^[，,。；;~～\s]+", "", spoken)
+        spoken = re.sub(r"[，,；;]+\s*(?=[。！？!?])", "", spoken)
+        spoken = re.sub(r"[，,；;]{2,}", "，", spoken)
+        spoken = re.sub(r"[。]{2,}", "。", spoken)
+        spoken = re.sub(r"[！!]{2,}", "！", spoken)
+        spoken = re.sub(r"[？?]{2,}", "？", spoken)
         spoken = re.sub(r"\s+([，。！？,.!?])", r"\1", spoken).strip()
         if removed and not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", spoken):
             spoken = "这样可以吗？"

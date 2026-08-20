@@ -1,7 +1,7 @@
 import type { CharacterIntent } from '../CharacterBehaviorResolver'
 
-export type PresentationChannel = 'expression' | 'motion' | 'attention' | 'activity'
-export type PresentationSource = 'idle' | 'llm' | 'interaction' | 'lifecycle' | 'explicit'
+export type PresentationChannel = 'expression' | 'motion' | 'attention'
+export type PresentationSource = 'llm' | 'interaction' | 'lifecycle' | 'explicit'
 
 export interface PresentationRequest {
   source: PresentationSource
@@ -21,13 +21,12 @@ export interface AcceptedPresentation {
 type Lease = { owner: string; source: PresentationSource; authority: number; expiresAt: number; turnId: string }
 
 const DEFAULT_AUTHORITY: Record<PresentationSource, number> = {
-  idle: 10,
   llm: 50,
   interaction: 60,
   lifecycle: 80,
   explicit: 100,
 }
-const ALL_CHANNELS: PresentationChannel[] = ['expression', 'motion', 'attention', 'activity']
+const ALL_CHANNELS: PresentationChannel[] = ['expression', 'motion', 'attention']
 
 /** Arbitrates semantic ownership before any expression, attention, or motion controller. */
 export class PresentationIngress {

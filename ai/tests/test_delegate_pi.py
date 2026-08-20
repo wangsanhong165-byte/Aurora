@@ -49,6 +49,12 @@ def test_config_accepts_only_opencode_go_deepseek_v4_flash(delegate):
     assert "fallback" not in config
     assert "models" not in config
 
+    for downgrade in ("off", "minimal", "low", "medium", "high", "xhigh"):
+        lowered = dict(config, thinking=downgrade)
+        with pytest.raises(delegate.DelegationError) as error:
+            delegate.validate_config(lowered)
+        assert error.value.status == "invalid_task"
+
     for provider, model in [
         ("deepseek", "deepseek-v4-flash"),
         ("opencode-go", "deepseek-v4-pro"),
@@ -151,7 +157,7 @@ def test_build_command_is_single_model_ephemeral_and_json(delegate, tmp_path):
         delegate.default_config(),
         project_root,
         task_path,
-        thinking="high",
+        thinking="max",
     )
 
     assert command[0].endswith("pi.cmd")
@@ -161,22 +167,22 @@ def test_build_command_is_single_model_ephemeral_and_json(delegate, tmp_path):
     assert "--no-session" in command
     assert command[command.index("--provider") + 1] == "opencode-go"
     assert command[command.index("--model") + 1] == "deepseek-v4-flash"
-    assert command[command.index("--thinking") + 1] == "high"
+    assert command[command.index("--thinking") + 1] == "max"
     assert "--models" not in command
     assert "--api-key" not in command
     assert "--no-extensions" in command
     assert "--no-skills" in command
-    assert command[-1].startswith("你是由 Codex 委派的受限执行 Agent。")
+    assert command[-1].startswith("你是由主 Agent 委派的受限执行 Agent。")
     assert ".agent-runs/tasks/task.json" in command[-1]
     assert "\n" not in command[-1]
     assert len(command[-1]) < 1600
 
 
-def test_thinking_level_is_bounded(delegate):
-    assert delegate.validate_thinking("medium") == "medium"
-    assert delegate.validate_thinking("xhigh") == "xhigh"
-    with pytest.raises(delegate.DelegationError):
-        delegate.validate_thinking("auto")
+def test_thinking_is_fixed_at_max(delegate):
+    assert delegate.validate_thinking("max") == "max"
+    for downgrade in ("off", "minimal", "low", "medium", "high", "xhigh", "auto"):
+        with pytest.raises(delegate.DelegationError):
+            delegate.validate_thinking(downgrade)
 
 
 def test_task_timeout_can_only_tighten_global_timeout(delegate):

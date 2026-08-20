@@ -2,10 +2,10 @@
 
 ## 用途
 
-这套委派层用于降低 Codex 在普通执行任务上的额度消耗。Codex 仍负责方向判断和最终质量，Pi 只执行已经拆清边界的任务。
+这套委派层用于把用户批准、边界明确的机械执行任务交给 DeepSeek V4 Flash。主 Agent（我，不是 Codex）始终负责方向判断和最终质量，Pi 只执行已经拆清边界、可自动验证的任务；质量优先于省 token。
 
 ```text
-Codex -> Pi CLI -> OpenCode Go API -> DeepSeek V4 Flash
+主 Agent -> Pi CLI -> OpenCode Go API -> DeepSeek V4 Flash
 ```
 
 系统固定使用 `opencode-go/deepseek-v4-flash`，不支持候选模型、自动路由、并行 Agent 或 fallback。
@@ -39,7 +39,7 @@ python tools/delegate_pi.py check
 
 Windows 兼容说明：Pi 的同步非交互模式使用完整参数 `--print`。委派器不会使用短参数 `-p`，并会把仅含任务文件路径的短提示规范化为单行，避免 `pi.cmd` 在首个换行处截断参数。完整任务内容始终保存在任务 JSON 中。
 
-## Codex 何时委派
+## 主 Agent 何时委派
 
 适合委派：局部功能、普通 Bug、单元测试、类型和 lint 修复、文档同步、重复性修改、明确范围内重构、指定模块调查。
 
@@ -74,14 +74,15 @@ python tools/delegate_pi.py check
 python tools/delegate_pi.py run `
   --task .agent-runs/tasks/example-task.json
 
+# thinking 固定 max，通常不需要传参；--thinking 仅接受 max
 python tools/delegate_pi.py run `
   --task .agent-runs/tasks/example-task.json `
-  --thinking high
+  --thinking max
 
 python tools/delegate_pi.py stats
 ```
 
-工作区存在未提交修改时默认拒绝。Codex 明确确认任务必须基于当前修改时，才可增加 `--allow-dirty`。
+工作区存在未提交修改时默认拒绝。主 Agent 明确确认任务必须基于当前修改时，才可增加 `--allow-dirty`。
 
 ## 日志
 
@@ -104,7 +105,7 @@ python tools/delegate_pi.py stats
 - `cli_failure`：Pi 退出失败，查看对应结果文件。
 - `invalid_json_output`：Pi 未返回合法 JSONL，原始脱敏输出已保留。
 - `scope_violation`：Pi 修改了 `allowed_paths` 之外的文件；系统不会自动回滚。
-- `validation_failed`：Pi 进程退出正常，但 Codex 独立审查发现任务目标或验收标准未完成。
+- `validation_failed`：Pi 进程退出正常，但主 Agent 独立审查发现任务目标或验收标准未完成。
 
 ## 禁用与卸载
 
@@ -118,4 +119,4 @@ python tools/delegate_pi.py stats
 - 委派器使用参数数组启动 Pi，不拼接 shell 命令。
 - 不执行自动 commit、push、merge、reset、checkout 或 clean。
 - 不自动回滚越界修改，避免破坏用户原有工作。
-- Pi 结果必须由 Codex 独立 Review 和测试。
+- Pi 结果必须由主 Agent 独立 Review 和测试。

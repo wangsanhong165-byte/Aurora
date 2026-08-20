@@ -185,6 +185,19 @@ def test_turn_recorder_enforces_retention_count(tmp_path: Path):
     ]
 
 
+def test_turn_recorder_default_path_honors_explicit_environment_override(
+    tmp_path: Path,
+    monkeypatch,
+):
+    isolated_path = tmp_path / "runtime" / "turns.db"
+    monkeypatch.setenv("SOULLINK_TURN_TRACE_DB", str(isolated_path))
+
+    recorder = TurnRecorder()
+
+    assert recorder.path == isolated_path
+    assert isolated_path.is_file()
+
+
 def test_management_commands_extend_existing_command_protocol():
     class FakeManager:
         def get_character_self_view(self):

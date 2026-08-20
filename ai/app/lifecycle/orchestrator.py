@@ -62,6 +62,7 @@ class LifecycleOrchestrator:
         self.owner = owner_id or self.owner
         self.stream = EventStream(self.launch_id, self.owner)
         prune_launch_logs(self.root)
+        self._prune_stale_registry()
         rollback_from = len(self.started)
         self._failed_services.clear()
         services = self._resolve_services(profile)
@@ -288,7 +289,26 @@ class LifecycleOrchestrator:
 
     def status(self) -> dict:
         """Return a fresh snapshot so child exits are visible immediately."""
+        self._prune_stale_registry()
         return self._build_status()
+
+    def _prune_stale_registry(self) -> None:
+        """Forget exited or PID-reused entries without touching live processes."""
+        for name, entry in self.registry.items():
+            identity = ProcessIdentity(
+                entry["pid"], entry["create_time"], entry["executable"],
+                tuple(entry["command"]), entry["port"],
+            )
+            actual = self.platform.identity(identity.pid, identity.port)
+            if actual is None:
+                # AccessDenied and NoSuchProcess both map to None. A matching
+                # listener proves the service is still live, so retain it.
+                if self.platform.port_owner(identity.port) != identity.pid:
+                    self.registry.remove(name)
+            elif actual != identity:
+                # PID reuse: drop only our stale identity and never terminate
+                # the unrelated replacement process.
+                self.registry.remove(name)
 
     def _build_status(self) -> dict:
         services = []

@@ -212,14 +212,18 @@ function withLocalSemanticChoreography(intent: CharacterIntent): CharacterIntent
     calm: ['breathe', 'tilt_right', 'lean_forward'],
     happy: ['lean_forward', 'tilt_right', 'nod'],
     playful: ['tilt_right', 'sway', 'nod'],
+    love: ['lean_forward', 'tilt_left', 'breathe'],
     joyful: ['lean_forward', 'sway', 'nod'],
     cheerful: ['nod', 'sway', 'lean_forward'],
     surprised: ['lean_back', 'tilt_left', 'breathe'],
     shy: ['tilt_left', 'lean_back', 'breathe'],
     embarrassed: ['tilt_right', 'lean_back', 'breathe'],
     sad: ['breathe', 'lean_back', 'tilt_left'],
+    cry: ['breathe', 'lean_back', 'tilt_left'],
     worried: ['lean_forward', 'tilt_right', 'breathe'],
     angry: ['lean_forward', 'nod', 'lean_back'],
+    pout: ['lean_back', 'tilt_right', 'breathe'],
+    confused: ['tilt_left', 'look_right', 'breathe'],
   }
   const candidates = behaviorRecipes[behavior] ?? emotionRecipes[emotion] ?? emotionRecipes.neutral
   const hash = [...(intent.turnId || emotion)]
@@ -230,9 +234,9 @@ function withLocalSemanticChoreography(intent: CharacterIntent): CharacterIntent
   const fractions = beatCount === 3 ? [0.06, 0.42, 0.72]
     : beatCount === 2 ? [0.08, 0.58] : [0.12]
   const baseIntensity = clamp(
-    (intent.intensity ?? 0.5) * 0.46 + (intent.energy ?? 0.5) * 0.2,
-    0.3,
-    0.68,
+    (intent.intensity ?? 0.5) * 0.5 + (intent.energy ?? 0.5) * 0.24,
+    0.34,
+    0.76,
   )
   let sourceSteps = [...(intent.motionPlan?.steps ?? [])]
     .sort((left, right) => left.atMs - right.atMs)

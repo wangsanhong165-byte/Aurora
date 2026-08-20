@@ -5,7 +5,7 @@
 //               → client.ts dispatch → eventBus → AvatarController (this, TS)
 //               → CharacterController / ComponentManager → CubismModelHandle parameters
 
-import { eventBus } from '../core/event-bus'
+import { eventBus } from '../core/event-bus.ts'
 import type { CharacterController } from './controllers'
 import type { ComponentManager } from './ComponentManager'
 
@@ -68,9 +68,16 @@ export class AvatarController {
         this._state.expression = data.name
         this._state.expressionPreset = data.name
         this._state.expressionIntensity = data.intensity
-        // Forward to CharacterController for expression application
+        // Preserve the protocol's authored expression name, but claim the
+        // semantic expression channel before touching the model controller.
         if (this._ctrl) {
-          this._ctrl.exprCtrl.apply(data.name, data.intensity, 500)
+          this._ctrl.applyAvatarExpression(
+            data.name,
+            data.intensity,
+            data.controller,
+            data.priority,
+            500,
+          )
         }
       }),
     )
@@ -79,9 +86,10 @@ export class AvatarController {
       eventBus.on('avatar:motion_update', (data) => {
         this._state.motion = data.name
         this._state.motionLoop = data.loop
-        // Forward to CharacterController
+        // Looping state motion remains state metadata; discrete motions claim
+        // the shared semantic motion channel before playback.
         if (this._ctrl && !data.loop) {
-          this._ctrl.motionArbiter.play(data.name)
+          this._ctrl.applyAvatarMotion(data.name, data.controller, data.priority)
         }
       }),
     )
@@ -95,7 +103,13 @@ export class AvatarController {
 
         // Restore expression
         if (data.expression !== 'neutral' && this._ctrl) {
-          this._ctrl.exprCtrl.apply(data.expression, data.intensity, 0)
+          this._ctrl.applyAvatarExpression(
+            data.expression,
+            data.intensity,
+            'state-restore',
+            80,
+            0,
+          )
         }
 
         // Restore components

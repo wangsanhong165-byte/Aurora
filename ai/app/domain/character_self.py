@@ -120,17 +120,25 @@ class CharacterSelf:
         # (recent_focus/recent_changes/last_interaction/interaction_count) are
         # preserved across turns; then overlay the live emotion/mood/... state,
         # which dynamic_state() alone does not contain.
-        state = deepcopy(self.snapshot())
+        state = deepcopy(previous_state if previous_state is not None else self.snapshot())
         live = self.character.dynamic_state()
         for key in ("emotion", "mood", "relationship", "goals", "preferences"):
             if key in live:
                 state[key] = live[key]
         text = " ".join(str(user_text or "").split())[:160]
+        existing_focus = [
+            str(item)
+            for item in state.get("recent_focus", [])
+            if str(item).strip()
+        ]
         if text:
-            focus = [f"刚刚聊到：{text}"]
+            current_focus = f"刚刚聊到：{text}"
+            focus = [current_focus, *(
+                item for item in existing_focus if item != current_focus
+            )]
             state["last_interaction"] = text
         else:
-            focus = []
+            focus = existing_focus
             state["last_interaction"] = ""
 
         previous = previous_state or {}

@@ -23,9 +23,9 @@ logger = logging.getLogger("decision_step")
 
 from app.runtime.pipeline import Step
 from app.runtime.character_turn import CharacterTurn
+from app.runtime.default_planner import DefaultPlanner, Plan  # compatibility exports
 from app.interfaces.llm import LLMInterface, LLMResponse
 from app.interfaces.tool import ToolInterface
-from app.runtime.default_planner import DefaultPlanner, Plan
 from app.runtime.tool_coordinator import ToolCoordinator
 
 _MAX_TOOL_ROUNDS = min(3, max(1, int(os.environ.get("AGENT_MAX_TOOL_ROUNDS", "3"))))
@@ -129,10 +129,29 @@ class DecisionStep(Step):
             final_reply or response.reply,
             response.segments or [],
             allowed_emotions=ctx.allowed_emotions,
+            semantic_context=user_text,
         )
+        original_reply = (final_reply or response.reply).strip()
+        plain_semantic_recovery = bool(
+            original_reply
+            and not response.segments
+            and not original_reply.lstrip().startswith(("{", "["))
+            and safe.reply
+            and safe.segments
+        )
+        if not safe.valid and plain_semantic_recovery:
+            # Tool-capable providers commonly return useful prose because JSON
+            # response_format is intentionally disabled while tools are
+            # offered.  The local semantic fallback is bounded, immediate and
+            # renderer-independent, so do not add a second fragile LLM call to
+            # every ordinary turn.  It also strips visible action narration
+            # before TTS while retaining that meaning in the semantic segment.
+            safe.valid = True
+            ctx.warnings.append("assistant_reply_semantic_recovered")
+            if safe.reply != original_reply:
+                ctx.warnings.append("assistant_reply_sanitized")
         if not safe.valid:
             truncated = response.finish_reason == "length"
-            original_reply = (final_reply or response.reply).strip()
             invalid_content = original_reply
             # An empty assistant message (or a whitespace-only one) is
             # meaningless to the model and some APIs reject it; the repair
@@ -151,6 +170,9 @@ class DecisionStep(Step):
                     "Your previous response was invalid structured output. "
                     "Repair it now. Return only the required valid JSON object; "
                     "preserve the intended meaning and do not call tools. "
+                    "final_reply and segment text must contain spoken words only; "
+                    "put visible expressions and body actions only in emotion, "
+                    "behavior, naturalVAD, and motionPlan. "
                     "Never return empty content."
                 )
             )
@@ -173,6 +195,7 @@ class DecisionStep(Step):
                 repair.reply,
                 repair.segments or [],
                 allowed_emotions=ctx.allowed_emotions,
+                semantic_context=user_text,
             )
             if not safe.reply and not safe.segments:
                 # The repair failed to produce text. If the model DID reply with
@@ -185,6 +208,7 @@ class DecisionStep(Step):
                         original_reply,
                         [],
                         allowed_emotions=ctx.allowed_emotions,
+                        semantic_context=user_text,
                     )
                     safe = ValidatedResponse(
                         reply=recovered.reply or original_reply,
@@ -192,6 +216,8 @@ class DecisionStep(Step):
                         valid=True,
                     )
                     ctx.warnings.append("assistant_reply_recovered")
+                    if recovered.reply != original_reply:
+                        ctx.warnings.append("assistant_reply_sanitized")
                 else:
                     fallback = _empty_reply_fallback()
                     safe = ValidatedResponse(

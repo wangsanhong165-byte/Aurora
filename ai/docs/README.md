@@ -8,6 +8,7 @@
 
 - 根目录 [README.md](../README.md)：安装、启动、端口和日常验证入口。
 - 根目录 [ARCHITECTURE.md](../ARCHITECTURE.md)：Runtime V3、生命周期、Transport 和 Live2D 控制边界。
+- [architecture/character_personality_presentation_orchestration.md](architecture/character_personality_presentation_orchestration.md)：角色卡、结构化人格、Prompt、动态状态与 Live2D 表现编排的当前权威基线。
 - [runtime/V3_PROTOCOL.md](runtime/V3_PROTOCOL.md)：V3 envelope、事件和 WebSocket 协议。
 - [runtime/LAUNCH_ARCHITECTURE.md](runtime/LAUNCH_ARCHITECTURE.md)：启动、就绪、停止和 Supervisor 关系。
 - `architecture/`、`frontend/`、`runtime/` 下不带日期的说明：模块级设计资料，需结合当前实现阅读。

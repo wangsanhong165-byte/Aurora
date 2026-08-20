@@ -10,6 +10,7 @@ import yaml
 import pytest
 
 from app.character.catalog import CharacterCatalog
+from app.character.lifecycle import CharacterLifecycle
 from app.character.registry import CharacterRegistry
 from app.character.voices import VoiceRegistry
 from app.runtime.management import RuntimeManager
@@ -549,6 +550,83 @@ def test_management_delete_character_switches_active_and_cleans_owned_state(
     assert store.list_memories(character_id="monika") == []
     assert history_uid not in manager._history_index
     assert "monika" not in runtime._conversations_by_character
+
+
+def test_character_delete_commits_role_and_queues_failed_owned_data_cleanup(tmp_path):
+    _install_system_model(tmp_path)
+    _install_system_voice(tmp_path)
+    catalog = CharacterCatalog(tmp_path)
+    for character_id in ("monika", "alice"):
+        catalog.create({
+            "id": character_id,
+            "name": character_id.title(),
+            "persona": "persona",
+            "reply_language": "zh",
+            "model_id": "testmodel",
+            "voice_id": "testvoice",
+        })
+
+    class FailingPromptConfigs:
+        locked = True
+
+        def delete(self, _character_id):
+            if self.locked:
+                raise OSError("prompt file is locked")
+
+    class NoopDelete:
+        def delete(self, _character_id):
+            return None
+
+    prompt_configs = FailingPromptConfigs()
+    lifecycle = CharacterLifecycle(
+        catalog=catalog,
+        runtime=object(),
+        active_character_id=lambda: "alice",
+        switch_character=lambda character_id: {"character_id": character_id},
+        prompt_configs=prompt_configs,
+        prompt_overrides=NoopDelete(),
+        memory_store=lambda: None,
+        delete_histories=lambda _character_id: 0,
+        delete_compiled_data=lambda _character_id: None,
+        pending_cleanup_path=tmp_path / "data" / "runtime" / "pending-character-cleanup.json",
+    )
+
+    result = lifecycle.delete("monika")
+
+    assert not (tmp_path / "config" / "characters" / "monika").exists()
+    assert result["cleanup_pending"] is True
+    assert result["cleanup_warnings"][0]["step"] == "prompt_config"
+    pending = json.loads(
+        (tmp_path / "data" / "runtime" / "pending-character-cleanup.json")
+        .read_text(encoding="utf-8")
+    )
+    assert pending["monika"]["steps"] == ["prompt_config"]
+
+    prompt_configs.locked = False
+    retry = lifecycle.retry_pending_cleanups()
+
+    assert retry["pending"] == []
+    assert json.loads(
+        (tmp_path / "data" / "runtime" / "pending-character-cleanup.json")
+        .read_text(encoding="utf-8")
+    ) == {}
+
+
+def test_character_create_rejects_model_reference_outside_model_root(tmp_path):
+    outside = tmp_path / "models" / "outside"
+    outside.mkdir(parents=True)
+    (outside / "outside.model3.json").write_text("{}", encoding="utf-8")
+    _install_system_voice(tmp_path)
+
+    with pytest.raises(ValueError, match="model_id"):
+        CharacterCatalog(tmp_path).create({
+            "id": "monika",
+            "name": "Monika",
+            "persona": "persona",
+            "reply_language": "zh",
+            "model_id": "../outside",
+            "voice_id": "testvoice",
+        })
 
 
 def test_character_detail_exposes_only_safe_editing_metadata(tmp_path):
